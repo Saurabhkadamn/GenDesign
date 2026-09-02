@@ -19,12 +19,15 @@ async def main():
     box = await sandbox.create_sandbox(source=sandbox.SnapshotSource(snapshot_id=previous),
         persistent=False, execution_time_limit=900, network_policy=sandbox.NetworkPolicy.deny_all(), ports=[], resources=sandbox.SandboxResources(vcpus=2))
     try:
+        # Older snapshots may not contain the SDK's default staging directory.
+        # Create it from a known-good root before using filesystem uploads.
+        await box.run_process("mkdir", ["-p", "/vercel/sandbox"], cwd="/", sudo=True, check=True)
         for name in FILES:
-            await box.fs.write_bytes(f"/tmp/{name}", (ROOT / "runtimes/python" / name).read_bytes())
-            await box.run_process("cp", [f"/tmp/{name}", f"/opt/forma/{name}"], sudo=True, check=True)
-            await box.run_process("chmod", ["644", f"/opt/forma/{name}"], sudo=True, check=True)
-        await box.run_process("mkdir", ["-p", "/job"], sudo=True, check=True)
-        probe = await box.run_process("/opt/forma/.venv/bin/python", ["-I", "/opt/forma/control.py", "prepare"], sudo=True, capture_output=True, check=True)
+            await box.fs.write_bytes(f"/tmp/{name}", (ROOT / "runtimes/python" / name).read_bytes(), cwd="/")
+            await box.run_process("cp", [f"/tmp/{name}", f"/opt/forma/{name}"], cwd="/", sudo=True, check=True)
+            await box.run_process("chmod", ["644", f"/opt/forma/{name}"], cwd="/", sudo=True, check=True)
+        await box.run_process("mkdir", ["-p", "/job"], cwd="/", sudo=True, check=True)
+        probe = await box.run_process("/opt/forma/.venv/bin/python", ["-I", "/opt/forma/control.py", "prepare"], cwd="/", sudo=True, capture_output=True, check=True)
         assert json.loads(probe.stdout)["ready"]
         saved = await box.snapshot()
         (ROOT / "test-results/runtime-v2-snapshot.json").write_text(json.dumps({"snapshotId": saved.id, "runtimeVersion": version}, indent=2))
