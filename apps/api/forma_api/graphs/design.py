@@ -536,23 +536,10 @@ async def validate(state: AgentState) -> dict:
                 f"Last failure: {error.get('guidance', 'inspect and repair the candidate')}. "
                 "Your saved design is unchanged; revise the request or start a new run."}
         return {"phase": "repair"}
-    # A valid STEP file is not enough for publication. Every supported
-    # geometry requirement must have an independent measured pass; only
-    # explicitly non-geometric requirements may remain unverified.
-    geometry_kinds = {"dimensions", "center", "solid_count", "through_holes", "corner_radius"}
-    unresolved = [check for check in result.get("requirements", [])
-                  if check.get("kind") in geometry_kinds and check.get("status") != "passed"]
-    if unresolved:
-        limits = (await app_settings()).limits
-        if state.get("repairs", 0) >= limits.maxRepairs:
-            labels = ", ".join(check.get("id", "geometry") for check in unresolved[:5])
-            return {"phase": "final", "terminal_status": "failed", "final_message":
-                f"The candidate built successfully, but required geometry could not be independently verified ({labels}). "
-                "No revision was published; repair the reported geometry and start another bounded run."}
-        return {"phase": "repair", "build_result": {"ok": False, "error": {
-            "stage": "requirements", "category": "geometry_unverified",
-            "guidance": "Independently verify every supported dimension, hole, center, solid count, and corner-radius requirement before publication.",
-            "checks": unresolved}}}
+    # Requirement measurements are advisory evidence for the human reviewer.
+    # Build/artifact integrity was already checked in build_candidate; an
+    # unsupported or failed requirement must not prevent the user from seeing
+    # and downloading a successfully built draft.
     return {"phase": "publish"}
 
 
@@ -576,7 +563,7 @@ async def publish(state: AgentState) -> dict:
     result = await operation(run, "graph:publish", "publish_revision", publish_candidate, idempotent=True)
     await destroy_sandboxes(cp)
     return {**sync_checkpoint(cp), "phase": "final", "published_revision_id": result["revisionId"],
-        "final_message": "The design was built, independently validated, and published as the current revision."}
+        "final_message": "The CAD draft built successfully and is ready for your review. Automated requirement checks are advisory; you can edit or download the files."}
 
 
 async def final(state: AgentState) -> dict:

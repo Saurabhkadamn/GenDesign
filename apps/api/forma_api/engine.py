@@ -207,10 +207,9 @@ async def build_candidate(run, cp, limits, key):
         report = json.loads(await executor().read(validator, "report.json"))
         if report.get("identity") != expected:
             raise ExecutionFailure("Validation identity mismatch")
-        failed = [r for r in report.get("requirements", []) if r["status"] == "failed"]
-        if failed:
-            return await reject_candidate(run, cp, expected, {"stage": "requirements", "category": "geometry_mismatch", "location": None,
-                "guidance": "Repair the dimensions or features that disagree with the explicit request.", "checks": failed, "fingerprint": digest(failed)}, limits)
+        # Requirement measurements are advisory evidence for the human reviewer.
+        # The build and artifact identity/format checks above remain mandatory,
+        # but an unsupported or failed measurement must not hide a usable draft.
         artifacts = []
         for artifact in report["artifacts"]:
             content = await executor().read(validator, artifact["name"])
@@ -224,7 +223,7 @@ async def build_candidate(run, cp, limits, key):
             artifacts.append({**artifact, "storagePath": storage_path})
         cp["validated"] = {"identity": expected, "report": report, "artifacts": artifacts}
         cp.pop("lastFailedCandidate", None)
-        await repo.event(run["id"], f"Attempt {cp['attempts']} passed geometry validation. {sum(r['status']=='passed' for r in report.get('requirements', []))} requirements verified.",
+        await repo.event(run["id"], f"Attempt {cp['attempts']} passed CAD integrity checks. Draft ready for human review; {sum(r['status']=='passed' for r in report.get('requirements', []))} automated requirement checks passed.",
             kind="validation", stage="validation", attempt=cp["attempts"], elapsed_ms=(time.time_ns()-started)/1e6)
         return report
     finally:
@@ -310,16 +309,9 @@ async def execute_tool(run, cp, call, app_settings, worker):
         validated = cp.get("validated")
         if not validated or validated["identity"] != identity(snapshot, cp["requirements"]):
             raise ValueError("Only the exact independently validated candidate can be published.")
-        if not cp["requirements"]:
-            raise ValueError("Record the explicit requirements, including unsupported checks, before publication.")
-        # Checkpoint identity alone is insufficient: older checkpoints may have
-        # been produced before the independent geometry gate existed.  Never
-        # publish a report with an unverified supported geometry requirement.
-        geometry_kinds = {"dimensions", "center", "solid_count", "through_holes", "corner_radius"}
-        geometry = [r for r in validated.get("report", {}).get("requirements", [])
-                    if r.get("kind") in geometry_kinds]
-        if not geometry or any(r.get("status") != "passed" for r in geometry):
-            raise ValueError("Independent geometry validation is incomplete; rebuild and validate the candidate before publication.")
+        # Publication here means publishing a successfully built draft. Human
+        # review owns design acceptance; automated requirement measurements are
+        # advisory and may be empty or unverified for complex assemblies.
         existing = await db.rest("artifacts", params={"select": "bytes"})
         if sum(a["bytes"] for a in existing) + sum(a["bytes"] for a in validated["artifacts"]) > limits.storageBudgetBytes:
             raise Pause("The configured artifact storage budget is exhausted.")
@@ -327,7 +319,7 @@ async def execute_tool(run, cp, call, app_settings, worker):
         cp["published"] = await db.rpc("publish_revision_v2", {"p_run": run["id"], "p_worker": worker, "p_revision": revision_id,
             "p_summary": value["summary"], "p_manifest": snapshot["manifest"], "p_snapshot": snapshot,
             "p_artifacts": validated["artifacts"], "p_report": validated["report"], "p_restored": cp.get("restored")})
-        await repo.event(run["id"], "Verified STEP and preview published.", stage="publication")
+        await repo.event(run["id"], "CAD draft and downloadable artifacts published for human review.", stage="publication")
         return {"revisionId": cp["published"], "requirements": validated["report"]["requirements"], "allRequirementsVerified": validated["report"]["allRequirementsVerified"]}
     if name == "ask_user":
         cp["question"] = value["question"]

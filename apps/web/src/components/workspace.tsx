@@ -950,11 +950,11 @@ export function Workspace({
               ) : null}
               {revision?.validation && (
                 <details className="activity requirement-checks">
-                  <summary><ShieldCheck size={14} /> Requirement checks</summary>
+                  <summary><ShieldCheck size={14} /> Automated evidence</summary>
                   {revision.validation.requirements.map((check) => (
                     <p key={check.id}><strong>{check.status === 'passed' ? '✓ Verified' : check.status === 'failed' ? 'Failed' : 'Unverified'}</strong> · {check.description}</p>
                   ))}
-                  {!revision.validation.allRequirementsVerified && <p>Some requirements could not be checked automatically.</p>}
+                  {!revision.validation.allRequirementsVerified && <p>These measurements are advisory. Review the draft before use; unsupported requirements were not checked automatically.</p>}
                 </details>
               )}
             </ConversationContent>

@@ -50,6 +50,23 @@ async def test_unchanged_failed_candidate_is_not_executed():
 
 
 @pytest.mark.asyncio
+async def test_unverified_assembly_evidence_does_not_block_built_draft():
+    from forma_api.graphs.design import validate
+
+    result = await validate({
+        "build_result": {
+            "ok": True,
+            "requirements": [{
+                "id": "pivot_axis",
+                "kind": "unverified",
+                "status": "unverified",
+            }],
+        }
+    })
+    assert result == {"phase": "publish"}
+
+
+@pytest.mark.asyncio
 async def test_repeated_error_stops_repairs(monkeypatch):
     async def event(*a, **kw): pass
     monkeypatch.setattr(engine.repo, "event", event)
