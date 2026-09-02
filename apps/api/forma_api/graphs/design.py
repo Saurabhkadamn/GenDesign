@@ -198,17 +198,24 @@ async def structured_turn(state: AgentState, role: str, node: str, prompt: str,
     def parse(current_result):
         match = next((item for item in current_result["calls"] if item["name"] == tool_name), None)
         if not match:
-            raise Pause(f"The {role} model did not return the required structured {node} result.")
+            # Some providers return a successful HTTP response with an empty
+            # assistant message when a large tool call is interrupted. Treat
+            # that as a bounded contract correction, rather than ending the
+            # graph before the model gets one explicit chance to emit the tool.
+            raise ValueError(f"The {role} model did not return the required structured {node} tool call.")
         return contract.model_validate(match["input"])
 
     calls_used = 1
     try:
         value = parse(result)
-    except ValidationError as exc:
-        feedback = "; ".join(
-            f"{'.'.join(map(str, item['loc']))}: {item['msg']}"
-            for item in exc.errors(include_url=False, include_input=False)[:12]
-        )
+    except (ValidationError, ValueError) as exc:
+        if isinstance(exc, ValidationError):
+            feedback = "; ".join(
+                f"{'.'.join(map(str, item['loc']))}: {item['msg']}"
+                for item in exc.errors(include_url=False, include_input=False)[:12]
+            )
+        else:
+            feedback = str(exc)
         if ordinal + 1 >= max_model_calls:
             raise Pause(f"The {role} result violated the required contract: {feedback}") from None
         await repo.event(run["id"],
@@ -224,11 +231,14 @@ async def structured_turn(state: AgentState, role: str, node: str, prompt: str,
         calls_used = 2
         try:
             value = parse(result)
-        except ValidationError as repair_exc:
-            repaired_feedback = "; ".join(
-                f"{'.'.join(map(str, item['loc']))}: {item['msg']}"
-                for item in repair_exc.errors(include_url=False, include_input=False)[:12]
-            )
+        except (ValidationError, ValueError) as repair_exc:
+            if isinstance(repair_exc, ValidationError):
+                repaired_feedback = "; ".join(
+                    f"{'.'.join(map(str, item['loc']))}: {item['msg']}"
+                    for item in repair_exc.errors(include_url=False, include_input=False)[:12]
+                )
+            else:
+                repaired_feedback = str(repair_exc)
             raise Pause(
                 f"The {role} model returned an invalid {node} result twice. {repaired_feedback}"
             ) from None
