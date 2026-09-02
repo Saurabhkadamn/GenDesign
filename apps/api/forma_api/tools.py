@@ -94,7 +94,13 @@ def portable_schema(schema: dict) -> dict:
         # subset.  Bounds and regexes remain enforced by Pydantic after the
         # call; forwarding them is unnecessary and some Gemini versions reject
         # them as an invalid argument.
-        allowed = {"type", "description", "enum", "items", "properties", "required"}
+        # Keep the intermediate union/tuple keywords until after they have
+        # been normalized below.  Filtering them before normalization turns
+        # optional fields into `{}` and fixed tuples into untyped arrays;
+        # Gemini can then silently return an empty tool call for otherwise
+        # valid structured requests.
+        allowed = {"type", "description", "enum", "items", "properties", "required",
+                   "anyOf", "prefixItems"}
         result = {}
         for key, raw in value.items():
             if key not in allowed:

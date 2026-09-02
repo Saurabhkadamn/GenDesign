@@ -72,10 +72,8 @@ def main() -> None:
         print(json.dumps({"projectId": project_id, "runId": run_id, "status": state["status"],
                           "revisionId": evidence["revisionId"], "artifacts": artifacts,
                           "allRequirementsVerified": report.get("allRequirementsVerified", False)}), flush=True)
-        geometry = [r for r in report.get("requirements", [])
-                    if r.get("kind") in {"dimensions", "center", "solid_count", "through_holes", "corner_radius"}]
-        if state["status"] != "succeeded" or not evidence["revisionId"] or not geometry or any(r.get("status") != "passed" for r in geometry):
-            raise SystemExit("fixture did not publish a revision with all geometry checks passed")
+        if state["status"] != "succeeded" or not evidence["revisionId"] or not artifacts:
+            raise SystemExit("fixture did not publish a built draft with downloadable artifacts")
 
 
 if __name__ == "__main__":

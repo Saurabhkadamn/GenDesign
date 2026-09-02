@@ -227,6 +227,19 @@ def test_triage_accepts_gemini_serialized_numeric_vectors():
     assert value.requirements[0].dimensions == (160.0, 120.0, 140.0)
 
 
+def test_portable_schema_expands_optional_and_tuple_fields_for_provider_tools():
+    from forma_api.graphs.design import Triage
+    from forma_api.tools import portable_schema
+
+    schema = portable_schema(Triage.model_json_schema())
+    requirement = schema["properties"]["requirements"]["items"]
+    assert requirement["properties"]["dimensions"]["type"] == "array"
+    assert requirement["properties"]["dimensions"]["items"] == {"type": "number"}
+    assert requirement["properties"]["componentId"]["type"] == "string"
+    position = requirement["properties"]["positions"]["items"]
+    assert position["items"] == {"type": "number"}
+
+
 def test_triage_clamps_model_tolerance_to_runtime_precision_floor():
     from forma_api.graphs.design import TriageRequirement, normalize_triage_requirements
 
