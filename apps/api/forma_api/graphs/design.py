@@ -1,5 +1,6 @@
 """Fixed Forma graph: engineering gate, CAD build/repair, validation, publication."""
 import json
+import re
 import time
 from contextvars import ContextVar
 from typing import Literal
@@ -407,13 +408,40 @@ def bind_requirements_to_manifest(requirements: list[dict], manifest: dict) -> l
         if "motor" in str(c.get("id", "")).lower() or "motor" in str(c.get("name", "")).lower()), None)
     frame_component = next((c for c in components
         if "frame" in str(c.get("id", "")).lower() or "frame" in str(c.get("name", "")).lower()), None)
+
+    def described_component(label: str):
+        """Resolve an omitted componentId from an explicit component noun.
+
+        Triage commonly knows that a dimension belongs to the base or PCB but
+        omits the ID while the model is still reasoning about the assembly.
+        Binding those checks to the assembly root measures the combined envelope
+        and creates a false geometry failure. Prefer an unambiguous component
+        name before falling back to the root assembly.
+        """
+        candidates = []
+        for component in components:
+            cid = str(component.get("id", "")).lower()
+            name = str(component.get("name", "")).lower()
+            score = 0
+            for token in re.findall(r"[a-z0-9]+", label):
+                if token and (token in cid or token in name):
+                    score += 1
+            if score:
+                candidates.append((score, component))
+        if not candidates:
+            return None
+        candidates.sort(key=lambda item: item[0], reverse=True)
+        if len(candidates) == 1 or candidates[0][0] > candidates[1][0]:
+            return candidates[0][1]
+        return None
+
     bound = []
     for original in requirements:
         item = dict(original)
         label = f"{item.get('id', '')} {item.get('description', '')} {item.get('componentId') or ''}".lower()
         if item.get("componentId") not in valid:
             preferred = motor_component if "motor" in label and motor_component else (
-                frame_component if "frame" in label and frame_component else None)
+                frame_component if "frame" in label and frame_component else described_component(label))
             item["componentId"] = (preferred or {}).get("id") if preferred else root
         if item.get("kind") == "through_holes":
             axis = item.get("axis", "Z")

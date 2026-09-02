@@ -273,3 +273,21 @@ def test_cad_requirements_bind_to_generated_manifest_datum():
     bound = bind_requirements_to_manifest(requirements, manifest)
     assert bound[0]["componentId"] == "motor_mount_bracket"
     assert bound[0]["positions"] == [[-40.0, 45.0], [-40.0, 105.0], [40.0, 45.0], [40.0, 105.0]]
+
+
+def test_assembly_requirements_bind_unscoped_part_dimensions_by_name():
+    from forma_api.graphs.design import bind_requirements_to_manifest
+
+    requirements = [
+        {"id": "req_base_dim", "description": "Base shell outer envelope",
+         "kind": "dimensions", "dimensions": [90, 60, 30]},
+        {"id": "req_pcb_dim", "description": "PCB placeholder plate dimensions",
+         "kind": "dimensions", "dimensions": [70, 45, 1.6]},
+    ]
+    manifest = {"rootComponentId": "enclosure_assembly", "components": [
+        {"id": "base_shell", "name": "Base Shell", "kind": "solid"},
+        {"id": "pcb", "name": "PCB Plate", "kind": "solid"},
+        {"id": "enclosure_assembly", "name": "IoT Sensor Enclosure Assembly", "kind": "assembly"},
+    ]}
+    bound = bind_requirements_to_manifest(requirements, manifest)
+    assert [item["componentId"] for item in bound] == ["base_shell", "pcb"]
