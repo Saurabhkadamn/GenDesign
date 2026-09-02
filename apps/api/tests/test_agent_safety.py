@@ -132,7 +132,10 @@ def test_generated_workspace_accepts_only_safe_python_source_paths():
         Candidate.model_validate({"files": {"README.md": "not executable source"},
             "manifest": {}, "summary": "invalid"})
     schema = submission_tool("submit_candidate", "candidate", Candidate)["function"]["parameters"]
-    assert "propertyNames" in schema["properties"]["files"]
+    # Provider-facing schemas omit Python/JSON-Schema key constraints; the
+    # Candidate Pydantic contract still enforces the safe source-path pattern
+    # after the model returns its tool arguments.
+    assert "propertyNames" not in schema["properties"]["files"]
 
 
 def test_tool_schemas_use_gemini_compatible_homogeneous_arrays():
@@ -141,6 +144,8 @@ def test_tool_schemas_use_gemini_compatible_homogeneous_arrays():
     schemas = model_tools("engineering")
     encoded = str(schemas)
     assert "prefixItems" not in encoded
+    assert "anyOf" not in encoded
+    assert "additionalProperties" not in encoded
     triage = next(item for item in schemas if item["function"]["name"] == "apply_changes")
     files = triage["function"]["parameters"]["properties"]["files"]
     assert files["type"] == "object"

@@ -74,7 +74,34 @@ def portable_schema(schema: dict) -> dict:
             return value
         if "$ref" in value:
             return expand(definitions[value["$ref"].rsplit("/", 1)[-1]])
-        result = {k: expand(v) for k, v in value.items() if k not in {"$defs", "title", "default"}}
+        # Function declarations are an OpenAPI subset.  Pydantic's JSON
+        # Schema is deliberately richer (nullable ``anyOf`` unions,
+        # ``additionalProperties`` from ``extra=forbid``, ``const`` defaults,
+        # and Python-only object-key constraints).  Sending those keywords to
+        # Gemini causes a provider-level 400 before the model sees the prompt.
+        # Runtime Pydantic validation remains the authoritative contract after
+        # the tool call, so these presentation-only restrictions can be
+        # omitted safely from the model-facing declaration.
+        result = {k: expand(v) for k, v in value.items()
+                  if k not in {"$defs", "title", "default", "additionalProperties",
+                               "propertyNames", "patternProperties", "unevaluatedProperties",
+                               "const", "exclusiveMinimum", "exclusiveMaximum"}}
+        if "anyOf" in result:
+            branches = result.pop("anyOf")
+            non_null = [branch for branch in branches
+                        if not (isinstance(branch, dict) and branch.get("type") == "null")]
+            # Optional Pydantic fields are represented as ``T | null``.  The
+            # field itself is not required, so Gemini only needs the T branch.
+            if len(non_null) == 1:
+                nullable = expand(non_null[0])
+                if isinstance(nullable, dict):
+                    nullable.setdefault("description", result.get("description", ""))
+                return nullable
+            # Heterogeneous unions (for example manifest parameter values)
+            # cannot be expressed in Gemini's function schema subset.  Leave
+            # an unconstrained value and let the strict Pydantic contract
+            # reject malformed arguments with a repairable validation error.
+            result = {"description": result.get("description", "")}
         # Pydantic represents fixed-length tuples as ``prefixItems``. Google
         # Gemini's function declaration schema accepts only a homogeneous
         # ``items`` schema for arrays, even when minItems/maxItems retain the
@@ -83,6 +110,8 @@ def portable_schema(schema: dict) -> dict:
             prefix = result.pop("prefixItems")
             if prefix:
                 result["items"] = prefix[0]
+        if result.get("type") == "array" and "items" not in result:
+            result["items"] = {}
         return result
     return expand(schema)
 
