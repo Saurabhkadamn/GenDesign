@@ -135,6 +135,17 @@ def test_generated_workspace_accepts_only_safe_python_source_paths():
     assert "propertyNames" in schema["properties"]["files"]
 
 
+def test_tool_schemas_use_gemini_compatible_homogeneous_arrays():
+    from forma_api.tools import model_tools
+
+    schemas = model_tools("engineering")
+    encoded = str(schemas)
+    assert "prefixItems" not in encoded
+    triage = next(item for item in schemas if item["function"]["name"] == "apply_changes")
+    files = triage["function"]["parameters"]["properties"]["files"]
+    assert files["type"] == "object"
+
+
 def test_manifest_rejects_calculation_file_as_geometry_component():
     from forma_api.graphs.design import Candidate
     candidate = {

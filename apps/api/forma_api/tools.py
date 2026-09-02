@@ -74,7 +74,16 @@ def portable_schema(schema: dict) -> dict:
             return value
         if "$ref" in value:
             return expand(definitions[value["$ref"].rsplit("/", 1)[-1]])
-        return {k: expand(v) for k, v in value.items() if k not in {"$defs", "title", "default"}}
+        result = {k: expand(v) for k, v in value.items() if k not in {"$defs", "title", "default"}}
+        # Pydantic represents fixed-length tuples as ``prefixItems``. Google
+        # Gemini's function declaration schema accepts only a homogeneous
+        # ``items`` schema for arrays, even when minItems/maxItems retain the
+        # tuple length. All Forma tuple fields are homogeneous numeric vectors.
+        if "prefixItems" in result and "items" not in result:
+            prefix = result.pop("prefixItems")
+            if prefix:
+                result["items"] = prefix[0]
+        return result
     return expand(schema)
 
 
