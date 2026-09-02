@@ -82,10 +82,21 @@ def portable_schema(schema: dict) -> dict:
         # Runtime Pydantic validation remains the authoritative contract after
         # the tool call, so these presentation-only restrictions can be
         # omitted safely from the model-facing declaration.
-        result = {k: expand(v) for k, v in value.items()
-                  if k not in {"$defs", "title", "default", "additionalProperties",
-                               "propertyNames", "patternProperties", "unevaluatedProperties",
-                               "const", "exclusiveMinimum", "exclusiveMaximum"}}
+        # Keep only the fields accepted by Gemini's function-declaration
+        # subset.  Bounds and regexes remain enforced by Pydantic after the
+        # call; forwarding them is unnecessary and some Gemini versions reject
+        # them as an invalid argument.
+        allowed = {"type", "description", "enum", "items", "properties", "required"}
+        result = {}
+        for key, raw in value.items():
+            if key not in allowed:
+                continue
+            # Property names are data, not schema keywords; preserve them
+            # while sanitizing each nested property schema.
+            if key == "properties" and isinstance(raw, dict):
+                result[key] = {name: expand(child) for name, child in raw.items()}
+            else:
+                result[key] = expand(raw)
         if "anyOf" in result:
             branches = result.pop("anyOf")
             non_null = [branch for branch in branches
