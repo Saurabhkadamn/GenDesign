@@ -209,6 +209,13 @@ async def structured_turn(state: AgentState, role: str, node: str, prompt: str,
     try:
         value = parse(result)
     except (ValidationError, ValueError) as exc:
+        # An empty tool response is not a successful external operation. Keep
+        # its ledger row retryable so a later Continue sends a fresh provider
+        # request instead of replaying the same empty result forever.
+        if isinstance(exc, ValueError):
+            await db.update("run_operations", {"status": "failed", "result": {
+                "category": "tool_protocol", "diagnostic": str(exc)}, "updated_at": repo.utcnow()},
+                run_id=run["id"], operation_key=f"graph:{node}:{ordinal}")
         if isinstance(exc, ValidationError):
             feedback = "; ".join(
                 f"{'.'.join(map(str, item['loc']))}: {item['msg']}"
@@ -232,6 +239,10 @@ async def structured_turn(state: AgentState, role: str, node: str, prompt: str,
         try:
             value = parse(result)
         except (ValidationError, ValueError) as repair_exc:
+            if isinstance(repair_exc, ValueError):
+                await db.update("run_operations", {"status": "failed", "result": {
+                    "category": "tool_protocol", "diagnostic": str(repair_exc)}, "updated_at": repo.utcnow()},
+                    run_id=run["id"], operation_key=f"graph:{node}:contract-repair:{repair_ordinal}")
             if isinstance(repair_exc, ValidationError):
                 repaired_feedback = "; ".join(
                     f"{'.'.join(map(str, item['loc']))}: {item['msg']}"

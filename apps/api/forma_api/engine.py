@@ -29,7 +29,7 @@ async def operation(run, key, kind, callback, *, idempotent=False):
     # non-repeatable because the provider may have accepted the request.
     retryable_model_failure = (
         old and kind == "model" and old["status"] == "failed"
-        and (old.get("result") or {}).get("category") in {"rate_limit", "overloaded"}
+        and (old.get("result") or {}).get("category") in {"rate_limit", "overloaded", "tool_protocol"}
     )
     if old and not idempotent:
         if old["status"] == "started":
