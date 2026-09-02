@@ -148,7 +148,8 @@ def test_tool_schemas_use_gemini_compatible_homogeneous_arrays():
     assert "additionalProperties" not in encoded
     triage = next(item for item in schemas if item["function"]["name"] == "apply_changes")
     files = triage["function"]["parameters"]["properties"]["files"]
-    assert files["type"] == "object"
+    assert files["type"] == "array"
+    assert files["items"]["required"] == ["path", "content"]
 
 
 def test_manifest_rejects_calculation_file_as_geometry_component():

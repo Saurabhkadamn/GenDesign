@@ -153,6 +153,14 @@ class Candidate(Contract):
     manifest: Manifest
     summary: str = Field(min_length=1, max_length=1000)
 
+    @field_validator("files", mode="before")
+    @classmethod
+    def decode_file_entries(cls, value):
+        if isinstance(value, list):
+            return {item["path"]: item["content"] for item in value
+                    if isinstance(item, dict) and "path" in item and "content" in item}
+        return value
+
 
 def submission_tool(name: str, description: str, contract: type[Contract]) -> dict:
     return {"type": "function", "function": {"name": name, "description": description,

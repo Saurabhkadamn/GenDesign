@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from .contracts import Contract, Manifest, Requirement, Role, safe_path
 
@@ -20,6 +20,14 @@ class Search(Contract):
 class ApplyChanges(Contract):
     files: dict[str, str]
     manifest: Manifest | None = None
+
+    @field_validator("files", mode="before")
+    @classmethod
+    def decode_file_entries(cls, value):
+        if isinstance(value, list):
+            return {item["path"]: item["content"] for item in value
+                    if isinstance(item, dict) and "path" in item and "content" in item}
+        return value
 
 
 class Delegate(Contract):
@@ -123,6 +131,25 @@ def portable_schema(schema: dict) -> dict:
                 result["items"] = prefix[0]
         if result.get("type") == "array" and "items" not in result:
             result["items"] = {}
+        # Gemini does not reliably generate arbitrary-key dictionaries. File
+        # workspaces are advertised as a typed list while Pydantic preserves
+        # the internal dict contract after the tool call.
+        properties = result.get("properties")
+        if isinstance(properties, dict):
+            files_schema = properties.get("files")
+            if (isinstance(files_schema, dict) and files_schema.get("type") == "object"
+                    and not files_schema.get("properties")):
+                properties["files"] = {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "path": {"type": "string"},
+                            "content": {"type": "string"},
+                        },
+                        "required": ["path", "content"],
+                    },
+                }
         return result
     return expand(schema)
 
