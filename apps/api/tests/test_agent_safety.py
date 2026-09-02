@@ -240,6 +240,22 @@ def test_portable_schema_expands_optional_and_tuple_fields_for_provider_tools():
     assert position["items"] == {"type": "number"}
 
 
+def test_cad_flattens_invalid_model_parent_edges_without_losing_instances():
+    from forma_api.graphs.design import normalize_instance_hierarchy
+
+    manifest = {"instances": [
+        {"id": "base", "definitionId": "base_part", "parentId": "assembly",
+         "name": "Base", "frame": {"position": [0, 0, 0], "rotation": [0, 0, 0]}},
+        {"id": "lid", "definitionId": "lid_part", "parentId": "base",
+         "name": "Lid", "frame": {"position": [0, 0, 0], "rotation": [0, 0, 0]}},
+    ]}
+    normalized, changed = normalize_instance_hierarchy(manifest)
+    assert changed is True
+    assert [item["id"] for item in normalized["instances"]] == ["base", "lid"]
+    assert normalized["instances"][0]["parentId"] is None
+    assert normalized["instances"][1]["parentId"] == "base"
+
+
 def test_triage_clamps_model_tolerance_to_runtime_precision_floor():
     from forma_api.graphs.design import TriageRequirement, normalize_triage_requirements
 

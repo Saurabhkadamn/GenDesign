@@ -457,6 +457,39 @@ def bind_requirements_to_manifest(requirements: list[dict], manifest: dict) -> l
     return bound
 
 
+def normalize_instance_hierarchy(manifest: dict) -> tuple[dict, bool]:
+    """Make common model-produced assembly parent references safe to build.
+
+    Models often use the component/root id as an instance parent, or emit a
+    self/cyclic parent while describing a flat assembly.  Those references do
+    not change the geometry and should not hide an otherwise buildable draft.
+    Keep each instance independently identifiable and flatten only the invalid
+    edge; duplicate ids and unknown component definitions remain hard contract
+    errors.
+    """
+    payload = json.loads(json.dumps(manifest))
+    instances = payload.get("instances", [])
+    ids = {item.get("id") for item in instances}
+    changed = False
+    for item in instances:
+        parent = item.get("parentId")
+        if parent is not None and (parent not in ids or parent == item.get("id")):
+            item["parentId"] = None
+            changed = True
+    for item in instances:
+        seen = {item.get("id")}
+        parent = item.get("parentId")
+        while parent is not None:
+            if parent in seen:
+                item["parentId"] = None
+                changed = True
+                break
+            seen.add(parent)
+            parent_item = next((candidate for candidate in instances if candidate.get("id") == parent), None)
+            parent = parent_item.get("parentId") if parent_item else None
+    return payload, changed
+
+
 async def cad_candidate(state: AgentState, *, repair=False) -> dict:
     snapshot = await run_service.load_candidate(state["run_id"])
     context = {"request": state.get("clarified_request") or state["original_request"],
@@ -470,8 +503,13 @@ async def cad_candidate(state: AgentState, *, repair=False) -> dict:
     value, usage = await structured_turn(state, "cad", "repair" if repair else "design",
         prompt + "\nPrivate context: " + json.dumps(context), "submit_candidate", Candidate)
     try:
-        candidate = Snapshot.model_validate({"manifest": value.manifest.model_dump(),
+        manifest, hierarchy_changed = normalize_instance_hierarchy(value.manifest.model_dump())
+        candidate = Snapshot.model_validate({"manifest": manifest,
             "files": {**snapshot["files"], **value.files}}).model_dump()
+        if hierarchy_changed:
+            await repo.event(state["run_id"],
+                "CAD assembly hierarchy had invalid parent references; flattened those edges for a buildable draft.",
+                kind="validation", stage="cad")
     except ValidationError as exc:
         feedback = "; ".join(
             f"{'.'.join(map(str, item['loc']))}: {item['msg']}"
