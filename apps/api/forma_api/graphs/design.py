@@ -7,7 +7,7 @@ from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
-from pydantic import Field, ValidationError
+from pydantic import Field, ValidationError, field_validator
 
 from .. import db, models, repository as repo
 from ..contracts import AppSettings, Contract, Manifest, Requirement, SafeId, Snapshot, SourcePath, Vector
@@ -60,6 +60,29 @@ class TriageRequirement(Contract):
     radius: float | None = Field(default=None, gt=0)
     positions: list[tuple[float, float]] = Field(default_factory=list, max_length=1000)
     tolerance: float = Field(default=0.02, gt=0, le=0.1)
+
+    @staticmethod
+    def _provider_vector(value):
+        """Accept Gemini's occasional JSON/comma string for numeric vectors.
+
+        The model-facing declaration advertises arrays, but some OpenRouter
+        Gemini responses serialize a tuple as a string (for example
+        ``"[160, 120, 140]"``).  Decode that transport quirk before the normal
+        Pydantic contract runs; malformed values still fail validation.
+        """
+        if not isinstance(value, str):
+            return value
+        text = value.strip()
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            parsed = [part.strip() for part in text.split(",") if part.strip()]
+        return parsed
+
+    @field_validator("dimensions", "center", "positions", mode="before")
+    @classmethod
+    def decode_provider_vectors(cls, value):
+        return cls._provider_vector(value)
 
 
 class Triage(Contract):

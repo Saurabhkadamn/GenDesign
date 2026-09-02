@@ -196,6 +196,19 @@ def test_triage_preserves_complete_geometry_requirements():
     assert result[0]["diameter"] == 9
 
 
+def test_triage_accepts_gemini_serialized_numeric_vectors():
+    from forma_api.graphs.design import Triage
+
+    value = Triage.model_validate({
+        "route": "cad",
+        "requirements": [{
+            "id": "envelope", "kind": "dimensions",
+            "dimensions": "[160, 120, 140]", "description": "Envelope",
+        }],
+    })
+    assert value.requirements[0].dimensions == (160.0, 120.0, 140.0)
+
+
 def test_triage_clamps_model_tolerance_to_runtime_precision_floor():
     from forma_api.graphs.design import TriageRequirement, normalize_triage_requirements
 
