@@ -1,0 +1,23 @@
+// Browser-only contracts generated from the Python API OpenAPI schema.
+import type { components } from './generated';
+export type AgentRole = components['schemas']['ModelConfigView']['role'];
+export type RunStatus = components['schemas']['Run']['status'];
+export type ProjectManifest = components['schemas']['Manifest'];
+export type ComponentDefinition = components['schemas']['Component'];
+export type SourceSnapshot = components['schemas']['Snapshot'];
+export type ExecutionLimits = components['schemas']['Limits'];
+export type Profile = components['schemas']['Profile'];
+export type Project = components['schemas']['Project'];
+export type Revision = components['schemas']['Revision'];
+export type Run = components['schemas']['Run'];
+export type ChatMessage = components['schemas']['ChatMessage'];
+export type RunEvent = components['schemas']['RunEvent'];
+export type Artifact = components['schemas']['Artifact'];
+export type CalculationRecord = components['schemas']['CalculationRecord'];
+export type WorkspaceState = components['schemas']['WorkspaceState'];
+export type ModelOptions = components['schemas']['ModelOptions'];
+export type ModelConfigView = components['schemas']['ModelConfigView'];
+export type AppSettings = components['schemas']['AppSettings'];
+export type CalculationResult = components['schemas']['CalculationResult'];
+export { defaultLimits, emptyManifest } from './defaults';
+export const terminalStatuses: RunStatus[] = ['succeeded','failed','cancelled','waiting_input','paused'];

@@ -1,0 +1,100 @@
+@import 'tailwindcss';
+@source '../../../../node_modules/streamdown/dist/*.js';
+
+:root {
+  --background: #f7f7f2;
+  --foreground: #292d29;
+  --card: #fffefa;
+  --card-foreground: #292d29;
+  --popover: #fffefa;
+  --popover-foreground: #292d29;
+  --primary: #4b6254;
+  --primary-foreground: #ffffff;
+  --secondary: #efefe9;
+  --secondary-foreground: #474e46;
+  --muted: #efefe9;
+  --muted-foreground: #505b4c;
+  --accent: #e9eee6;
+  --accent-foreground: #354d3e;
+  --destructive: #a34137;
+  --border: #c4ccbe;
+  --input: #89967f;
+  --ring: #405d43;
+  --radius: 0.75rem;
+}
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  font-family: var(--font-geist-sans), sans-serif;
+  background: var(--background);
+  color: var(--foreground);
+}
+button,
+a,
+input,
+textarea,
+select {
+  -webkit-tap-highlight-color: transparent;
+}
+button:not(:disabled),
+a {
+  cursor: pointer;
+}
+button:disabled {
+  cursor: not-allowed;
+}
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+button {
+  transition:
+    background 160ms,
+    color 160ms,
+    box-shadow 160ms;
+}
+:focus-visible {
+  outline: 3px solid #405d43;
+  outline-offset: 3px;
+}
+::selection {
+  background: #dce8d5;
+}
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-thumb {
+  background: #d7dccf;
+  border-radius: 8px;
+}

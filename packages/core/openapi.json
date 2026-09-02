@@ -1,0 +1,1564 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Forma API",
+    "version": "0.3.0"
+  },
+  "paths": {
+    "/api/health": {
+      "get": {
+        "summary": "Health",
+        "operationId": "health_api_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/session": {
+      "get": {
+        "summary": "Session",
+        "operationId": "session_api_session_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionView"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/runs/{run_id}/events": {
+      "get": {
+        "summary": "Events",
+        "operationId": "events_api_runs__run_id__events_get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects": {
+      "get": {
+        "summary": "Projects",
+        "operationId": "projects_api_projects_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/Project"
+                  },
+                  "type": "array",
+                  "title": "Response Projects Api Projects Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{project_id}": {
+      "get": {
+        "summary": "Project Workspace",
+        "operationId": "project_workspace_api_projects__project_id__get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceState"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/runs/{run_id}": {
+      "get": {
+        "summary": "Get Run",
+        "operationId": "get_run_api_runs__run_id__get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Run"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/models": {
+      "get": {
+        "summary": "Get Models",
+        "operationId": "get_models_api_admin_models_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ModelConfigView"
+                  },
+                  "type": "array",
+                  "title": "Response Get Models Api Admin Models Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/model-options": {
+      "get": {
+        "summary": "Get Model Options",
+        "operationId": "get_model_options_api_admin_model_options_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelOptions"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Artifact": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          },
+          "revision_id": {
+            "title": "Revision Id",
+            "type": "string"
+          },
+          "component_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Component Id"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "step",
+              "glb",
+              "plot"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "bytes": {
+            "title": "Bytes",
+            "type": "integer"
+          },
+          "storage_path": {
+            "title": "Storage Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "revision_id",
+          "component_id",
+          "name",
+          "kind",
+          "bytes",
+          "storage_path"
+        ],
+        "title": "Artifact",
+        "type": "object"
+      },
+      "CalculationCheck": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "passed": {
+            "title": "Passed",
+            "type": "boolean"
+          },
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "passed",
+          "detail"
+        ],
+        "title": "CalculationCheck",
+        "type": "object"
+      },
+      "CalculationRecord": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "revision_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revision Id"
+          },
+          "result": {
+            "$ref": "#/components/schemas/CalculationResult"
+          },
+          "stale": {
+            "title": "Stale",
+            "type": "boolean"
+          },
+          "reproducible": {
+            "title": "Reproducible",
+            "type": "boolean"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "run_id",
+          "revision_id",
+          "result",
+          "stale",
+          "reproducible",
+          "created_at"
+        ],
+        "title": "CalculationRecord",
+        "type": "object"
+      },
+      "CalculationResult": {
+        "additionalProperties": false,
+        "properties": {
+          "title": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          },
+          "inputs": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/Quantity"
+            },
+            "title": "Inputs",
+            "type": "object"
+          },
+          "assumptions": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 30,
+            "title": "Assumptions",
+            "type": "array"
+          },
+          "equations": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 30,
+            "title": "Equations",
+            "type": "array"
+          },
+          "results": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/Quantity"
+            },
+            "title": "Results",
+            "type": "object"
+          },
+          "checks": {
+            "items": {
+              "$ref": "#/components/schemas/CalculationCheck"
+            },
+            "title": "Checks",
+            "type": "array"
+          },
+          "conclusion": {
+            "maxLength": 4000,
+            "title": "Conclusion",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "inputs",
+          "assumptions",
+          "equations",
+          "results",
+          "checks",
+          "conclusion"
+        ],
+        "title": "CalculationResult",
+        "type": "object"
+      },
+      "ChatMessage": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "role": {
+            "enum": [
+              "user",
+              "assistant"
+            ],
+            "title": "Role",
+            "type": "string"
+          },
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "run_id",
+          "role",
+          "content",
+          "created_at"
+        ],
+        "title": "ChatMessage",
+        "type": "object"
+      },
+      "Component": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "solid",
+              "surface",
+              "assembly"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "dependencies": {
+            "items": {
+              "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$",
+              "type": "string"
+            },
+            "maxItems": 100,
+            "title": "Dependencies",
+            "type": "array"
+          },
+          "parameters": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "boolean"
+                },
+                {
+                  "items": {
+                    "type": "number"
+                  },
+                  "maxItems": 1000,
+                  "type": "array"
+                },
+                {
+                  "items": {
+                    "items": {
+                      "type": "number"
+                    },
+                    "maxItems": 1000,
+                    "type": "array"
+                  },
+                  "maxItems": 1000,
+                  "type": "array"
+                }
+              ]
+            },
+            "maxProperties": 200,
+            "title": "Parameters",
+            "type": "object"
+          },
+          "color": {
+            "default": "#b9c4ad",
+            "pattern": "^#[0-9a-fA-F]{6}$",
+            "title": "Color",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "source",
+          "kind",
+          "dependencies",
+          "parameters",
+          "color"
+        ],
+        "title": "Component",
+        "type": "object"
+      },
+      "Frame": {
+        "additionalProperties": false,
+        "properties": {
+          "position": {
+            "maxItems": 3,
+            "minItems": 3,
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "title": "Position",
+            "type": "array"
+          },
+          "rotation": {
+            "maxItems": 3,
+            "minItems": 3,
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "title": "Rotation",
+            "type": "array"
+          }
+        },
+        "required": [
+          "position",
+          "rotation"
+        ],
+        "title": "Frame",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "Instance": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "definitionId": {
+            "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$",
+            "title": "Definitionid",
+            "type": "string"
+          },
+          "parentId": {
+            "anyOf": [
+              {
+                "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parentid"
+          },
+          "name": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "frame": {
+            "$ref": "#/components/schemas/Frame"
+          }
+        },
+        "required": [
+          "id",
+          "definitionId",
+          "parentId",
+          "name",
+          "frame"
+        ],
+        "title": "Instance",
+        "type": "object"
+      },
+      "Manifest": {
+        "additionalProperties": false,
+        "properties": {
+          "schemaVersion": {
+            "const": 1,
+            "default": 1,
+            "title": "Schemaversion",
+            "type": "integer"
+          },
+          "units": {
+            "const": "mm",
+            "default": "mm",
+            "title": "Units",
+            "type": "string"
+          },
+          "components": {
+            "items": {
+              "$ref": "#/components/schemas/Component"
+            },
+            "maxItems": 200,
+            "title": "Components",
+            "type": "array"
+          },
+          "instances": {
+            "items": {
+              "$ref": "#/components/schemas/Instance"
+            },
+            "maxItems": 1000,
+            "title": "Instances",
+            "type": "array"
+          },
+          "rootComponentId": {
+            "anyOf": [
+              {
+                "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Rootcomponentid"
+          }
+        },
+        "required": [
+          "schemaVersion",
+          "units",
+          "components",
+          "instances",
+          "rootComponentId"
+        ],
+        "title": "Manifest",
+        "type": "object"
+      },
+      "ModelConfigView": {
+        "properties": {
+          "role": {
+            "enum": [
+              "coordinator",
+              "cad",
+              "engineering"
+            ],
+            "title": "Role",
+            "type": "string"
+          },
+          "model_id": {
+            "title": "Model Id",
+            "type": "string"
+          },
+          "key_hint": {
+            "title": "Key Hint",
+            "type": "string"
+          },
+          "active": {
+            "title": "Active",
+            "type": "boolean"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          },
+          "tested_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tested At"
+          }
+        },
+        "required": [
+          "role",
+          "model_id",
+          "key_hint",
+          "active",
+          "version",
+          "tested_at"
+        ],
+        "title": "ModelConfigView",
+        "type": "object"
+      },
+      "ModelOption": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "contextLength": {
+            "title": "Contextlength",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "contextLength"
+        ],
+        "title": "ModelOption",
+        "type": "object"
+      },
+      "ModelOptions": {
+        "properties": {
+          "freeOnly": {
+            "title": "Freeonly",
+            "type": "boolean"
+          },
+          "syntheticNemotronTesting": {
+            "title": "Syntheticnemotrontesting",
+            "type": "boolean"
+          },
+          "models": {
+            "items": {
+              "$ref": "#/components/schemas/ModelOption"
+            },
+            "title": "Models",
+            "type": "array"
+          }
+        },
+        "required": [
+          "freeOnly",
+          "syntheticNemotronTesting",
+          "models"
+        ],
+        "title": "ModelOptions",
+        "type": "object"
+      },
+      "Profile": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "role": {
+            "enum": [
+              "admin",
+              "engineer"
+            ],
+            "title": "Role",
+            "type": "string"
+          },
+          "active": {
+            "title": "Active",
+            "type": "boolean"
+          },
+          "must_change_password": {
+            "title": "Must Change Password",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "email",
+          "display_name",
+          "role",
+          "active",
+          "must_change_password"
+        ],
+        "title": "Profile",
+        "type": "object"
+      },
+      "Project": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "owner_id": {
+            "title": "Owner Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "current_revision_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Revision Id"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "owner_id",
+          "name",
+          "current_revision_id",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "Project",
+        "type": "object"
+      },
+      "Quantity": {
+        "additionalProperties": false,
+        "properties": {
+          "value": {
+            "title": "Value",
+            "type": "number"
+          },
+          "unit": {
+            "title": "Unit",
+            "type": "string"
+          }
+        },
+        "required": [
+          "value",
+          "unit"
+        ],
+        "title": "Quantity",
+        "type": "object"
+      },
+      "RequirementCheck": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "passed",
+              "failed",
+              "unverified"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "evidence": {
+            "additionalProperties": true,
+            "title": "Evidence",
+            "type": "object"
+          }
+        },
+        "required": [
+          "id",
+          "description",
+          "kind",
+          "status",
+          "evidence"
+        ],
+        "title": "RequirementCheck",
+        "type": "object"
+      },
+      "Revision": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "ordinal": {
+            "title": "Ordinal",
+            "type": "integer"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          },
+          "manifest": {
+            "$ref": "#/components/schemas/Manifest"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "restored_from": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Restored From"
+          },
+          "validation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ValidationReport"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "run_id",
+          "ordinal",
+          "summary",
+          "manifest",
+          "created_at",
+          "restored_from"
+        ],
+        "title": "Revision",
+        "type": "object"
+      },
+      "Run": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          },
+          "owner_id": {
+            "title": "Owner Id",
+            "type": "string"
+          },
+          "base_revision_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Revision Id"
+          },
+          "status": {
+            "enum": [
+              "queued",
+              "running",
+              "waiting_input",
+              "paused",
+              "succeeded",
+              "failed",
+              "cancelled"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "selected_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Selected Ids",
+            "type": "array"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          },
+          "workflow_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workflow Id"
+          },
+          "model_calls": {
+            "title": "Model Calls",
+            "type": "integer"
+          },
+          "backend_version": {
+            "title": "Backend Version",
+            "type": "integer"
+          },
+          "execution_environment": {
+            "title": "Execution Environment",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "owner_id",
+          "base_revision_id",
+          "status",
+          "message",
+          "selected_ids",
+          "error",
+          "created_at",
+          "updated_at",
+          "workflow_id",
+          "model_calls",
+          "backend_version",
+          "execution_environment"
+        ],
+        "title": "Run",
+        "type": "object"
+      },
+      "RunEvent": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "status",
+              "tool",
+              "validation",
+              "error"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "stage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Stage"
+          },
+          "attempt": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Attempt"
+          },
+          "elapsed_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Elapsed Ms"
+          }
+        },
+        "required": [
+          "id",
+          "run_id",
+          "kind",
+          "message",
+          "created_at"
+        ],
+        "title": "RunEvent",
+        "type": "object"
+      },
+      "SessionView": {
+        "additionalProperties": false,
+        "properties": {
+          "configured": {
+            "title": "Configured",
+            "type": "boolean"
+          },
+          "profile": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Profile"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "configured",
+          "profile"
+        ],
+        "title": "SessionView",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      },
+      "ValidationReport": {
+        "properties": {
+          "identity": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Identity",
+            "type": "object"
+          },
+          "requirements": {
+            "items": {
+              "$ref": "#/components/schemas/RequirementCheck"
+            },
+            "title": "Requirements",
+            "type": "array"
+          },
+          "allRequirementsVerified": {
+            "title": "Allrequirementsverified",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "identity",
+          "requirements",
+          "allRequirementsVerified"
+        ],
+        "title": "ValidationReport",
+        "type": "object"
+      },
+      "WorkspaceState": {
+        "properties": {
+          "project": {
+            "$ref": "#/components/schemas/Project"
+          },
+          "revisions": {
+            "items": {
+              "$ref": "#/components/schemas/Revision"
+            },
+            "title": "Revisions",
+            "type": "array"
+          },
+          "messages": {
+            "items": {
+              "$ref": "#/components/schemas/ChatMessage"
+            },
+            "title": "Messages",
+            "type": "array"
+          },
+          "runs": {
+            "items": {
+              "$ref": "#/components/schemas/Run"
+            },
+            "title": "Runs",
+            "type": "array"
+          },
+          "artifacts": {
+            "items": {
+              "$ref": "#/components/schemas/Artifact"
+            },
+            "title": "Artifacts",
+            "type": "array"
+          },
+          "calculations": {
+            "items": {
+              "$ref": "#/components/schemas/CalculationRecord"
+            },
+            "title": "Calculations",
+            "type": "array"
+          },
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/RunEvent"
+            },
+            "title": "Events",
+            "type": "array"
+          }
+        },
+        "required": [
+          "project",
+          "revisions",
+          "messages",
+          "runs",
+          "artifacts",
+          "calculations",
+          "events"
+        ],
+        "title": "WorkspaceState",
+        "type": "object"
+      },
+      "AppSettings": {
+        "additionalProperties": false,
+        "properties": {
+          "emergencyStop": {
+            "default": false,
+            "title": "Emergencystop",
+            "type": "boolean"
+          },
+          "engineeringEnabled": {
+            "default": true,
+            "title": "Engineeringenabled",
+            "type": "boolean"
+          },
+          "surfacingEnabled": {
+            "default": true,
+            "title": "Surfacingenabled",
+            "type": "boolean"
+          },
+          "limits": {
+            "$ref": "#/components/schemas/Limits"
+          }
+        },
+        "required": [
+          "emergencyStop",
+          "engineeringEnabled",
+          "surfacingEnabled",
+          "limits"
+        ],
+        "title": "AppSettings",
+        "type": "object"
+      },
+      "ChatRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "message": {
+            "maxLength": 12000,
+            "minLength": 1,
+            "title": "Message",
+            "type": "string"
+          },
+          "baseRevisionId": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Baserevisionid"
+          },
+          "selectedIds": {
+            "items": {
+              "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$",
+              "type": "string"
+            },
+            "maxItems": 100,
+            "title": "Selectedids",
+            "type": "array"
+          },
+          "idempotencyKey": {
+            "format": "uuid",
+            "title": "Idempotencykey",
+            "type": "string"
+          }
+        },
+        "required": [
+          "message",
+          "baseRevisionId",
+          "selectedIds",
+          "idempotencyKey"
+        ],
+        "title": "ChatRequest",
+        "type": "object"
+      },
+      "Limits": {
+        "additionalProperties": false,
+        "properties": {
+          "maxModelCalls": {
+            "default": 12,
+            "maximum": 30,
+            "minimum": 1,
+            "title": "Maxmodelcalls",
+            "type": "integer"
+          },
+          "maxRepairs": {
+            "default": 2,
+            "maximum": 3,
+            "minimum": 0,
+            "title": "Maxrepairs",
+            "type": "integer"
+          },
+          "commandTimeoutSeconds": {
+            "default": 180,
+            "maximum": 300,
+            "minimum": 30,
+            "title": "Commandtimeoutseconds",
+            "type": "integer"
+          },
+          "maxArtifactBytes": {
+            "default": 41943040,
+            "maximum": 41943040,
+            "minimum": 1024,
+            "title": "Maxartifactbytes",
+            "type": "integer"
+          },
+          "retainedExports": {
+            "default": 5,
+            "maximum": 10,
+            "minimum": 1,
+            "title": "Retainedexports",
+            "type": "integer"
+          },
+          "monthlySandboxSeconds": {
+            "default": 7200,
+            "maximum": 18000,
+            "minimum": 60,
+            "title": "Monthlysandboxseconds",
+            "type": "integer"
+          },
+          "storageBudgetBytes": {
+            "default": 800000000,
+            "maximum": 900000000,
+            "minimum": 1048576,
+            "title": "Storagebudgetbytes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "maxModelCalls",
+          "maxRepairs",
+          "commandTimeoutSeconds",
+          "maxArtifactBytes",
+          "retainedExports",
+          "monthlySandboxSeconds",
+          "storageBudgetBytes"
+        ],
+        "title": "Limits",
+        "type": "object"
+      },
+      "Snapshot": {
+        "additionalProperties": false,
+        "properties": {
+          "manifest": {
+            "$ref": "#/components/schemas/Manifest"
+          },
+          "files": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Files",
+            "type": "object"
+          }
+        },
+        "required": [
+          "manifest",
+          "files"
+        ],
+        "title": "Snapshot",
+        "type": "object"
+      },
+      "FrontendContracts": {
+        "properties": {
+          "workspace": {
+            "$ref": "#/components/schemas/WorkspaceState"
+          },
+          "session": {
+            "$ref": "#/components/schemas/SessionView"
+          },
+          "settings": {
+            "$ref": "#/components/schemas/AppSettings"
+          },
+          "models": {
+            "$ref": "#/components/schemas/ModelOptions"
+          },
+          "model_config_view": {
+            "$ref": "#/components/schemas/ModelConfigView"
+          },
+          "snapshot": {
+            "$ref": "#/components/schemas/Snapshot"
+          },
+          "request": {
+            "$ref": "#/components/schemas/ChatRequest"
+          }
+        },
+        "required": [
+          "workspace",
+          "session",
+          "settings",
+          "models",
+          "model_config_view",
+          "snapshot",
+          "request"
+        ],
+        "title": "FrontendContracts",
+        "type": "object"
+      }
+    }
+  }
+}

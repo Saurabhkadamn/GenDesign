@@ -1,0 +1,68 @@
+{
+  "name": "forma-cad",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "dev": "npm run dev --workspace @forma/web",
+    "build": "npm run build --workspace @forma/web",
+    "start": "npm run start --workspace @forma/web",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "lint": "eslint .",
+    "runtime:snapshot": "python scripts/create_runtime_snapshot.py",
+    "contracts": "python scripts/generate_contracts.py && npx --yes openapi-typescript@7.13.0 packages/core/openapi.json -o packages/core/src/generated.ts",
+    "test:api": "python -m uv run --project apps/api pytest"
+  },
+  "dependencies": {
+    "@forma/core": "0.1.0",
+    "@react-three/drei": "10.7.8",
+    "@react-three/fiber": "9.7.0",
+    "ai": "7.0.85",
+    "class-variance-authority": "0.7.1",
+    "clsx": "2.1.1",
+    "geist": "1.7.2",
+    "lucide-react": "1.37.0",
+    "next": "16.3.3",
+    "radix-ui": "1.6.7",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "tailwind-merge": "3.6.0",
+    "three": "0.185.1",
+    "zod": "4.5.4"
+  },
+  "overrides": {
+    "@workflow/core": {
+      "nanoid": "5.1.16"
+    },
+    "@workflow/world-local": {
+      "undici": "7.29.0"
+    },
+    "@workflow/world-vercel": {
+      "undici": "7.29.0"
+    }
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "0.5.8",
+    "@tailwindcss/postcss": "4.3.3",
+    "@types/node": "26.4.0",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.5",
+    "@types/three": "0.185.4",
+    "eslint": "9.39.5",
+    "eslint-config-next": "16.3.3",
+    "prettier": "3.9.6",
+    "shadcn": "4.19.0",
+    "supabase": "2.116.0",
+    "tailwindcss": "4.3.3",
+    "tsx": "4.23.13",
+    "typescript": "6.0.3",
+    "vitest": "4.1.11"
+  }
+}

@@ -1,0 +1,9 @@
+node_modules
+.next
+**/.next
+**/.venv
+**/.well-known
+package-lock.json
+uv.lock
+test-results
+**/*.tsbuildinfo
