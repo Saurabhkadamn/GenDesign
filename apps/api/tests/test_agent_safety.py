@@ -180,6 +180,34 @@ def test_triage_preserves_complete_geometry_requirements():
     assert result[0]["diameter"] == 9
 
 
+def test_triage_clamps_model_tolerance_to_runtime_precision_floor():
+    from forma_api.graphs.design import TriageRequirement, normalize_triage_requirements
+
+    result = normalize_triage_requirements([TriageRequirement(
+        id="plate", kind="dimensions", dimensions=[100, 60, 6], tolerance=0.001,
+        description="Plate dimensions",
+    )])
+    assert result[0]["tolerance"] == 0.05
+
+
+def test_complex_requests_keep_distinct_model_hole_patterns():
+    from forma_api.requirements import merge_requirements
+
+    supplied = [
+        {"id": "frame", "kind": "through_holes", "axis": "Y", "count": 4,
+         "diameter": 11, "positions": [[-60, -50], [-60, 50], [60, -50], [60, 50]],
+         "description": "Frame pattern"},
+        {"id": "motor", "kind": "through_holes", "axis": "Z", "count": 4,
+         "diameter": 9, "positions": [[-40, -30], [-40, 30], [40, -30], [40, 30]],
+         "description": "Motor pattern"},
+    ]
+    result = merge_requirements(
+        "160 mm × 120 mm × 140 mm, four Ø11 mm frame holes at X=±60 mm and four Ø9 mm motor holes at X=±40 mm",
+        supplied,
+    )
+    assert [(r["id"], r["axis"]) for r in result if r["kind"] == "through_holes"] == [("frame", "Y"), ("motor", "Z")]
+
+
 def test_double_escaped_python_source_is_normalized_without_touching_valid_source():
     from forma_api.execution import normalize_python_source
 

@@ -43,4 +43,11 @@ def merge_requirements(message, supplied):
     # Request-derived values take priority over model-supplied values of the same kind.
     explicit = explicit_requirements(message)
     kinds = {x["kind"] for x in explicit}
+    # The legacy extractor can only represent one XY hole pattern.  Complex
+    # requests commonly contain separate motor and frame patterns; once triage
+    # has described those patterns, preserve them instead of replacing them
+    # with the extractor's first diameter/X/Y match.
+    if any(r["kind"] == "through_holes" for r in supplied):
+        explicit = [r for r in explicit if r["kind"] != "through_holes"]
+        kinds.discard("through_holes")
     return explicit + [r for r in supplied if r["kind"] not in kinds]

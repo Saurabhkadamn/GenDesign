@@ -2,6 +2,7 @@
 import json
 import asyncio
 import math
+import os
 import time
 
 import httpx
@@ -15,6 +16,11 @@ from ..security import decrypt_secret
 _catalog: tuple[float, list] = (0, [])
 NEMOTRON = "nvidia/nemotron-3-ultra-550b-a55b:free"
 DEFAULT_MAX_COMPLETION_TOKENS = 32768
+# Leave enough headroom for persistence and checkpoint cleanup before the
+# hosted Workflow invocation hard limit (currently 300 seconds).  The model
+# may still use its advertised completion-token maximum; this is only the
+# transport deadline for a single provider request.
+DEFAULT_REQUEST_TIMEOUT_SECONDS = 180
 
 
 class ModelFailure(Exception):
@@ -133,7 +139,11 @@ async def turn(config: dict, messages: list[dict], tools: list[dict], *, max_tok
     try:
         # Large CAD tool calls may legitimately take longer than a short chat
         # response. Keep the deadline below the hosted workflow-step ceiling.
-        async with asyncio.timeout(270):
+        request_timeout = min(
+            max(30, int(os.getenv("OPENROUTER_REQUEST_TIMEOUT_SECONDS", DEFAULT_REQUEST_TIMEOUT_SECONDS))),
+            240,
+        )
+        async with asyncio.timeout(request_timeout):
             raw = await _openrouter_chat(api_key=config["api_key"], model_id=config["model_id"],
                 messages=messages, tools=tools, token_parameter=token_parameter,
                 output_tokens=output_tokens, provider=policy,

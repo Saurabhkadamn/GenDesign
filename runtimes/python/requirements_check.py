@@ -36,16 +36,29 @@ def cylinders(shape, axis_name="Z"):
         outside_solid = shape.isInside(radial_out, 1e-7)
         inside_solid = shape.isInside(radial_in, 1e-7)
         bounds = face.BoundingBox()
+        axis_bounds = [
+            (bounds.xmin, bounds.xmax),
+            (bounds.ymin, bounds.ymax),
+            (bounds.zmin, bounds.zmax),
+        ][axis_index]
+        # A through-hole's cylindrical wall opens into free space at both
+        # ends.  Comparing it with the whole component bounding box is wrong
+        # for a connected L bracket, where a local shelf/back plate is only a
+        # fraction of the component envelope.
+        probe = list(center_coordinates)
+        low, high = axis_bounds
+        eps_axis = 1e-3
+        probe[axis_index] = low - eps_axis
+        low_inside = shape.isInside(tuple(probe), 1e-7)
+        probe[axis_index] = high + eps_axis
+        high_inside = shape.isInside(tuple(probe), 1e-7)
         result.append({"center": [center_coordinates[i] for i in plane], "radius": radius,
                        "angle": abs(u1 - u0), "z": [bounds.zmin, bounds.zmax],
                        "concave": outside_solid and not inside_solid,
                        "convex": inside_solid and not outside_solid,
                        "axis": axis_name, "plane": plane,
-                       "axis_bounds": [
-                           (bounds.xmin, bounds.xmax),
-                           (bounds.ymin, bounds.ymax),
-                           (bounds.zmin, bounds.zmax),
-                       ][axis_index]})
+                       "axis_bounds": axis_bounds,
+                       "through": not low_inside and not high_inside})
     return result
 
 
@@ -89,7 +102,7 @@ def check_requirements(shapes, manifest, requirements):
             axis_index = {"X": 0, "Y": 1, "Z": 2}.get(axis, 2)
             bounds = [(box.xmin, box.xmax), (box.ymin, box.ymax), (box.zmin, box.zmax)]
             faces = cylinders(shape, axis)
-            full_depth = lambda f: near(f["axis_bounds"][0], bounds[axis_index][0]) and near(f["axis_bounds"][1], bounds[axis_index][1])
+            full_depth = lambda f: f.get("through", False)
             if kind == "through_holes":
                 actual = [f for f in faces if f["concave"] and full_depth(f) and abs(f["angle"] - 2 * math.pi) < 1e-5]
                 expected = requirement["positions"]
@@ -108,7 +121,11 @@ def check_requirements(shapes, manifest, requirements):
                 if match is not None:
                     matched.append(match)
                     unmatched.remove(match)
-            passed = len(matched) == len(expected) == requirement["count"] == len(actual)
+            # A part may contain additional, separately documented holes (for
+            # example a shaft bore alongside six mounting holes).  Require a
+            # one-to-one match for every requested hole, but do not reject
+            # those independent features as an accidental duplicate.
+            passed = len(matched) == len(expected) == requirement["count"]
             item["evidence"] = {"expectedCount": requirement["count"], "expectedPositionsMm": expected,
                                 "expectedRadiusMm": radius, "measuredCylindricalFaces": actual,
                                  "throughDepthMm": bounds[axis_index][1] - bounds[axis_index][0], "axis": axis}

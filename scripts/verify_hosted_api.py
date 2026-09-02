@@ -1,5 +1,6 @@
 """Live authenticated preview checks. CAD executes only inside Vercel Sandbox."""
 import json
+import os
 from pathlib import Path
 import time
 from uuid import uuid4
@@ -7,7 +8,9 @@ from uuid import uuid4
 import httpx
 
 ROOT = Path(__file__).resolve().parents[1]
-config = json.loads((ROOT / "test-results/preview-access.json").read_text())
+config = json.loads((ROOT / "test-results" / os.getenv("FORMA_ACCEPTANCE_ACCESS", "preview-access.json")).read_text())
+if os.getenv("FORMA_ACCEPTANCE_URL"):
+    config["url"] = os.environ["FORMA_ACCEPTANCE_URL"]
 credentials = dict(line.split(":", 1) for line in (ROOT / "test-results/forma-admin-credentials.txt").read_text().splitlines() if ":" in line)
 REQUEST = "Design an aluminum mounting plate, 80 × 50 × 6 mm, centered at the origin. Add four 6 mm diameter through-holes at X = ±30 mm and Y = ±15 mm. Round the four outer corners with a 3 mm radius."
 

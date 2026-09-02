@@ -24,10 +24,20 @@ async def operation(run, key, kind, callback, *, idempotent=False):
     old = await db.one("run_operations", {"run_id": f"eq.{run['id']}", "operation_key": f"eq.{key}"}, required=False)
     if old and old["status"] == "complete":
         return old["result"]
+    # A definitive provider throttle did not execute a model request.  An
+    # explicit Continue may retry it; timeouts and unknown failures remain
+    # non-repeatable because the provider may have accepted the request.
+    retryable_model_failure = (
+        old and kind == "model" and old["status"] == "failed"
+        and (old.get("result") or {}).get("category") in {"rate_limit", "overloaded"}
+    )
     if old and not idempotent:
         if old["status"] == "started":
             await db.update("run_operations", {"status": "ambiguous"}, run_id=run["id"], operation_key=key)
-        raise Pause("The previous external request has an uncertain or failed outcome. It was not repeated automatically. Review the connection and Continue when ready.")
+        if not retryable_model_failure:
+            raise Pause("The previous external request has an uncertain or failed outcome. It was not repeated automatically. Review the connection and Continue when ready.")
+        await db.update("run_operations", {"status": "started", "result": None, "updated_at": repo.utcnow()},
+                        run_id=run["id"], operation_key=key)
     if not old:
         await db.insert("run_operations", {"run_id": run["id"], "operation_key": key, "kind": kind, "status": "started"})
     try:
@@ -302,6 +312,14 @@ async def execute_tool(run, cp, call, app_settings, worker):
             raise ValueError("Only the exact independently validated candidate can be published.")
         if not cp["requirements"]:
             raise ValueError("Record the explicit requirements, including unsupported checks, before publication.")
+        # Checkpoint identity alone is insufficient: older checkpoints may have
+        # been produced before the independent geometry gate existed.  Never
+        # publish a report with an unverified supported geometry requirement.
+        geometry_kinds = {"dimensions", "center", "solid_count", "through_holes", "corner_radius"}
+        geometry = [r for r in validated.get("report", {}).get("requirements", [])
+                    if r.get("kind") in geometry_kinds]
+        if not geometry or any(r.get("status") != "passed" for r in geometry):
+            raise ValueError("Independent geometry validation is incomplete; rebuild and validate the candidate before publication.")
         existing = await db.rest("artifacts", params={"select": "bytes"})
         if sum(a["bytes"] for a in existing) + sum(a["bytes"] for a in validated["artifacts"]) > limits.storageBudgetBytes:
             raise Pause("The configured artifact storage budget is exhausted.")

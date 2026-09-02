@@ -81,6 +81,11 @@ def normalize_triage_requirements(items: list[TriageRequirement]) -> list[dict]:
     normalized = []
     for item in items:
         payload = item.model_dump(exclude_none=True)
+        # CadQuery/OpenCascade measurements have a small numerical tolerance;
+        # a model must not turn that runtime precision into a false geometry
+        # failure by inventing a sub-0.05 mm requirement tolerance.  The
+        # measured OpenCascade envelope drift is about 0.014 mm at 200 mm.
+        payload["tolerance"] = max(float(payload.get("tolerance", 0.02)), 0.05)
         # Keep the coordinate convention explicit for non-Z interfaces. The
         # engineering model often names a frame interface without emitting an
         # axis; a vertical frame bolt hole is normal to Y in Forma's datum.
@@ -101,7 +106,7 @@ def normalize_triage_requirements(items: list[TriageRequirement]) -> list[dict]:
                 kind="unverified",
                 componentId=item.componentId,
                 axis=payload.get("axis", item.axis),
-                tolerance=item.tolerance,
+                tolerance=payload["tolerance"],
             ).model_dump())
     return normalized
 
