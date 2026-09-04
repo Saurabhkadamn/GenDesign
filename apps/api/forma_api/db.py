@@ -37,11 +37,18 @@ async def rest(table: str, method="GET", *, params=None, body=None, prefer=None)
     if not response.is_success:
         # Never include provider payloads: they may contain private source or credentials.
         code = response.json().get("message", "") if response.headers.get("content-type", "").startswith("application/json") else ""
-        known = {"STALE_REVISION": "The project changed. Refresh before sending your request.",
-                 "RUN_NOT_PAUSED": "Only paused work can be continued."}
-        for key, message in known.items():
+        known = {
+            "STALE_REVISION": (409, "The project changed. Refresh before sending your request."),
+            "RUN_NOT_PAUSED": (409, "Only paused work can be continued."),
+            "RUN_NOT_ACTIVE": (409, "This run is no longer active. Resume it before publishing."),
+            "LEASE_LOST": (409, "The worker lease expired. Continue to retry this run."),
+            "VALIDATION_REQUIRED": (422, "The CAD validation evidence is incomplete."),
+            "ACCOUNT_INACTIVE": (403, "The account is not active for publishing."),
+            "EMERGENCY_STOP": (503, "CAD publication is temporarily stopped by the administrator."),
+        }
+        for key, (status_code, message) in known.items():
             if key in code:
-                raise HTTPException(409, message)
+                raise HTTPException(status_code, message)
         raise HTTPException(503, "The project database could not complete this operation.")
     return response.json() if response.content else None
 
