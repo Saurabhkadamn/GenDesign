@@ -256,6 +256,45 @@ export interface components {
              * @default #b9c4ad
              */
             color: string;
+            /** @default null */
+            material: components["schemas"]["MaterialSpec"] | null;
+        };
+        /** ConfigurationFrame */
+        ConfigurationFrame: {
+            /** Instanceid */
+            instanceId: string;
+            frame: components["schemas"]["Frame"];
+        };
+        /** ConfigurationSpec */
+        ConfigurationSpec: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Frames */
+            frames: components["schemas"]["ConfigurationFrame"][];
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+        };
+        /**
+         * FeatureOperation
+         * @description Auditable modeling intent emitted by generated source.
+         */
+        FeatureOperation: {
+            /** Id */
+            id: string;
+            /** Componentid */
+            componentId: string;
+            /** Operation */
+            operation: string;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
         };
         /** Frame */
         Frame: {
@@ -283,11 +322,51 @@ export interface components {
             id: string;
             /** Definitionid */
             definitionId: string;
-            /** Parentid */
+            /**
+             * Parentid
+             * @default null
+             */
             parentId: string | null;
             /** Name */
             name: string;
             frame: components["schemas"]["Frame"];
+        };
+        /**
+         * JointSpec
+         * @description Relationship between semantic references.
+         *
+         *     Joint kinds are intentionally extensible (for example rigid, revolute,
+         *     cylindrical, gear, contact or a future specialist relation).
+         */
+        JointSpec: {
+            /** Id */
+            id: string;
+            /** Kind */
+            kind: string;
+            /** Referencea */
+            referenceA: string;
+            /** Referenceb */
+            referenceB: string;
+            /**
+             * Lowerlimit
+             * @default null
+             */
+            lowerLimit: number | null;
+            /**
+             * Upperlimit
+             * @default null
+             */
+            upperLimit: number | null;
+            /**
+             * Unit
+             * @default
+             */
+            unit: string;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
         };
         /** Manifest */
         Manifest: {
@@ -312,6 +391,27 @@ export interface components {
              * @default null
              */
             rootComponentId: string | null;
+            /** References */
+            references: components["schemas"]["SemanticReference"][];
+            /** Joints */
+            joints: components["schemas"]["JointSpec"][];
+            /** Configurations */
+            configurations: components["schemas"]["ConfigurationSpec"][];
+            /** Featureoperations */
+            featureOperations: components["schemas"]["FeatureOperation"][];
+        };
+        /**
+         * MaterialSpec
+         * @description Optional physical properties attached to a CAD definition.
+         */
+        MaterialSpec: {
+            /** Name */
+            name: string;
+            /**
+             * Densitykgm3
+             * @default null
+             */
+            densityKgM3: number | null;
         };
         /** ModelConfigView */
         ModelConfigView: {
@@ -320,8 +420,14 @@ export interface components {
              * @enum {string}
              */
             role: "coordinator" | "cad" | "engineering";
+            /** Provider */
+            provider?: string;
+            /** Base Url */
+            base_url?: string | null;
             /** Model Id */
             model_id: string;
+            /** Max Output Tokens */
+            max_output_tokens?: number | null;
             /** Key Hint */
             key_hint: string;
             /** Active */
@@ -492,6 +598,49 @@ export interface components {
              */
             elapsed_ms: number | null;
         };
+        /**
+         * SemanticReference
+         * @description Stable, code-authored geometry reference in component-local coordinates.
+         *
+         *     ``kind`` deliberately remains an open string.  The CAD agent may introduce
+         *     domain-specific references without waiting for a backend enum migration.
+         */
+        SemanticReference: {
+            /** Id */
+            id: string;
+            /** Componentid */
+            componentId: string;
+            /** Kind */
+            kind: string;
+            /**
+             * Origin
+             * @default null
+             */
+            origin: [
+                number,
+                number,
+                number
+            ] | null;
+            /**
+             * Direction
+             * @default null
+             */
+            direction: [
+                number,
+                number,
+                number
+            ] | null;
+            /**
+             * Radiusmm
+             * @default null
+             */
+            radiusMm: number | null;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+        };
         /** SessionView */
         SessionView: {
             /** Configured */
@@ -521,6 +670,14 @@ export interface components {
             requirements: components["schemas"]["RequirementCheck"][];
             /** Allrequirementsverified */
             allRequirementsVerified: boolean;
+            /** Inspection */
+            inspection?: {
+                [key: string]: unknown;
+            };
+            /** Review */
+            review?: {
+                [key: string]: unknown;
+            };
         };
         /** WorkspaceState */
         WorkspaceState: {
@@ -575,7 +732,7 @@ export interface components {
         Limits: {
             /**
              * Maxmodelcalls
-             * @default 12
+             * @default 24
              */
             maxModelCalls: number;
             /**

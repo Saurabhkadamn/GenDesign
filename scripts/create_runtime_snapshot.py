@@ -9,7 +9,10 @@ from vercel import sandbox
 
 ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(ROOT / "test-results/hosted-runtime.env")
-FILES = ["uv.lock", "forma_runtime.py", "requirements_check.py", "control.py"]
+FILES = [
+    "uv.lock", "forma_runtime.py", "requirements_check.py",
+    "geometry_inspection.py", "control.py",
+]
 
 
 async def main():

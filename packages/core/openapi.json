@@ -478,6 +478,8 @@
             "type": "string"
           },
           "source": {
+            "maxLength": 180,
+            "pattern": "^(?:parts|assemblies)/(?:[a-zA-Z0-9_-]+/)*[a-zA-Z0-9_-]+\\.py$",
             "title": "Source",
             "type": "string"
           },
@@ -540,6 +542,17 @@
             "pattern": "^#[0-9a-fA-F]{6}$",
             "title": "Color",
             "type": "string"
+          },
+          "material": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MaterialSpec"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           }
         },
         "required": [
@@ -549,9 +562,103 @@
           "kind",
           "dependencies",
           "parameters",
-          "color"
+          "color",
+          "material"
         ],
         "title": "Component",
+        "type": "object"
+      },
+      "ConfigurationFrame": {
+        "additionalProperties": false,
+        "properties": {
+          "instanceId": {
+            "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$",
+            "title": "Instanceid",
+            "type": "string"
+          },
+          "frame": {
+            "$ref": "#/components/schemas/Frame"
+          }
+        },
+        "required": [
+          "instanceId",
+          "frame"
+        ],
+        "title": "ConfigurationFrame",
+        "type": "object"
+      },
+      "ConfigurationSpec": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "frames": {
+            "items": {
+              "$ref": "#/components/schemas/ConfigurationFrame"
+            },
+            "maxItems": 1000,
+            "title": "Frames",
+            "type": "array"
+          },
+          "description": {
+            "default": "",
+            "maxLength": 500,
+            "title": "Description",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "frames",
+          "description"
+        ],
+        "title": "ConfigurationSpec",
+        "type": "object"
+      },
+      "FeatureOperation": {
+        "additionalProperties": false,
+        "description": "Auditable modeling intent emitted by generated source.",
+        "properties": {
+          "id": {
+            "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "componentId": {
+            "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$",
+            "title": "Componentid",
+            "type": "string"
+          },
+          "operation": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Operation",
+            "type": "string"
+          },
+          "description": {
+            "default": "",
+            "maxLength": 500,
+            "title": "Description",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "componentId",
+          "operation",
+          "description"
+        ],
+        "title": "FeatureOperation",
         "type": "object"
       },
       "Frame": {
@@ -635,6 +742,7 @@
                 "type": "null"
               }
             ],
+            "default": null,
             "title": "Parentid"
           },
           "name": {
@@ -655,6 +763,82 @@
           "frame"
         ],
         "title": "Instance",
+        "type": "object"
+      },
+      "JointSpec": {
+        "additionalProperties": false,
+        "description": "Relationship between semantic references.\n\nJoint kinds are intentionally extensible (for example rigid, revolute,\ncylindrical, gear, contact or a future specialist relation).",
+        "properties": {
+          "id": {
+            "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "maxLength": 80,
+            "minLength": 1,
+            "pattern": "^[a-zA-Z][a-zA-Z0-9_.-]*$",
+            "title": "Kind",
+            "type": "string"
+          },
+          "referenceA": {
+            "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$",
+            "title": "Referencea",
+            "type": "string"
+          },
+          "referenceB": {
+            "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$",
+            "title": "Referenceb",
+            "type": "string"
+          },
+          "lowerLimit": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Lowerlimit"
+          },
+          "upperLimit": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Upperlimit"
+          },
+          "unit": {
+            "default": "",
+            "maxLength": 32,
+            "title": "Unit",
+            "type": "string"
+          },
+          "description": {
+            "default": "",
+            "maxLength": 500,
+            "title": "Description",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "referenceA",
+          "referenceB",
+          "lowerLimit",
+          "upperLimit",
+          "unit",
+          "description"
+        ],
+        "title": "JointSpec",
         "type": "object"
       },
       "Manifest": {
@@ -700,6 +884,38 @@
             ],
             "default": null,
             "title": "Rootcomponentid"
+          },
+          "references": {
+            "items": {
+              "$ref": "#/components/schemas/SemanticReference"
+            },
+            "maxItems": 4000,
+            "title": "References",
+            "type": "array"
+          },
+          "joints": {
+            "items": {
+              "$ref": "#/components/schemas/JointSpec"
+            },
+            "maxItems": 2000,
+            "title": "Joints",
+            "type": "array"
+          },
+          "configurations": {
+            "items": {
+              "$ref": "#/components/schemas/ConfigurationSpec"
+            },
+            "maxItems": 200,
+            "title": "Configurations",
+            "type": "array"
+          },
+          "featureOperations": {
+            "items": {
+              "$ref": "#/components/schemas/FeatureOperation"
+            },
+            "maxItems": 4000,
+            "title": "Featureoperations",
+            "type": "array"
           }
         },
         "required": [
@@ -707,9 +923,45 @@
           "units",
           "components",
           "instances",
-          "rootComponentId"
+          "rootComponentId",
+          "references",
+          "joints",
+          "configurations",
+          "featureOperations"
         ],
         "title": "Manifest",
+        "type": "object"
+      },
+      "MaterialSpec": {
+        "additionalProperties": false,
+        "description": "Optional physical properties attached to a CAD definition.",
+        "properties": {
+          "name": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "densityKgM3": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0,
+                "maximum": 100000,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Densitykgm3"
+          }
+        },
+        "required": [
+          "name",
+          "densityKgM3"
+        ],
+        "title": "MaterialSpec",
         "type": "object"
       },
       "ModelConfigView": {
@@ -723,9 +975,38 @@
             "title": "Role",
             "type": "string"
           },
+          "provider": {
+            "default": "openrouter",
+            "title": "Provider",
+            "type": "string"
+          },
+          "base_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Base Url"
+          },
           "model_id": {
             "title": "Model Id",
             "type": "string"
+          },
+          "max_output_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Max Output Tokens"
           },
           "key_hint": {
             "title": "Key Hint",
@@ -1207,6 +1488,109 @@
         "title": "RunEvent",
         "type": "object"
       },
+      "SemanticReference": {
+        "additionalProperties": false,
+        "description": "Stable, code-authored geometry reference in component-local coordinates.\n\n``kind`` deliberately remains an open string.  The CAD agent may introduce\ndomain-specific references without waiting for a backend enum migration.",
+        "properties": {
+          "id": {
+            "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "componentId": {
+            "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$",
+            "title": "Componentid",
+            "type": "string"
+          },
+          "kind": {
+            "maxLength": 80,
+            "minLength": 1,
+            "pattern": "^[a-zA-Z][a-zA-Z0-9_.-]*$",
+            "title": "Kind",
+            "type": "string"
+          },
+          "origin": {
+            "anyOf": [
+              {
+                "maxItems": 3,
+                "minItems": 3,
+                "prefixItems": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ],
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Origin"
+          },
+          "direction": {
+            "anyOf": [
+              {
+                "maxItems": 3,
+                "minItems": 3,
+                "prefixItems": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ],
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Direction"
+          },
+          "radiusMm": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Radiusmm"
+          },
+          "description": {
+            "default": "",
+            "maxLength": 500,
+            "title": "Description",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "componentId",
+          "kind",
+          "origin",
+          "direction",
+          "radiusMm",
+          "description"
+        ],
+        "title": "SemanticReference",
+        "type": "object"
+      },
       "SessionView": {
         "additionalProperties": false,
         "properties": {
@@ -1291,6 +1675,16 @@
           "allRequirementsVerified": {
             "title": "Allrequirementsverified",
             "type": "boolean"
+          },
+          "inspection": {
+            "additionalProperties": true,
+            "title": "Inspection",
+            "type": "object"
+          },
+          "review": {
+            "additionalProperties": true,
+            "title": "Review",
+            "type": "object"
           }
         },
         "required": [
@@ -1441,8 +1835,8 @@
         "additionalProperties": false,
         "properties": {
           "maxModelCalls": {
-            "default": 12,
-            "maximum": 30,
+            "default": 24,
+            "maximum": 60,
             "minimum": 1,
             "title": "Maxmodelcalls",
             "type": "integer"
@@ -1509,8 +1903,13 @@
             "$ref": "#/components/schemas/Manifest"
           },
           "files": {
-            "additionalProperties": {
-              "type": "string"
+            "patternProperties": {
+              "^(?:parts|assemblies|calculations)/(?:[a-zA-Z0-9_-]+/)*[a-zA-Z0-9_-]+\\.py$": {
+                "type": "string"
+              }
+            },
+            "propertyNames": {
+              "maxLength": 180
             },
             "title": "Files",
             "type": "object"

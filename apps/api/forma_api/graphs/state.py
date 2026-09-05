@@ -26,6 +26,18 @@ class AgentState(TypedDict, total=False):
     build_result: dict[str, Any]
     validation: dict[str, Any]
     published_revision_id: str
+    cad_history: list[dict[str, Any]]
+    cad_edits_since_build: int
+    review_history: list[dict[str, Any]]
+    review_reads: int
+    review_inspected: bool
+    review_repairs: int
+    review: dict[str, Any]
+    review_fingerprint: str
+    reviewed_candidate_hash: str
+    pending_cad_call: dict[str, Any]
+    engineering_request: str
+    engineering_candidate_hash: str
     repairs: int
     attempts: int
     last_failure: str

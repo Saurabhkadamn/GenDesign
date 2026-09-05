@@ -86,7 +86,7 @@ create table public.model_configs (
 create table public.app_settings (
   id boolean primary key default true check(id), settings jsonb not null
 );
-insert into public.app_settings(id,settings) values(true, '{"emergencyStop":false,"engineeringEnabled":true,"surfacingEnabled":true,"limits":{"maxModelCalls":12,"maxRepairs":2,"commandTimeoutSeconds":300,"maxArtifactBytes":41943040,"retainedExports":5,"monthlySandboxSeconds":7200,"storageBudgetBytes":800000000}}');
+insert into public.app_settings(id,settings) values(true, '{"emergencyStop":false,"engineeringEnabled":true,"surfacingEnabled":true,"limits":{"maxModelCalls":24,"maxRepairs":2,"commandTimeoutSeconds":300,"maxArtifactBytes":41943040,"retainedExports":5,"monthlySandboxSeconds":7200,"storageBudgetBytes":800000000}}');
 create table public.generations (
   id uuid primary key, run_id uuid not null references public.runs(id), ordinal integer not null,
   role text not null, model_id text not null, config_version integer not null, prompt_version text not null,

@@ -2,6 +2,7 @@
 import json
 import re
 import time
+from copy import deepcopy
 from contextvars import ContextVar
 from typing import Literal
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
@@ -11,13 +12,13 @@ from langgraph.types import interrupt
 from pydantic import Field, ValidationError, field_validator
 
 from .. import db, models, repository as repo
-from ..contracts import AppSettings, Contract, Manifest, Requirement, SafeId, Snapshot, SourcePath, Vector
+from ..contracts import AppSettings, Contract, Manifest, Requirement, SafeId, Snapshot, SourcePath, Vector, safe_path
 from ..engine import Pause, build_candidate, destroy_sandboxes, execute_tool, operation
 from ..execution import digest, normalize_python_source
 from ..prompts import VERSION as PROMPT_VERSION, system_prompt
 from ..requirements import design_work_requested, merge_requirements
 from ..services import runs as run_service
-from ..tools import portable_schema
+from ..tools import model_tools, parse_tool, portable_schema
 from .state import AgentState
 
 _worker: ContextVar[str] = ContextVar("forma_graph_worker", default="graph")
@@ -144,6 +145,8 @@ class Analysis(Contract):
     design_parameters: list[str] = Field(default_factory=list, max_length=40)
     open_items: list[str] = Field(default_factory=list, max_length=30)
     calculation_source: str | None = Field(default=None, max_length=100_000)
+    requires_user_input: bool = False
+    user_question: str = Field(default="", max_length=3000)
 
 
 class Candidate(Contract):
@@ -161,6 +164,26 @@ class Candidate(Contract):
             return {item["path"]: item["content"] for item in value
                     if isinstance(item, dict) and "path" in item and "content" in item}
         return value
+
+
+class ReviewFinding(Contract):
+    id: SafeId
+    statement: str = Field(min_length=1, max_length=1000)
+    status: Literal[
+        "observed_match", "observed_mismatch", "present_unquantified",
+        "not_observed", "not_checked", "requires_engineering",
+        "requires_physical_validation",
+    ]
+    severity: Literal["info", "warning", "error"] = "warning"
+    evidence: list[str] = Field(default_factory=list, max_length=30)
+    explanation: str = Field(min_length=1, max_length=2000)
+    repair_instruction: str = Field(default="", max_length=2000)
+
+
+class ReviewResult(Contract):
+    summary: str = Field(min_length=1, max_length=5000)
+    action: Literal["repair", "publish"]
+    findings: list[ReviewFinding] = Field(default_factory=list, max_length=100)
 
 
 def submission_tool(name: str, description: str, contract: type[Contract]) -> dict:
@@ -264,6 +287,99 @@ async def structured_turn(state: AgentState, role: str, node: str, prompt: str,
         "search_count": state.get("search_count", 0) + result.get("webSearchRequests", 0)}
 
 
+def protocol_safe_history(history: list[dict], *, allow_pending: bool = False) -> list[dict]:
+    """Remove incomplete tool-protocol fragments after history compaction.
+
+    A provider must receive an assistant tool call and its matching tool result
+    together. A simple tail slice can retain the result while dropping the call,
+    which strict endpoints reject before the model can repair anything.
+    """
+    safe: list[dict] = []
+    index = 0
+    while index < len(history):
+        message = history[index]
+        if message.get("role") == "tool":
+            index += 1
+            continue
+        calls = message.get("tool_calls") if message.get("role") == "assistant" else None
+        if not calls:
+            safe.append(message)
+            index += 1
+            continue
+        expected = {item.get("id") for item in calls if item.get("id")}
+        results: list[dict] = []
+        cursor = index + 1
+        while cursor < len(history) and history[cursor].get("role") == "tool":
+            if history[cursor].get("tool_call_id") in expected:
+                results.append(history[cursor])
+            cursor += 1
+        if {item.get("tool_call_id") for item in results} == expected:
+            safe.extend([message, *results])
+        elif allow_pending and cursor == len(history) and not results:
+            # agent_tool_turn returns the assistant request to its caller, which
+            # executes the tool and appends the result immediately afterwards.
+            safe.append(message)
+        index = cursor
+    return safe
+
+
+def bounded_history(history: list[dict], *, messages: int = 30, characters: int = 500_000,
+                    allow_pending: bool = False) -> list[dict]:
+    """Keep recent tool context without duplicating a whole workspace in checkpoints."""
+    if len(history) <= messages and len(json.dumps(history)) <= characters:
+        return protocol_safe_history(history, allow_pending=allow_pending)
+    first = history[:1]
+    tail = history[-(messages - 1):]
+    while tail and len(json.dumps([*first, *tail])) > characters:
+        tail.pop(0)
+    return protocol_safe_history([*first, *tail], allow_pending=allow_pending)
+
+
+async def agent_tool_turn(state: AgentState, *, model_role: str, prompt_role: str,
+                          node: str, context: dict, history: list[dict], tools: list[dict]):
+    """Run one open-ended model/tool turn while retaining only bounded dialogue state."""
+    run = await run_row(state)
+    config = await models.configuration(model_role)
+    ordinal = state.get("model_calls", 0)
+    if ordinal >= (await app_settings()).limits.maxModelCalls:
+        raise Pause("The model-call budget was reached. The current draft and completed evidence were preserved.")
+    history = bounded_history(history)
+    messages = [
+        {"role": "system", "content": system_prompt(prompt_role)},
+        {"role": "system", "content": "Current private design context: " + json.dumps(context, ensure_ascii=False)},
+        *history,
+    ]
+
+    async def call():
+        return await models.turn(config, messages, tools, max_tokens=None)
+
+    result = await operation(run, f"graph:{node}:{ordinal}", "model", call)
+    call_value = result["calls"][0] if result.get("calls") else None
+    assistant = deepcopy(result["message"])
+    if call_value and assistant.get("tool_calls"):
+        assistant["tool_calls"] = [
+            item for item in assistant["tool_calls"] if item.get("id") == call_value["id"]
+        ][:1]
+    elif not call_value:
+        assistant.pop("tool_calls", None)
+    next_history = bounded_history([*history, assistant], allow_pending=True)
+    await db.insert("generations", {
+        "id": str(uuid5(NAMESPACE_URL, f"{run['id']}:graph:{ordinal}")),
+        "run_id": run["id"], "ordinal": ordinal, "role": prompt_role,
+        "model_id": config["model_id"], "config_version": config["version"],
+        "prompt_version": PROMPT_VERSION, "status": "complete", "output": assistant,
+        "input_tokens": result["inputTokens"], "output_tokens": result["outputTokens"],
+    }, conflict="run_id,ordinal")
+    return call_value, next_history, {
+        "model_calls": ordinal + 1,
+        "search_count": state.get("search_count", 0) + result.get("webSearchRequests", 0),
+    }
+
+
+def tool_message(call: dict, result: dict) -> dict:
+    return {"role": "tool", "tool_call_id": call["id"], "content": json.dumps(result, ensure_ascii=False)}
+
+
 async def coordinator(state: AgentState) -> dict:
     if state.get("phase"):
         return {}
@@ -271,10 +387,15 @@ async def coordinator(state: AgentState) -> dict:
     snapshot = await repo.load_snapshot(run["base_revision_id"])
     candidate_hash = digest(snapshot)
     await run_service.save_candidate(run["id"], snapshot, candidate_hash)
-    await repo.event(run["id"], "Coordinator recorded the request and opened engineering review.", stage="coordination")
-    return {"phase": "engineering_triage", "candidate_hash": candidate_hash,
+    await repo.event(run["id"], "Coordinator opened an incremental CAD coding session.", stage="coordination")
+    return {"phase": "cad_session", "candidate_hash": candidate_hash,
         "repairs": 0, "attempts": 0, "model_calls": 0, "search_count": 0,
-        "engineering_remarks": [], "engineering_assumptions": [], "requirements": [],
+        "engineering_remarks": [], "engineering_assumptions": [],
+        "requirements": merge_requirements(state["original_request"], []),
+        "cad_edits_since_build": 0,
+        "cad_history": [{"role": "user", "content": state["original_request"]}],
+        "review_history": [], "review": {},
+        "review_repairs": 0,
         "started_ns": time.time_ns()}
 
 
@@ -317,22 +438,25 @@ async def engineering_analysis(state: AgentState) -> dict:
         "explicitRequirements": state.get("requirements", []),
         "triageAssumptions": state.get("engineering_assumptions", []),
         "triageRemarks": state.get("engineering_remarks", []),
+        "cadRequest": state.get("engineering_request", ""),
     }
     prompt = """Perform the engineering analysis needed before geometry. Use the engineering packet below as the
 source of truth and do not call a value missing when it is present in the original request, explicit requirements,
 or clarification. The request deliberately asks the engineer to choose a material and manufacturing method: make
 those design choices, state them in selected_material and manufacturing_method, and give concrete thickness,
 fillet, reinforcement, bolt and load-path recommendations. Distinguish an engineering choice from a truly blocking
-unknown in open_items. State equations, loads, units, assumptions, recommended design parameters, safety-factor
+unknown in open_items. The CAD agent's request is the immediate task. State equations, loads, units, assumptions, recommended design parameters, safety-factor
 target and limitations. When numerical validation is useful, provide a calculations/analysis.py module that writes
 calculation.json matching the CalculationResult contract used by Forma. The result will be executed twice in isolated
 processes. Return calculation_source as ordinary Python source with real newline characters; do not return literal
-backslash-n escape sequences in place of line breaks. Do not claim FEA or certification.
+backslash-n escape sequences in place of line breaks. Set requires_user_input only when a missing user choice prevents
+useful geometry; visible engineering assumptions and limitations do not require an approval pause. Do not claim FEA or certification.
 
 Engineering packet:
 """ + json.dumps(packet, ensure_ascii=False)
     value, usage = await structured_turn(state, "engineering", "analysis", prompt, "submit_analysis", Analysis, web=True)
-    output = {**usage, "phase": "approval", "engineering_summary": value.summary,
+    output = {**usage, "phase": "approval" if value.requires_user_input else "cad_session",
+        "engineering_summary": value.summary,
         "engineering_assumptions": [*state.get("engineering_assumptions", []), *value.assumptions],
         "engineering_remarks": [*state.get("engineering_remarks", []),
             *value.recommendations,
@@ -340,13 +464,17 @@ Engineering packet:
             *(f"Manufacturing method: {value.manufacturing_method}" for _ in [0] if value.manufacturing_method),
             *value.design_parameters,
             *(f"Open item: {item}" for item in value.open_items)],
-        "approval_summary": value.summary}
+        "approval_summary": value.user_question or value.summary,
+        "question": value.user_question}
+    calculation_result = None
     if value.calculation_source:
         calculation_source = normalize_python_source(value.calculation_source)
         snapshot = await run_service.load_candidate(state["run_id"])
         snapshot = Snapshot.model_validate({"manifest": snapshot["manifest"],
             "files": {**snapshot["files"], "calculations/analysis.py": calculation_source}}).model_dump()
-        await run_service.save_candidate(state["run_id"], snapshot, digest(snapshot))
+        calculation_candidate_hash = digest(snapshot)
+        await run_service.save_candidate(state["run_id"], snapshot, calculation_candidate_hash)
+        output["candidate_hash"] = calculation_candidate_hash
         run = await run_row(state)
         cp = checkpoint_view(state, snapshot)
         cp["role"] = "engineering"
@@ -365,9 +493,26 @@ Engineering packet:
             where = f" at {location['file']}:{location['line']}" if location.get("file") and location.get("line") else ""
             category = error.get("category") or "execution"
             guidance = error.get("guidance") or "Review the engineering assumptions and calculation source."
-            raise Pause(f"Engineering calculation failed ({category}){where}. {guidance} Continue when ready.")
-        output["engineering_summary"] = value.summary + "\n\nCalculation verified: " + result["result"]["conclusion"]
+            diagnostic = f"Engineering calculation failed ({category}){where}. {guidance}"
+            output["engineering_summary"] = value.summary + "\n\n" + diagnostic
+            output["engineering_remarks"] = [*output["engineering_remarks"], diagnostic]
+            calculation_result = {"ok": False, "error": error}
+        else:
+            output["engineering_summary"] = value.summary + "\n\nCalculation verified: " + result["result"]["conclusion"]
+            calculation_result = result
         output.update(sync_checkpoint(cp))
+    pending = state.get("pending_cad_call")
+    if pending:
+        output["cad_history"] = bounded_history([*state.get("cad_history", []), tool_message(pending, {
+            "ok": calculation_result is None or calculation_result.get("ok", False),
+            "summary": output["engineering_summary"],
+            "recommendations": output["engineering_remarks"],
+            "calculation": calculation_result,
+            "requiresUserInput": value.requires_user_input,
+        })])
+        output["pending_cad_call"] = {}
+    current_snapshot = await run_service.load_candidate(state["run_id"])
+    output["engineering_candidate_hash"] = digest(current_snapshot)
     return output
 
 
@@ -383,7 +528,7 @@ async def approval(state: AgentState) -> dict:
             (response or {}).get("message") or "The engineering proposal was rejected. No design revision was created."}
     if kind != "approval":
         raise Pause("Approve or reject the engineering proposal before CAD begins.")
-    return {"approved": True, "phase": "cad_design"}
+    return {"approved": True, "phase": "cad_session"}
 
 
 def sandbox_name(run_id: str, suffix: str) -> str:
@@ -511,6 +656,171 @@ def normalize_instance_hierarchy(manifest: dict) -> tuple[dict, bool]:
     return payload, changed
 
 
+CAD_SESSION_TOOL_NAMES = {
+    "read_file", "search_files", "apply_changes", "build",
+    "inspect_geometry", "request_engineering", "ask_user",
+}
+MAX_CAD_EDITS_WITHOUT_BUILD = 3
+
+
+async def cad_session(state: AgentState) -> dict:
+    """Let the CAD model choose one incremental workspace/tool action."""
+    snapshot = await run_service.load_candidate(state["run_id"])
+    history = state.get("cad_history") or [{
+        "role": "user", "content": state.get("clarified_request") or state["original_request"]
+    }]
+    context = {
+        "request": state.get("clarified_request") or state["original_request"],
+        "engineeringSummary": state.get("engineering_summary", ""),
+        "engineeringRemarks": state.get("engineering_remarks", []),
+        "workspace": {
+            "manifest": snapshot["manifest"],
+            "files": sorted(snapshot["files"]),
+            "candidateHash": digest(snapshot),
+        },
+        "lastBuild": state.get("build_result"),
+        "lastReview": state.get("review"),
+    }
+    tools = [item for item in model_tools("cad")
+             if item["function"]["name"] in CAD_SESSION_TOOL_NAMES]
+    edits_since_build = state.get("cad_edits_since_build", 0)
+    if edits_since_build >= MAX_CAD_EDITS_WITHOUT_BUILD:
+        # Keep the graph progressing even when a model repeatedly proposes
+        # patches. A build is the only useful next action after this bound.
+        tools = [item for item in tools if item["function"]["name"] in
+                 {"build", "read_file", "search_files", "inspect_geometry"}]
+        context["buildRequired"] = True
+        context["editsSinceBuild"] = edits_since_build
+    call, history, usage = await agent_tool_turn(
+        state, model_role="cad", prompt_role="cad", node="cad-session",
+        context=context, history=history, tools=tools,
+    )
+    if not call:
+        history = bounded_history([*history, {"role": "user", "content":
+            "Continue with exactly one tool action. Read or patch a focused target, request engineering or user input, or build the current candidate."}])
+        return {**usage, "phase": "cad_session", "cad_history": history}
+    tool_input = call["input"]
+    hierarchy_pre_normalized = False
+    if call["name"] == "apply_changes" and isinstance(tool_input, dict) \
+            and isinstance(tool_input.get("manifest"), dict):
+        tool_input = json.loads(json.dumps(tool_input))
+        tool_input["manifest"], hierarchy_pre_normalized = normalize_instance_hierarchy(
+            tool_input["manifest"])
+    try:
+        parsed = parse_tool("cad", call["name"], tool_input)
+        value = parsed.model_dump()
+    except (ValidationError, ValueError) as exc:
+        history = bounded_history([*history, tool_message(call, {
+            "ok": False, "category": "tool_contract", "message": str(exc)[:3000]
+        })])
+        return {**usage, "phase": "cad_session", "cad_history": history}
+
+    name = call["name"]
+    if name == "read_file":
+        safe_path(value["path"])
+        result = {"path": value["path"], "content": snapshot["files"].get(value["path"])}
+        return {**usage, "phase": "cad_session",
+            "cad_history": bounded_history([*history, tool_message(call, result)])}
+    if name == "search_files":
+        matches = [{"path": path, "line": index + 1, "text": line[:300]}
+            for path, source in snapshot["files"].items()
+            for index, line in enumerate(source.splitlines())
+            if value["query"] in line][:100]
+        return {**usage, "phase": "cad_session", "cad_history": bounded_history([
+            *history, tool_message(call, {"matches": matches})])}
+    if name == "inspect_geometry":
+        result = state.get("validation") or {
+            "verified": False, "message": "Build the current candidate before inspecting imported geometry."
+        }
+        return {**usage, "phase": "cad_session", "cad_history": bounded_history([
+            *history, tool_message(call, result)])}
+    if name == "apply_changes":
+        invalid_paths = [path for path in value["files"]
+                         if not (path.startswith("parts/") or path.startswith("assemblies/"))]
+        if invalid_paths:
+            result = {"ok": False, "category": "role_boundary",
+                "message": "CAD may edit only parts/ and assemblies/. Request engineering for calculations/ changes.",
+                "paths": invalid_paths[:20]}
+            return {**usage, "phase": "cad_session", "cad_history": bounded_history([
+                *history, tool_message(call, result)])}
+        try:
+            files = dict(snapshot["files"])
+            for path in value.get("deletePaths", []):
+                files.pop(path, None)
+            files.update({path: normalize_python_source(source)
+                for path, source in value["files"].items()})
+            manifest, hierarchy_normalized = normalize_instance_hierarchy(
+                value["manifest"] or snapshot["manifest"])
+            hierarchy_normalized = hierarchy_pre_normalized or hierarchy_normalized
+            candidate = Snapshot.model_validate({
+                "manifest": manifest, "files": files,
+            }).model_dump()
+        except (ValidationError, ValueError) as exc:
+            result = {"ok": False, "category": "workspace_contract", "message": str(exc)[:5000]}
+            return {**usage, "phase": "cad_session", "cad_history": bounded_history([
+                *history, tool_message(call, result)])}
+        candidate_hash = digest(candidate)
+        await run_service.save_candidate(state["run_id"], candidate, candidate_hash)
+        await repo.event(state["run_id"], "CAD updated a focused part of the code workspace.", stage="cad")
+        result = {"ok": True, "candidateHash": candidate_hash,
+            "changedFiles": sorted(value["files"]), "deletedFiles": value.get("deletePaths", []),
+            "hierarchyNormalized": hierarchy_normalized,
+            "hierarchyNote": ("Top-level or invalid parent sentinels were normalized to null; parentId must name "
+                "another instance id." if hierarchy_normalized else "")}
+        return {**usage, "phase": "cad_session", "candidate_hash": candidate_hash,
+            "cad_edits_since_build": edits_since_build + 1,
+            "cad_history": bounded_history([*history, tool_message(call, result)]),
+            "validation": {}, "review": {}, "build_result": {}}
+    if name == "request_engineering":
+        if state.get("engineering_summary") and state.get("engineering_candidate_hash") == digest(snapshot):
+            result = {"ok": False, "category": "unchanged_engineering_request",
+                "message": ("Engineering already analyzed this unchanged workspace. Use the returned parameters, "
+                    "edit geometry, or build before requesting another calculation.")}
+            return {**usage, "phase": "cad_session", "cad_history": bounded_history([
+                *history, tool_message(call, result)])}
+        await repo.event(state["run_id"], "CAD requested an engineering calculation or parameter study.", stage="engineering")
+        return {**usage, "phase": "engineering_analysis", "engineering_request": value["task"],
+            "pending_cad_call": call, "cad_history": history}
+    if name == "ask_user":
+        return {**usage, "phase": "cad_question", "question": value["question"],
+            "pending_cad_call": call, "cad_history": history}
+    if name == "build":
+        if not snapshot["manifest"].get("components") or not snapshot["manifest"].get("rootComponentId"):
+            history = bounded_history([*history, tool_message(call, {
+                "ok": False, "category": "empty_workspace",
+                "message": "Create at least one component and choose a root component before building.",
+            })])
+            return {**usage, "phase": "cad_session", "cad_history": history}
+        if (state.get("review", {}).get("action") == "repair"
+                and state.get("reviewed_candidate_hash") == digest(snapshot)):
+            history = bounded_history([*history, tool_message(call, {
+                "ok": False, "category": "unchanged_reviewed_candidate",
+                "message": "The independent review requested a source change. Edit the candidate before rebuilding.",
+            })])
+            return {**usage, "phase": "cad_session", "cad_history": history}
+        return {**usage, "phase": "build", "pending_cad_call": call, "cad_history": history,
+            "cad_edits_since_build": 0}
+    history = bounded_history([*history, tool_message(call, {
+        "ok": False, "category": "unsupported_action", "message": f"Unsupported CAD action: {name}",
+    })])
+    return {**usage, "phase": "cad_session", "cad_history": history}
+
+
+async def cad_question(state: AgentState) -> dict:
+    response = interrupt({"kind": "clarification", "message": state.get("question") or
+        "Please provide the missing design choice."})
+    message = str((response or {}).get("message", "")).strip()
+    if not message:
+        raise Pause("A clarification answer is required.")
+    call = state.get("pending_cad_call") or {"id": "user-answer"}
+    history = bounded_history([*state.get("cad_history", []), tool_message(call, {
+        "answered": True, "message": message,
+    })])
+    clarified = state.get("clarified_request") or state["original_request"]
+    return {"phase": "cad_session", "question": "", "pending_cad_call": {},
+        "cad_history": history, "clarified_request": clarified + "\n\nUser clarification: " + message}
+
+
 async def cad_candidate(state: AgentState, *, repair=False) -> dict:
     snapshot = await run_service.load_candidate(state["run_id"])
     context = {"request": state.get("clarified_request") or state["original_request"],
@@ -573,37 +883,182 @@ async def build(state: AgentState) -> dict:
     async def execute_build():
         result = await build_candidate(run, cp, limits, f"graph:build:{state.get('attempts', 0)}")
         return {"result": result, "checkpoint": cp}
-    output = await operation(run, f"graph:build:{state.get('attempts', 0)}", "build",
-        execute_build, idempotent=True)
+    try:
+        output = await operation(run, f"graph:build:{state.get('attempts', 0)}", "build",
+            execute_build, idempotent=True)
+    except Pause as exc:
+        if "has not changed" not in str(exc):
+            raise
+        pending = state.get("pending_cad_call") or {"id": "build"}
+        history = bounded_history([*state.get("cad_history", []), tool_message(pending, {
+            "ok": False, "category": "unchanged_failed_candidate", "message": str(exc),
+        })])
+        return {"phase": "cad_session", "cad_history": history, "pending_cad_call": {}}
     cp = output["checkpoint"]
     return {**sync_checkpoint(cp), "phase": "validate", "build_result": output["result"]}
 
 
 async def validate(state: AgentState) -> dict:
     result = state.get("build_result", {})
+    pending = state.get("pending_cad_call") or {"id": "build"}
     if result.get("ok") is False:
-        limits = (await app_settings()).limits
         error = result.get("error", {})
+        history = bounded_history([*state.get("cad_history", []), tool_message(pending, result)])
         if result.get("repeated"):
-            return {"phase": "final", "terminal_status": "failed", "final_message":
-                f"The same {error.get('category', 'build')} failure repeated after "
-                f"{state.get('attempts', 0)} attempts: {error.get('guidance', 'repair the reported operation')}. "
-                "No revision was published."}
-        if state.get("repairs", 0) > limits.maxRepairs or result.get("repairsRemaining", 0) <= 0:
-            return {"phase": "final", "terminal_status": "failed", "final_message":
-                f"The bounded repair limit was reached after {state.get('attempts', 0)} attempts. "
-                f"Last failure: {error.get('guidance', 'inspect and repair the candidate')}. "
-                "Your saved design is unchanged; revise the request or start a new run."}
-        return {"phase": "repair"}
-    # Requirement measurements are advisory evidence for the human reviewer.
-    # Build/artifact integrity was already checked in build_candidate; an
-    # unsupported or failed requirement must not prevent the user from seeing
-    # and downloading a successfully built draft.
-    return {"phase": "publish"}
+            history = bounded_history([*history, {"role": "user", "content":
+                "The normalized build error repeated after a source change. Re-plan the affected operation instead of retrying the same construction."}])
+        return {"phase": "cad_session", "cad_history": history, "pending_cad_call": {},
+            "review": {}, "final_message": error.get("guidance", "Repair the failed CAD operation.")}
+    history = bounded_history([*state.get("cad_history", []), tool_message(pending, {
+        "ok": True, "message": "The candidate built and passed universal CAD integrity checks.",
+        "inspectionAvailable": bool(result.get("inspection")),
+    })])
+    return {"phase": "review_session", "cad_history": history,
+        "pending_cad_call": {}, "review_history": [], "review_reads": 0,
+        "review_inspected": False}
 
 
 async def repair(state: AgentState) -> dict:
-    return await cad_candidate(state, repair=True)
+    return await cad_session(state)
+
+
+REVIEW_TOOL_NAMES = {"read_file", "inspect_geometry"}
+
+
+def deterministic_review_preflight(snapshot: dict, validation: dict) -> dict | None:
+    """Reject evidence gaps a language-model reviewer must not explain away."""
+    manifest = snapshot.get("manifest", {})
+    definitions = {item.get("id"): item for item in manifest.get("components", [])}
+    root_id = manifest.get("rootComponentId")
+    root = definitions.get(root_id) or {}
+    if root.get("kind") != "assembly":
+        return None
+    report = validation.get("report", validation)
+    inspection = report.get("inspection", {}) if isinstance(report, dict) else {}
+    root_facts = (inspection.get("components") or {}).get(root_id, {})
+    root_solids = int(root_facts.get("solidCount") or 0)
+    as_built = next((item for item in inspection.get("configurations", [])
+        if item.get("id") == "as_built"), {})
+    inspected_instances = int(as_built.get("instanceCount") or 0)
+    physical_manifest_instances = sum(
+        1 for item in manifest.get("instances", [])
+        if (definitions.get(item.get("definitionId")) or {}).get("kind") != "assembly")
+    if root_solids <= 1 or (inspected_instances >= root_solids and physical_manifest_instances >= root_solids):
+        return None
+    finding = {
+        "id": "assembly_instance_inventory",
+        "statement": "Every physical assembly member must be represented by an independently identifiable manifest instance.",
+        "status": "observed_mismatch", "severity": "error",
+        "evidence": [
+            f"Imported root STEP contains {root_solids} solids.",
+            f"Manifest contains {physical_manifest_instances} physical instances; inspection resolved {inspected_instances}.",
+        ],
+        "explanation": ("The assembly geometry exists, but its physical members are missing from the manifest, so "
+            "pairwise clearance, mass, configuration and assembly-tree checks have no instance population to inspect."),
+        "repair_instruction": ("Add one positioned instance for every physical occurrence, reuse component definitions "
+            "for repeated hardware, and keep parentId null or linked to a real assembly instance."),
+    }
+    return {"summary": "The assembly built, but its physical instance inventory is incomplete.",
+        "action": "repair", "findings": [finding]}
+
+
+async def review_session(state: AgentState) -> dict:
+    snapshot = await run_service.load_candidate(state["run_id"])
+    validation = state.get("validation") or {}
+    preflight = deterministic_review_preflight(snapshot, validation)
+    if preflight:
+        validation = deepcopy(validation)
+        validation.setdefault("report", {})["review"] = preflight
+        fingerprint = digest({"action": preflight["action"], "findings": preflight["findings"]})
+        await repo.event(state["run_id"], "Independent CAD preflight found an incomplete assembly instance inventory.",
+            kind="validation", stage="review")
+        repair_context = {"message": "Independent review found an actionable evidence gap. Modify the manifest before rebuilding.",
+            "summary": preflight["summary"], "findings": preflight["findings"]}
+        return {"phase": "cad_session", "review": preflight,
+            "review_fingerprint": fingerprint, "reviewed_candidate_hash": digest(snapshot),
+            "review_history": [], "cad_history": bounded_history([*state.get("cad_history", []),
+                {"role": "user", "content": json.dumps(repair_context, ensure_ascii=False)}]),
+            "validation": validation}
+    history = state.get("review_history") or [{"role": "user", "content":
+        "Independently review this built CAD candidate against the original request. Use tools for evidence, then submit the review."}]
+    context = {
+        "originalRequest": state["original_request"],
+        "clarifiedRequest": state.get("clarified_request", ""),
+        "engineeringSummary": state.get("engineering_summary", ""),
+        "engineeringRemarks": state.get("engineering_remarks", []),
+        "manifest": snapshot["manifest"],
+        "sourceFiles": sorted(snapshot["files"]),
+        "buildReport": validation.get("report", validation),
+    }
+    allowed_review_tools = set()
+    if state.get("review_reads", 0) < 3:
+        allowed_review_tools.add("read_file")
+    if not state.get("review_inspected", False):
+        allowed_review_tools.add("inspect_geometry")
+    tools = [item for item in model_tools("cad")
+             if item["function"]["name"] in allowed_review_tools]
+    tools.append(submission_tool("submit_review", "Submit evidence-backed findings for this candidate.", ReviewResult))
+    call, history, usage = await agent_tool_turn(
+        state, model_role="cad", prompt_role="reviewer", node="review-session",
+        context=context, history=history, tools=tools,
+    )
+    if not call:
+        return {**usage, "phase": "review_session", "review_history": bounded_history([
+            *history, {"role": "user", "content": "Use read_file or inspect_geometry, then call submit_review."}
+        ])}
+    name = call["name"]
+    if name == "read_file":
+        try:
+            parsed = parse_tool("cad", name, call["input"])
+            value = parsed.model_dump()
+            safe_path(value["path"])
+            result = {"path": value["path"], "content": snapshot["files"].get(value["path"])}
+        except (ValidationError, ValueError) as exc:
+            result = {"ok": False, "category": "tool_contract", "message": str(exc)[:3000]}
+        reads = state.get("review_reads", 0) + 1
+        if reads >= 3:
+            result["reviewInstruction"] = "Source-read budget reached; submit the review using gathered evidence."
+        return {**usage, "phase": "review_session", "review_reads": reads,
+            "review_history": bounded_history([*history, tool_message(call, result)])}
+    if name == "inspect_geometry":
+        return {**usage, "phase": "review_session", "review_inspected": True,
+            "review_history": bounded_history([
+                *history, tool_message(call, validation.get("report", validation))])}
+    if name != "submit_review":
+        return {**usage, "phase": "review_session", "review_history": bounded_history([
+            *history, tool_message(call, {"ok": False, "message": "Reviewer tools are read-only."})])}
+    try:
+        review = ReviewResult.model_validate(call["input"]).model_dump()
+    except ValidationError as exc:
+        return {**usage, "phase": "review_session", "review_history": bounded_history([
+            *history, tool_message(call, {"ok": False, "category": "review_contract",
+                "message": str(exc)[:5000]})])}
+    if review["action"] == "repair" and state.get("review_repairs", 0) >= 1:
+        review["action"] = "publish"
+        review["summary"] += (" The bounded reviewer repair cycle is complete; remaining findings are published "
+            "with this draft for user-directed editing.")
+    validation = deepcopy(validation)
+    validation.setdefault("report", {})["review"] = review
+    fingerprint = digest({"action": review["action"], "findings": review["findings"]})
+    await repo.event(state["run_id"],
+        f"Independent CAD review completed with {len(review['findings'])} findings.",
+        kind="validation", stage="review")
+    if review["action"] == "repair":
+        review_repairs = state.get("review_repairs", 0) + 1
+        repair_context = {
+            "message": "Independent review found actionable geometry defects. Modify the source before rebuilding.",
+            "summary": review["summary"], "findings": review["findings"],
+        }
+        cad_history = bounded_history([*state.get("cad_history", []), {
+            "role": "user", "content": json.dumps(repair_context, ensure_ascii=False),
+        }])
+        return {**usage, "phase": "cad_session", "review": review,
+            "review_fingerprint": fingerprint, "reviewed_candidate_hash": digest(snapshot),
+            "review_history": history, "cad_history": cad_history, "validation": validation,
+            "review_repairs": review_repairs}
+    return {**usage, "phase": "publish", "review": review,
+        "review_fingerprint": fingerprint, "reviewed_candidate_hash": digest(snapshot),
+        "review_history": history, "validation": validation}
 
 
 async def publish(state: AgentState) -> dict:
@@ -621,8 +1076,13 @@ async def publish(state: AgentState) -> dict:
             settings_value, worker())
     result = await operation(run, "graph:publish", "publish_revision", publish_candidate, idempotent=True)
     await destroy_sandboxes(cp)
+    review = state.get("review") or {}
+    message = "The CAD draft built successfully and is ready for your review."
+    if review.get("summary"):
+        message += " Independent review: " + review["summary"]
+    message += " You can continue editing or download the files; engineering and physical validation remain your responsibility."
     return {**sync_checkpoint(cp), "phase": "final", "published_revision_id": result["revisionId"],
-        "final_message": "The CAD draft built successfully and is ready for your review. Automated requirement checks are advisory; you can edit or download the files."}
+        "final_message": message}
 
 
 async def final(state: AgentState) -> dict:
@@ -642,24 +1102,28 @@ def phase_route(state: AgentState) -> str:
 
 def build_graph(checkpointer):
     graph = StateGraph(AgentState)
-    for name, node in (("coordinator", coordinator), ("engineering_triage", engineering_triage),
-        ("clarification", clarification), ("engineering_analysis", engineering_analysis),
-        ("approval", approval), ("cad_design", cad_design), ("build", build),
-        ("validate", validate), ("repair", repair), ("publish", publish), ("final", final)):
+    for name, node in (("coordinator", coordinator), ("cad_session", cad_session),
+        ("cad_question", cad_question), ("engineering_analysis", engineering_analysis),
+        ("approval", approval), ("build", build), ("validate", validate),
+        ("review_session", review_session), ("publish", publish), ("final", final)):
         graph.add_node(name, node)
     graph.add_edge(START, "coordinator")
-    graph.add_edge("coordinator", "engineering_triage")
-    graph.add_conditional_edges("engineering_triage", triage_route,
-        {"clarify": "clarification", "analyze": "engineering_analysis", "cad": "cad_design", "answer": "final"})
-    graph.add_edge("clarification", "engineering_triage")
-    graph.add_edge("engineering_analysis", "approval")
-    graph.add_conditional_edges("approval", phase_route, {"cad_design": "cad_design", "final": "final"})
-    graph.add_conditional_edges("cad_design", phase_route,
-        {"build": "build", "repair": "repair", "final": "final"})
+    graph.add_edge("coordinator", "cad_session")
+    graph.add_conditional_edges("cad_session", phase_route, {
+        "cad_session": "cad_session", "cad_question": "cad_question",
+        "engineering_analysis": "engineering_analysis", "build": "build", "final": "final",
+    })
+    graph.add_edge("cad_question", "cad_session")
+    graph.add_conditional_edges("engineering_analysis", phase_route,
+        {"cad_session": "cad_session", "approval": "approval", "final": "final"})
+    graph.add_conditional_edges("approval", phase_route, {"cad_session": "cad_session", "final": "final"})
     graph.add_edge("build", "validate")
-    graph.add_conditional_edges("validate", phase_route, {"repair": "repair", "publish": "publish", "final": "final"})
-    graph.add_conditional_edges("repair", phase_route,
-        {"build": "build", "repair": "repair", "final": "final"})
+    graph.add_conditional_edges("validate", phase_route,
+        {"cad_session": "cad_session", "review_session": "review_session", "final": "final"})
+    graph.add_conditional_edges("review_session", phase_route, {
+        "review_session": "review_session", "cad_session": "cad_session",
+        "publish": "publish", "final": "final",
+    })
     graph.add_edge("publish", "final")
     graph.add_edge("final", END)
     return graph.compile(checkpointer=checkpointer, interrupt_after="*", name="forma-design")

@@ -2,7 +2,7 @@
 import json
 import math
 import re
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -36,6 +36,67 @@ class Frame(Contract):
     rotation: Vector
 
 
+class MaterialSpec(Contract):
+    """Optional physical properties attached to a CAD definition."""
+
+    name: str = Field(min_length=1, max_length=120)
+    densityKgM3: float | None = Field(default=None, gt=0, le=100_000)
+
+
+class SemanticReference(Contract):
+    """Stable, code-authored geometry reference in component-local coordinates.
+
+    ``kind`` deliberately remains an open string.  The CAD agent may introduce
+    domain-specific references without waiting for a backend enum migration.
+    """
+
+    id: SafeId
+    componentId: SafeId
+    kind: str = Field(min_length=1, max_length=80, pattern=r"^[a-zA-Z][a-zA-Z0-9_.-]*$")
+    origin: Vector | None = None
+    direction: Vector | None = None
+    radiusMm: float | None = Field(default=None, gt=0)
+    description: str = Field(default="", max_length=500)
+
+
+class JointSpec(Contract):
+    """Relationship between semantic references.
+
+    Joint kinds are intentionally extensible (for example rigid, revolute,
+    cylindrical, gear, contact or a future specialist relation).
+    """
+
+    id: SafeId
+    kind: str = Field(min_length=1, max_length=80, pattern=r"^[a-zA-Z][a-zA-Z0-9_.-]*$")
+    referenceA: SafeId
+    referenceB: SafeId
+    lowerLimit: float | None = None
+    upperLimit: float | None = None
+    unit: str = Field(default="", max_length=32)
+    description: str = Field(default="", max_length=500)
+
+
+class ConfigurationFrame(Contract):
+    instanceId: SafeId
+    frame: Frame
+
+
+class ConfigurationSpec(Contract):
+    id: SafeId
+    name: str = Field(min_length=1, max_length=120)
+    frames: list[ConfigurationFrame] = Field(default_factory=list, max_length=1000)
+    description: str = Field(default="", max_length=500)
+
+
+class FeatureOperation(Contract):
+    """Auditable modeling intent emitted by generated source."""
+
+    id: SafeId
+    componentId: SafeId
+    operation: str = Field(min_length=1, max_length=120)
+    description: str = Field(default="", max_length=500)
+
+
 class Component(Contract):
     id: SafeId
     name: str = Field(min_length=1, max_length=100)
@@ -44,6 +105,7 @@ class Component(Contract):
     dependencies: list[SafeId] = Field(default_factory=list, max_length=100)
     parameters: dict[str, Parameter] = Field(default_factory=dict, max_length=200)
     color: str = Field(default="#b9c4ad", pattern=r"^#[0-9a-fA-F]{6}$")
+    material: MaterialSpec | None = None
 
     @field_validator("source")
     @classmethod
@@ -56,7 +118,9 @@ class Component(Contract):
 class Instance(Contract):
     id: SafeId
     definitionId: SafeId
-    parentId: SafeId | None
+    # Top-level instances have no parent. Keeping this optional prevents a
+    # model from being forced to invent a sentinel such as "root".
+    parentId: SafeId | None = None
     name: str = Field(min_length=1, max_length=100)
     frame: Frame
 
@@ -67,6 +131,10 @@ class Manifest(Contract):
     components: list[Component] = Field(default_factory=list, max_length=200)
     instances: list[Instance] = Field(default_factory=list, max_length=1000)
     rootComponentId: SafeId | None = None
+    references: list[SemanticReference] = Field(default_factory=list, max_length=4000)
+    joints: list[JointSpec] = Field(default_factory=list, max_length=2000)
+    configurations: list[ConfigurationSpec] = Field(default_factory=list, max_length=200)
+    featureOperations: list[FeatureOperation] = Field(default_factory=list, max_length=4000)
 
 
 class Snapshot(Contract):
@@ -118,11 +186,38 @@ class Snapshot(Contract):
                     raise ValueError("Invalid assembly hierarchy.")
                 chain.add(parent)
                 parent = instances[parent].parentId
+        references = {item.id: item for item in self.manifest.references}
+        if len(references) != len(self.manifest.references):
+            raise ValueError("Duplicate semantic reference ID.")
+        for item in references.values():
+            if item.componentId not in definitions:
+                raise ValueError("Unknown semantic-reference component.")
+        joints = {item.id: item for item in self.manifest.joints}
+        if len(joints) != len(self.manifest.joints):
+            raise ValueError("Duplicate joint ID.")
+        for item in joints.values():
+            if item.referenceA not in references or item.referenceB not in references:
+                raise ValueError("Joint references must resolve to semantic references.")
+        configuration_ids = set()
+        for configuration in self.manifest.configurations:
+            if configuration.id in configuration_ids:
+                raise ValueError("Duplicate configuration ID.")
+            configuration_ids.add(configuration.id)
+            configured_instances = set()
+            for override in configuration.frames:
+                if override.instanceId not in instances:
+                    raise ValueError("Configuration references an unknown instance.")
+                if override.instanceId in configured_instances:
+                    raise ValueError("Configuration repeats an instance frame.")
+                configured_instances.add(override.instanceId)
+        for item in self.manifest.featureOperations:
+            if item.componentId not in definitions:
+                raise ValueError("Feature operation references an unknown component.")
         return self
 
 
 class Limits(Contract):
-    maxModelCalls: int = Field(default=12, ge=1, le=30)
+    maxModelCalls: int = Field(default=24, ge=1, le=60)
     maxRepairs: int = Field(default=2, ge=0, le=3)
     commandTimeoutSeconds: int = Field(default=180, ge=30, le=300)
     maxArtifactBytes: int = Field(default=41943040, ge=1024, le=41943040)
@@ -267,6 +362,8 @@ class ValidationReport(BaseModel):
     identity: dict[str, str]
     requirements: list[RequirementCheck]
     allRequirementsVerified: bool
+    inspection: dict[str, Any] = Field(default_factory=dict)
+    review: dict[str, Any] = Field(default_factory=dict)
 
 
 class Revision(BaseModel):
@@ -353,7 +450,10 @@ class ModelOptions(BaseModel):
 
 class ModelConfigView(BaseModel):
     role: Role
+    provider: str = "openrouter"
+    base_url: str | None = None
     model_id: str
+    max_output_tokens: int | None = None
     key_hint: str
     active: bool
     version: int

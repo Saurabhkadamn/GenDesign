@@ -50,7 +50,7 @@ async def test_unchanged_failed_candidate_is_not_executed():
 
 
 @pytest.mark.asyncio
-async def test_unverified_assembly_evidence_does_not_block_built_draft():
+async def test_unverified_assembly_evidence_routes_to_independent_review():
     from forma_api.graphs.design import validate
 
     result = await validate({
@@ -63,7 +63,8 @@ async def test_unverified_assembly_evidence_does_not_block_built_draft():
             }],
         }
     })
-    assert result == {"phase": "publish"}
+    assert result["phase"] == "review_session"
+    assert result["review_history"] == []
 
 
 @pytest.mark.asyncio
@@ -92,6 +93,41 @@ async def test_ambiguous_model_operation_is_never_repeated(monkeypatch):
     with pytest.raises(engine.Pause, match="not repeated automatically"):
         await engine.operation({"id": "run"}, "model:1", "model", paid_callback)
     assert not called
+
+
+@pytest.mark.asyncio
+async def test_explicit_continue_can_retry_an_ambiguous_model_operation(monkeypatch):
+    async def one(*a, **kw):
+        return {"status": "failed", "result": {"category": "user_retry_authorized"}}
+    updates = []
+    async def update(*a, **kw):
+        updates.append((a, kw))
+        return []
+    monkeypatch.setattr(engine.db, "one", one)
+    monkeypatch.setattr(engine.db, "update", update)
+    called = False
+    async def callback():
+        nonlocal called
+        called = True
+        return {"ok": True}
+    result = await engine.operation({"id": "run"}, "model:1", "model", callback)
+    assert result == {"ok": True}
+    assert called
+    assert len(updates) == 2
+
+
+@pytest.mark.asyncio
+async def test_explicit_continue_authorizes_failed_model_http_retry_only(monkeypatch):
+    calls = []
+    async def rest(*args, **kwargs):
+        calls.append((args, kwargs))
+        return []
+    monkeypatch.setattr(engine.db, "rest", rest)
+    await engine.authorize_ambiguous_model_retry("run")
+    _, kwargs = calls[0]
+    assert kwargs["params"]["kind"] == "eq.model"
+    assert kwargs["params"]["status"] == "in.(started,ambiguous,failed)"
+    assert kwargs["body"]["result"]["category"] == "user_retry_authorized"
 
 
 @pytest.mark.asyncio
@@ -141,6 +177,46 @@ def test_coordinate_parameters_are_supported_without_accepting_executable_object
     with pytest.raises(ValueError):
         Component.model_validate({**component, "parameters": {"bad": [float("nan")]}})
     assert any(t["function"]["name"] == "apply_changes" for t in model_tools("cad"))
+
+
+def test_manifest_accepts_extensible_semantic_references_joints_and_configurations():
+    snapshot = Snapshot.model_validate({
+        "files": {"parts/arm.py": "def build(p,d): return None"},
+        "manifest": {
+            "components": [{"id": "arm", "name": "Arm", "source": "parts/arm.py",
+                "kind": "solid", "material": {"name": "Aluminium", "densityKgM3": 2700}}],
+            "instances": [{"id": "arm_1", "definitionId": "arm", "parentId": None,
+                "name": "Arm", "frame": {"position": [0, 0, 0], "rotation": [0, 0, 0]}}],
+            "rootComponentId": "arm",
+            "references": [
+                {"id": "pivot_axis", "componentId": "arm", "kind": "axis",
+                 "origin": [0, 0, 0], "direction": [1, 0, 0]},
+                {"id": "bracket_axis", "componentId": "arm", "kind": "custom_axis",
+                 "origin": [0, 0, 0], "direction": [1, 0, 0]},
+            ],
+            "joints": [{"id": "pivot", "kind": "revolute", "referenceA": "pivot_axis",
+                "referenceB": "bracket_axis", "lowerLimit": 0, "upperLimit": 25, "unit": "deg"}],
+            "configurations": [{"id": "full_travel", "name": "Full travel", "frames": [{
+                "instanceId": "arm_1", "frame": {"position": [0, 0, 0], "rotation": [25, 0, 0]}}]}],
+            "featureOperations": [{"id": "pivot_bore", "componentId": "arm",
+                "operation": "checked_cut", "description": "Cut the pivot bore"}],
+        },
+    })
+    assert snapshot.manifest.joints[0].kind == "revolute"
+    assert snapshot.manifest.configurations[0].id == "full_travel"
+
+
+def test_manifest_rejects_joint_with_unknown_semantic_reference():
+    with pytest.raises(ValueError, match="Joint references"):
+        Snapshot.model_validate({
+            "files": {"parts/arm.py": "def build(p,d): return None"},
+            "manifest": {
+                "components": [{"id": "arm", "name": "Arm", "source": "parts/arm.py", "kind": "solid"}],
+                "instances": [], "rootComponentId": "arm", "references": [],
+                "joints": [{"id": "pivot", "kind": "revolute", "referenceA": "missing_a",
+                    "referenceB": "missing_b"}],
+            },
+        })
 
 
 def test_generated_workspace_accepts_only_safe_python_source_paths():
@@ -299,9 +375,51 @@ def test_openrouter_uses_each_model_advertised_completion_limit():
         "top_provider": {"max_completion_tokens": 128000}}
     legacy = {"supported_parameters": ["max_tokens", "tools"],
         "top_provider": {"max_completion_tokens": 65536}}
-    assert completion_settings(modern) == ("max_completion_tokens", 128000)
-    assert completion_settings(legacy) == ("max_tokens", 65536)
+    assert completion_settings(modern) == ("max_completion_tokens", 24576)
+    assert completion_settings(legacy) == ("max_tokens", 24576)
     assert completion_settings(modern, 2048) == ("max_completion_tokens", 2048)
+
+
+def test_completion_settings_respect_configured_budget(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_MAX_OUTPUT_TOKENS", "50000")
+    modern = {"supported_parameters": ["max_completion_tokens", "tools"],
+        "top_provider": {"max_completion_tokens": 128000}}
+    limited = {"supported_parameters": ["max_tokens", "tools"],
+        "top_provider": {"max_completion_tokens": 24000}}
+    assert completion_settings(modern) == ("max_completion_tokens", 50000)
+    assert completion_settings(limited) == ("max_tokens", 24000)
+
+
+def test_muse_uses_its_supported_auto_tool_choice_without_weakening_other_models():
+    from forma_api.providers.openrouter import tool_choice_setting
+    tools = [{"type": "function"}]
+    assert tool_choice_setting("meta/muse-spark-1.2-contributor", tools) == "auto"
+    assert tool_choice_setting("z-ai/glm-5.3-flash", tools) == "required"
+    assert tool_choice_setting("meta/muse-spark-1.2-contributor", []) == "none"
+
+
+def test_bounded_history_never_sends_orphaned_tool_results():
+    from forma_api.graphs.design import bounded_history
+    history = [
+        {"role": "user", "content": "design"},
+        {"role": "assistant", "content": "", "tool_calls": [{"id": "old", "function": {}}]},
+        {"role": "tool", "tool_call_id": "old", "content": "{}"},
+        {"role": "assistant", "content": "", "tool_calls": [{"id": "kept", "function": {}}]},
+        {"role": "tool", "tool_call_id": "kept", "content": "{}"},
+    ]
+    compacted = bounded_history(history, messages=2)
+    assert all(item.get("tool_call_id") != "kept" for item in compacted)
+    assert compacted == [{"role": "user", "content": "design"}]
+
+
+def test_bounded_history_keeps_complete_tool_pairs():
+    from forma_api.graphs.design import bounded_history
+    pair = [
+        {"role": "assistant", "content": "", "tool_calls": [{"id": "call", "function": {}}]},
+        {"role": "tool", "tool_call_id": "call", "content": "{}"},
+    ]
+    assert bounded_history([{"role": "user", "content": "design"}, *pair]) == [
+        {"role": "user", "content": "design"}, *pair]
 
 
 def test_cad_requirements_bind_to_generated_manifest_datum():

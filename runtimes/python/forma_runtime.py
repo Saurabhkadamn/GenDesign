@@ -235,6 +235,15 @@ def validate(root: Path, output: Path) -> None:
         spec.loader.exec_module(checker)
         report["requirements"] = checker.check_requirements(shapes, manifest, read_json(root / "requirements.json"))
         report["allRequirementsVerified"] = bool(report["requirements"]) and all(c["status"] == "passed" for c in report["requirements"])
+    # Produce a request-independent evidence inventory.  Reviewer and CAD
+    # agents decide which facts matter for the current design; this trusted
+    # runtime only measures the imported STEP geometry.
+    import importlib.util
+    inspection_path = Path(__file__).with_name("geometry_inspection.py")
+    inspection_spec = importlib.util.spec_from_file_location("forma_geometry_inspection", inspection_path)
+    inspector = importlib.util.module_from_spec(inspection_spec)
+    inspection_spec.loader.exec_module(inspector)
+    report["inspection"] = inspector.inspect_project(shapes, manifest)
     if (root / "identity.json").exists():
         report["identity"] = read_json(root / "identity.json")
     write_json(output / "report.json", report)

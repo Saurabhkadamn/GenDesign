@@ -86,7 +86,10 @@ def demote():
 
 def execute(operation, timeout, calculation_path):
     identity = json.loads((JOB / "workspace/identity.json").read_text())
-    runtime_files = ("uv.lock", "forma_runtime.py", "requirements_check.py", "control.py")
+    runtime_files = (
+        "uv.lock", "forma_runtime.py", "requirements_check.py",
+        "geometry_inspection.py", "control.py",
+    )
     actual_runtime = "forma-" + hashlib.sha256(b"".join((Path("/opt/forma") / name).read_bytes() for name in runtime_files)).hexdigest()[:16]
     if identity.get("runtime") != actual_runtime:
         raise RuntimeError("Installed runtime hash does not match the candidate identity")

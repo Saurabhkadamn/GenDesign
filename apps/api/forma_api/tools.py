@@ -2,7 +2,7 @@ from typing import Literal
 
 from pydantic import Field, field_validator
 
-from .contracts import Contract, Manifest, Requirement, Role, safe_path
+from .contracts import Contract, Manifest, Requirement, Role, SourcePath, safe_path
 
 
 class Empty(Contract):
@@ -20,6 +20,7 @@ class Search(Contract):
 class ApplyChanges(Contract):
     files: dict[str, str]
     manifest: Manifest | None = None
+    deletePaths: list[SourcePath] = Field(default_factory=list, max_length=200)
 
     @field_validator("files", mode="before")
     @classmethod
@@ -52,12 +53,17 @@ class Finish(Contract):
     message: str = Field(min_length=1, max_length=8000)
 
 
+class RequestEngineering(Contract):
+    task: str = Field(min_length=1, max_length=6000)
+
+
 SPECS = {
     "read_file": (ReadFile, "Read a private workspace source file before editing it."),
     "search_files": (Search, "Search private workspace files by literal text."),
     "apply_changes": (ApplyChanges, "Atomically stage related files and an optional complete manifest. Does not execute code."),
     "build": (Empty, "Build STEP geometry and verify artifact integrity. Report any available requirement evidence for human review."),
     "inspect_geometry": (Empty, "Inspect the current candidate's build report and optional requirement evidence."),
+    "request_engineering": (RequestEngineering, "Ask the engineering agent for calculations or design parameters, then return to CAD."),
     "calculate": (ReadFile, "Execute a calculations/ module twice in separate Python processes."),
     "delegate": (Delegate, "Delegate a complete task and explicit requirements to one specialist."),
     "publish_revision": (Publish, "Publish the exact successfully built candidate as a draft for human review."),
@@ -67,7 +73,7 @@ SPECS = {
 }
 ROLE_TOOLS = {
     "coordinator": ("delegate", "inspect_geometry", "publish_revision", "restore_revision", "ask_user", "finish"),
-    "cad": ("read_file", "search_files", "apply_changes", "build", "inspect_geometry", "ask_user", "finish"),
+    "cad": ("read_file", "search_files", "apply_changes", "build", "inspect_geometry", "request_engineering", "ask_user", "finish"),
     "engineering": ("read_file", "search_files", "apply_changes", "calculate", "inspect_geometry", "ask_user", "finish"),
 }
 

@@ -12,6 +12,7 @@ from . import db, models, repository as repo
 from .config import settings
 from .contracts import AppSettings, ChatRequest, ResumeRequest, SessionView, TERMINAL, Project, WorkspaceState, Run, ModelConfigView, ModelOptions
 from .security import clear_session, encrypt_secret, require_profile, same_origin, set_session
+from .providers.openai_compatible import base_url as compatible_base_url
 
 router = APIRouter(prefix="/api")
 
@@ -197,6 +198,8 @@ async def dispatch(path: str, request: Request, response: Response):
             if parts[2] == "continue":
                 from .services.runs import resume
                 from .graphs.runner import dispatch_run
+                from .engine import authorize_ambiguous_model_retry
+                await authorize_ambiguous_model_retry(run["id"])
                 await resume(run["id"], owner)
                 await dispatch_run(run["id"], {"kind": "continue"})
                 return {"runId": run["id"]}
@@ -207,6 +210,9 @@ async def dispatch(path: str, request: Request, response: Response):
                 from .services.runs import resume
                 from .graphs.runner import dispatch_run
                 value = payload.model_dump()
+                if payload.kind == "continue":
+                    from .engine import authorize_ambiguous_model_retry
+                    await authorize_ambiguous_model_retry(run["id"])
                 message = payload.message or ({"approval": "Approved engineering proposal.",
                     "rejection": "Rejected engineering proposal.", "continue": "Continue."}.get(payload.kind))
                 if message:
@@ -231,13 +237,33 @@ async def dispatch(path: str, request: Request, response: Response):
                 "models": sorted([{"id": m["id"], "name": m.get("name", m["id"]), "contextLength": m.get("context_length", 0)} for m in eligible], key=lambda x: x["name"])}
     if path == "admin/models":
         if method == "GET":
-            return await db.rest("model_configs", params={"select": "role,model_id,key_hint,active,version,tested_at"})
+            rows = await db.rest("model_configs", params={"select": "role,provider,base_url,model_id,max_output_tokens,key_hint,active,version,tested_at"})
+            return [{**row, "provider": row.get("provider", "openrouter"), "base_url": row.get("base_url")} for row in rows]
         if method == "POST":
             data = await body(request, 5000)
             role = data.get("role")
             if role not in ("coordinator", "cad", "engineering"):
                 raise HTTPException(400, "Invalid role.")
             model_id = text(data, "modelId", 3, 160)
+            provider = data.get("provider", "openrouter")
+            if provider not in ("openrouter", "openai_compatible"):
+                raise HTTPException(400, "Unsupported provider.")
+            base_url = data.get("baseUrl")
+            if base_url is not None and not isinstance(base_url, str):
+                raise HTTPException(400, "Invalid base URL.")
+            if provider == "openai_compatible":
+                if not base_url or not base_url.strip():
+                    raise HTTPException(400, "A base URL is required for an OpenAI-compatible provider.")
+                try:
+                    base_url = compatible_base_url({"base_url": base_url})
+                except models.ModelFailure as exc:
+                    raise HTTPException(400, str(exc)) from None
+            else:
+                base_url = None
+            max_output_tokens = data.get("maxTokens")
+            if max_output_tokens is not None:
+                if isinstance(max_output_tokens, bool) or not isinstance(max_output_tokens, int) or not 16 <= max_output_tokens <= 131072:
+                    raise HTTPException(400, "Max output tokens must be an integer between 16 and 131072.")
             old = await db.one("model_configs", {"role": f"eq.{role}"}, required=False)
             if data.get("apiKey"):
                 key = text(data, "apiKey", 10, 512)
@@ -246,7 +272,11 @@ async def dispatch(path: str, request: Request, response: Response):
                 encrypted, hint = old["encrypted_key"], old["key_hint"]
             else:
                 raise HTTPException(400, "Enter an API key for the first connection.")
-            await db.insert("model_configs", {"role": role, "model_id": model_id, "encrypted_key": encrypted, "key_hint": hint, "active": False, "tested_at": None, "version": (old or {}).get("version", 0) + 1, "updated_at": repo.utcnow()}, conflict="role")
+            await db.insert("model_configs", {"role": role, "provider": provider, "base_url": base_url,
+                "model_id": model_id, "max_output_tokens": max_output_tokens,
+                "encrypted_key": encrypted, "key_hint": hint, "active": False,
+                "tested_at": None, "version": (old or {}).get("version", 0) + 1,
+                "updated_at": repo.utcnow()}, conflict="role")
             return {"ok": True}
     if parts[:2] == ["admin", "models"] and len(parts) >= 3:
         role = parts[2]

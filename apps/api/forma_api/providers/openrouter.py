@@ -1,8 +1,9 @@
-"""OpenRouter transport: explicit model selection, no paid or provider fallback."""
+"""OpenRouter transport with explicit model selection and endpoint failover."""
 import json
 import asyncio
 import math
 import os
+import re
 import time
 
 import httpx
@@ -15,12 +16,13 @@ from ..security import decrypt_secret
 
 _catalog: tuple[float, list] = (0, [])
 NEMOTRON = "nvidia/nemotron-3-ultra-550b-a55b:free"
-DEFAULT_MAX_COMPLETION_TOKENS = 32768
+DEFAULT_MAX_COMPLETION_TOKENS = 24576
 # Leave enough headroom for persistence and checkpoint cleanup before the
 # hosted Workflow invocation hard limit (currently 300 seconds).  The model
 # may still use its advertised completion-token maximum; this is only the
 # transport deadline for a single provider request.
 DEFAULT_REQUEST_TIMEOUT_SECONDS = 180
+AUTO_TOOL_CHOICE_PREFIXES = ("meta/muse-spark-",)
 
 
 class ModelFailure(Exception):
@@ -44,7 +46,8 @@ async def configuration(role: str, testing=False):
     row = select_config(await db.rest("model_configs", params={"role": f"in.({role},coordinator)"}), role, testing)
     if not row:
         raise ModelFailure("configuration", f"No usable {role} connection. Test and activate the default or this specialist in Settings, then Continue.")
-    return {**row, "api_key": decrypt_secret(row["encrypted_key"], row["role"])}
+    return {"provider": row.get("provider", "openrouter"), "base_url": row.get("base_url"), **row,
+            "api_key": decrypt_secret(row["encrypted_key"], row["role"])}
 
 
 async def catalog(refresh=False):
@@ -70,7 +73,13 @@ def free_tool_model(model):
 
 
 def completion_settings(model: dict | None, requested: int | None = None) -> tuple[str, int]:
-    """Choose the advertised output parameter and the model/provider maximum."""
+    """Choose a useful output budget bounded by the provider's advertised limit.
+
+    OpenRouter reserves against ``max_tokens`` when checking account credit. Asking
+    for a model's entire 64K/128K output window can therefore reject a request that
+    would actually produce a much smaller CAD tool call. The application budget is
+    configurable, while the catalog value remains a hard upper bound.
+    """
     supported = set((model or {}).get("supported_parameters") or [])
     raw_limit = ((model or {}).get("top_provider") or {}).get("max_completion_tokens")
     try:
@@ -79,9 +88,24 @@ def completion_settings(model: dict | None, requested: int | None = None) -> tup
         advertised = 0
     if advertised <= 0:
         advertised = DEFAULT_MAX_COMPLETION_TOKENS
-    limit = advertised if requested is None else min(advertised, max(16, int(requested)))
+    configured = os.getenv("OPENROUTER_MAX_OUTPUT_TOKENS", str(DEFAULT_MAX_COMPLETION_TOKENS))
+    try:
+        application_budget = max(16, int(configured))
+    except (TypeError, ValueError):
+        application_budget = DEFAULT_MAX_COMPLETION_TOKENS
+    desired = application_budget if requested is None else max(16, int(requested))
+    limit = min(advertised, desired)
     parameter = "max_completion_tokens" if "max_completion_tokens" in supported else "max_tokens"
     return parameter, limit
+
+
+def tool_choice_setting(model_id: str, tools: list[dict]) -> str:
+    """Use the strictest tool mode accepted by the selected model endpoint."""
+    if not tools:
+        return "none"
+    if model_id.startswith(AUTO_TOOL_CHOICE_PREFIXES):
+        return "auto"
+    return "required"
 
 
 def failure(status: int, body: str) -> ModelFailure:
@@ -105,21 +129,23 @@ def _trace_inputs(inputs: dict) -> dict:
 @traceable(name="OpenRouter chat", run_type="llm", process_inputs=_trace_inputs)
 async def _openrouter_chat(*, api_key: str, model_id: str, messages: list[dict], tools: list[dict],
                            token_parameter: str, output_tokens: int, provider: dict,
-                           web_search: bool, max_searches: int):
+                           web_search: bool, max_searches: int, parallel_tool_calls: bool = False):
     request_tools = list(tools)
     if web_search and max_searches > 0:
         request_tools.append({"type": "openrouter:web_search", "parameters": {
             "max_total_results": min(3, max_searches * 3), "search_context_size": "low"}})
     payload = {"model": model_id, "messages": messages, "tools": request_tools,
-        "tool_choice": "required" if tools else "none", "provider": provider,
+        "tool_choice": tool_choice_setting(model_id, tools), "provider": provider,
         token_parameter: output_tokens}
+    if parallel_tool_calls:
+        payload["parallel_tool_calls"] = False
     response = await db.client().post("https://openrouter.ai/api/v1/chat/completions",
         headers={"Authorization": f"Bearer {api_key}"},
         json=payload, timeout=240)
     return {"status": response.status_code, "body": response.text}
 
 
-async def turn(config: dict, messages: list[dict], tools: list[dict], *, max_tokens: int | None = None,
+async def _turn_openrouter(config: dict, messages: list[dict], tools: list[dict], *, max_tokens: int | None = None,
                web_search=False, max_searches=0):
     cfg = settings()
     model = None
@@ -132,8 +158,11 @@ async def turn(config: dict, messages: list[dict], tools: list[dict], *, max_tok
         if not model or not free_tool_model(model):
             raise ModelFailure("free_only", "Testing is restricted to listed zero-price models with tool support.")
     token_parameter, output_tokens = completion_settings(model, max_tokens)
-    policy = {"allow_fallbacks": False, "require_parameters": True,
-              "data_collection": "allow" if cfg.nemotron_testing and config["model_id"] == NEMOTRON else "deny"}
+    supports_parallel_parameter = "parallel_tool_calls" in set((model or {}).get("supported_parameters") or [])
+    # The request contains one exact model ID, so provider fallback may select a
+    # different compatible endpoint but cannot silently substitute another model.
+    policy = {"allow_fallbacks": True, "require_parameters": True,
+              "data_collection": "allow"}
     if cfg.free_only:
         policy["max_price"] = {k: 0 for k in ("prompt", "completion", "request", "image", "audio")}
     try:
@@ -144,14 +173,32 @@ async def turn(config: dict, messages: list[dict], tools: list[dict], *, max_tok
             240,
         )
         async with asyncio.timeout(request_timeout):
+            trace_metadata = {"ls_provider": "openrouter", "ls_model_name": config["model_id"],
+                "max_output_tokens": output_tokens, "output_token_parameter": token_parameter}
             raw = await _openrouter_chat(api_key=config["api_key"], model_id=config["model_id"],
                 messages=messages, tools=tools, token_parameter=token_parameter,
                 output_tokens=output_tokens, provider=policy,
                 web_search=web_search, max_searches=max_searches,
-                langsmith_extra={"metadata": {"ls_provider": "openrouter",
-                    "ls_model_name": config["model_id"],
-                    "max_output_tokens": output_tokens,
-                    "output_token_parameter": token_parameter}})
+                parallel_tool_calls=supports_parallel_parameter,
+                langsmith_extra={"metadata": trace_metadata})
+            if raw["status"] == 402:
+                # OpenRouter rejects a request when the reserved completion
+                # window exceeds the remaining credit, even if the model would
+                # have stopped much earlier. Retry the rejected request once
+                # using the provider's stated affordable budget.
+                match = re.search(r"can only afford (\d+)", raw.get("body", ""), re.IGNORECASE)
+                affordable = int(match.group(1)) if match else 0
+                retry_tokens = max(1024, int(affordable * 0.9)) if affordable else 0
+                if retry_tokens and retry_tokens < output_tokens:
+                    output_tokens = retry_tokens
+                    trace_metadata = {**trace_metadata, "max_output_tokens": output_tokens,
+                        "credit_adjusted": True}
+                    raw = await _openrouter_chat(api_key=config["api_key"], model_id=config["model_id"],
+                        messages=messages, tools=tools, token_parameter=token_parameter,
+                        output_tokens=output_tokens, provider=policy,
+                        web_search=web_search, max_searches=max_searches,
+                        parallel_tool_calls=supports_parallel_parameter,
+                        langsmith_extra={"metadata": trace_metadata})
     except (httpx.TimeoutException, TimeoutError):
         raise ModelFailure("timeout", "The model exceeded its response timeout. Its outcome is uncertain; Continue only when ready to retry.") from None
     except httpx.HTTPError:
@@ -178,6 +225,17 @@ async def turn(config: dict, messages: list[dict], tools: list[dict], *, max_tok
                 "webSearchRequests": (usage.get("server_tool_use") or {}).get("web_search_requests", 0)}
     except (KeyError, IndexError, ValueError, TypeError):
         raise ModelFailure("tool_protocol", "The model returned an invalid tool action. No action was executed.") from None
+
+
+async def turn(config: dict, messages: list[dict], tools: list[dict], *, max_tokens: int | None = None,
+               web_search=False, max_searches=0):
+    """Dispatch through the configured provider without leaking provider details into graph code."""
+    if config.get("provider", "openrouter") == "openai_compatible":
+        from .openai_compatible import turn as compatible_turn
+        return await compatible_turn(config, messages, tools, max_tokens=max_tokens,
+                                     web_search=web_search, max_searches=max_searches)
+    return await _turn_openrouter(config, messages, tools, max_tokens=max_tokens,
+                                  web_search=web_search, max_searches=max_searches)
 
 
 async def test_connection(role: str):

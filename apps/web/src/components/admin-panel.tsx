@@ -125,7 +125,7 @@ export function AdminPanel() {
               {modelOptions.freeOnly
                 ? 'Free-only testing is enabled. Paid inference is blocked on the server.'
                 : 'Choose any OpenRouter model, paid or free. Usage charges depend on the model you choose.'}{' '}
-              Suggestions include the full catalog. The connection test checks whether the selected model can call the CAD tools.
+              OpenRouter suggestions are shown when available; compatible providers accept any exact model ID. The connection test checks whether the selected model can call the CAD tools.
               {modelOptions.syntheticNemotronTesting &&
                 ' Temporary Nemotron testing is enabled: NVIDIA may retain synthetic test prompts. Do not enter private project data.'}
             </p>
@@ -166,6 +166,7 @@ export function AdminPanel() {
                 </div>
                 {model && (
                   <div className="model-summary">
+                    <span>{model.provider ?? 'openrouter'}</span>
                     <span>{model.model_id}</span>
                     <code>{model.key_hint}</code>
                   </div>
@@ -183,7 +184,10 @@ export function AdminPanel() {
                     void act(async () => {
                       await post('admin/models', {
                         role,
+                        provider: data.get('provider'),
+                        baseUrl: data.get('baseUrl'),
                         modelId: data.get('modelId'),
+                        maxTokens: data.get('maxTokens') ? Number(data.get('maxTokens')) : null,
                         apiKey: data.get('apiKey'),
                       });
                       form.reset();
@@ -191,7 +195,25 @@ export function AdminPanel() {
                   }}
                 >
                   <label>
-                    OpenRouter model ID
+                    Provider
+                    <select name="provider" defaultValue={model?.provider ?? 'openrouter'}>
+                      <option value="openrouter">OpenRouter</option>
+                      <option value="openai_compatible">OpenAI-compatible endpoint</option>
+                    </select>
+                  </label>
+                  <label>
+                    Base URL
+                    <input
+                      name="baseUrl"
+                      type="url"
+                      autoComplete="off"
+                      placeholder="https://integrate.api.nvidia.com/v1"
+                      defaultValue={model?.base_url ?? ''}
+                    />
+                    <span className="muted-copy">Required for OpenAI-compatible providers; leave blank for OpenRouter.</span>
+                  </label>
+                  <label>
+                    Model ID
                     <input
                       name="modelId"
                       list="openrouter-model-options"
@@ -201,7 +223,7 @@ export function AdminPanel() {
                       required
                       maxLength={160}
                     />
-                    <span className="muted-copy">Paste any OpenRouter model ID, paid or free, or choose a suggestion.</span>
+                    <span className="muted-copy">Paste the exact model ID supported by the selected provider.</span>
                   </label>
                   <label>
                     API key
@@ -209,10 +231,24 @@ export function AdminPanel() {
                       name="apiKey"
                       type="password"
                       autoComplete="new-password"
-                      placeholder={model ? 'Leave blank to keep the saved key' : 'Enter your OpenRouter key'}
+                      placeholder={model ? 'Leave blank to keep the saved key' : 'Enter the provider API key'}
                       required={!model}
                       minLength={10}
                     />
+                  </label>
+                  <label>
+                    Max output tokens
+                    <input
+                      name="maxTokens"
+                      type="number"
+                      min={16}
+                      max={131072}
+                      step={1}
+                      inputMode="numeric"
+                      placeholder="Provider default"
+                      defaultValue={model?.max_output_tokens ?? ''}
+                    />
+                    <span className="muted-copy">Optional. The server uses this cap for normal requests; the connection test stays at 2,048.</span>
                   </label>
                   <div className="model-actions">
                     <button className="primary-btn" disabled={busy}>
@@ -314,7 +350,7 @@ export function AdminPanel() {
           <div className="limits-grid">
             {(
               [
-                { key: 'maxModelCalls', label: 'Model calls per request', min: 1, max: 30 },
+                { key: 'maxModelCalls', label: 'Model calls per request', min: 1, max: 60 },
                 { key: 'maxRepairs', label: 'Automatic repair attempts', min: 0, max: 3 },
                 {
                   key: 'commandTimeoutSeconds',

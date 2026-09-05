@@ -68,6 +68,27 @@ const CadViewer = dynamic(() => import('./cad-viewer').then((m) => m.CadViewer),
   loading: () => <div className="viewer-loading">Opening 3D viewer…</div>,
 });
 type Modal = 'projects' | 'history' | 'settings' | 'feedback' | 'help' | null;
+type ReviewFindingView = {
+  id: string;
+  statement: string;
+  status: string;
+  severity: 'info' | 'warning' | 'error';
+  explanation: string;
+  evidence?: string[];
+};
+type ReviewView = { summary?: string; findings?: ReviewFindingView[] };
+type InspectionConfigurationView = {
+  id: string;
+  name: string;
+  boundsMm?: number[] | null;
+  massKg?: number | null;
+  interferences?: Array<{
+    instances: string[];
+    volumeMm3: number;
+    percentOfSmaller?: number | null;
+  }>;
+};
+type InspectionView = { configurations?: InspectionConfigurationView[] };
 export function IconButton({
   label,
   children,
@@ -130,6 +151,9 @@ export function Workspace({
   const textarea = useRef<HTMLTextAreaElement>(null);
   const project = state?.project;
   const revision = state?.revisions.find((r) => r.id === project?.current_revision_id);
+  const designReview = revision?.validation?.review as ReviewView | undefined;
+  const geometryInspection = revision?.validation?.inspection as InspectionView | undefined;
+  const asBuiltInspection = geometryInspection?.configurations?.find((item) => item.id === 'as_built');
   const manifest = revision?.manifest ?? emptyManifest;
   // A waiting_input run is still the current conversation. Treating it as
   // terminal here made the composer start a brand new run instead of sending
@@ -928,8 +952,8 @@ export function Workspace({
                 <div className="run-waiting" role="status">
                   <CircleHelp size={15} />
                   <span>
-                    Forma is waiting for your input. Reply to the question above,
-                    or type <strong>approve</strong> to start the CAD build.
+                    Forma is waiting for one design decision. Reply to the question above;
+                    if it is an engineering proposal, you can also type <strong>approve</strong>.
                   </span>
                 </div>
               )}
@@ -955,6 +979,50 @@ export function Workspace({
                     <p key={check.id}><strong>{check.status === 'passed' ? '✓ Verified' : check.status === 'failed' ? 'Failed' : 'Unverified'}</strong> · {check.description}</p>
                   ))}
                   {!revision.validation.allRequirementsVerified && <p>These measurements are advisory. Review the draft before use; unsupported requirements were not checked automatically.</p>}
+                </details>
+              )}
+              {designReview?.summary && (
+                <details className="activity design-review" open>
+                  <summary><ShieldCheck size={14} /> Independent design review</summary>
+                  <p className="review-summary">{designReview.summary}</p>
+                  {designReview.findings?.map((finding) => (
+                    <div className={`review-finding ${finding.severity}`} key={finding.id}>
+                      <strong>{finding.status.replaceAll('_', ' ')}</strong>
+                      <span>{finding.statement}</span>
+                      <p>{finding.explanation}</p>
+                      {finding.evidence?.length ? <small>{finding.evidence.join(' · ')}</small> : null}
+                    </div>
+                  ))}
+                </details>
+              )}
+              {asBuiltInspection && (
+                <details className="activity geometry-evidence">
+                  <summary>
+                    <Layers3 size={14} /> Geometry inspection
+                    <span>{asBuiltInspection.interferences?.length ?? 0} overlaps</span>
+                  </summary>
+                  {asBuiltInspection.boundsMm?.length === 6 && (
+                    <p>
+                      Envelope: {(asBuiltInspection.boundsMm[3] - asBuiltInspection.boundsMm[0]).toFixed(2)} ×{' '}
+                      {(asBuiltInspection.boundsMm[4] - asBuiltInspection.boundsMm[1]).toFixed(2)} ×{' '}
+                      {(asBuiltInspection.boundsMm[5] - asBuiltInspection.boundsMm[2]).toFixed(2)} mm
+                    </p>
+                  )}
+                  {typeof asBuiltInspection.massKg === 'number' && (
+                    <p>Assigned-material mass: {asBuiltInspection.massKg.toFixed(3)} kg</p>
+                  )}
+                  {asBuiltInspection.interferences?.length ? (
+                    asBuiltInspection.interferences.map((item) => (
+                      <p key={item.instances.join(':')}>
+                        <strong>Overlap</strong> · {item.instances.join(' ↔ ')} · {item.volumeMm3.toFixed(2)} mm³
+                        {typeof item.percentOfSmaller === 'number'
+                          ? ` (${item.percentOfSmaller.toFixed(1)}% of smaller part)`
+                          : ''}
+                      </p>
+                    ))
+                  ) : (
+                    <p>No exact solid overlap was found in the as-built configuration.</p>
+                  )}
                 </details>
               )}
             </ConversationContent>

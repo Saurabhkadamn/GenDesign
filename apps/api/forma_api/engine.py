@@ -29,7 +29,8 @@ async def operation(run, key, kind, callback, *, idempotent=False):
     # non-repeatable because the provider may have accepted the request.
     retryable_model_failure = (
         old and kind == "model" and old["status"] == "failed"
-        and (old.get("result") or {}).get("category") in {"rate_limit", "overloaded", "tool_protocol"}
+        and (old.get("result") or {}).get("category") in {
+            "rate_limit", "overloaded", "tool_protocol", "user_retry_authorized"}
     )
     if old and not idempotent:
         if old["status"] == "started":
@@ -48,6 +49,20 @@ async def operation(run, key, kind, callback, *, idempotent=False):
         raise Pause(str(exc)) from None
     await db.update("run_operations", {"status": "complete", "result": result, "updated_at": repo.utcnow()}, run_id=run["id"], operation_key=key)
     return result
+
+
+async def authorize_ambiguous_model_retry(run_id: str) -> None:
+    """Record explicit user consent before retrying an unfinished model call.
+
+    Model failures are stored only when the provider returned an HTTP error or
+    the connection outcome was uncertain. A Continue action may retry either;
+    completed calls and every non-model external operation remain immutable.
+    """
+    await db.rest("run_operations", "PATCH", params={
+        "run_id": f"eq.{run_id}", "kind": "eq.model", "status": "in.(started,ambiguous,failed)",
+    }, body={"status": "failed", "result": {"category": "user_retry_authorized",
+        "diagnostic": "The user explicitly continued after an uncertain model request."},
+        "updated_at": repo.utcnow()})
 
 
 async def persist(run, cp, worker, version):
@@ -124,14 +139,14 @@ async def model_turn(run, cp, limits):
         recorded = await db.one("run_operations", {"run_id": f"eq.{run['id']}", "operation_key": f"eq.model:{sequence}"}, required=False)
         await tracing.record(run, f"model:{sequence}", f"{cp['role']} model call", started,
             inputs={"messages": messages, "tools": model_tools(cp["role"])}, outputs=(recorded or {}).get("result"),
-            attributes={"span.type": "LLM", "model": config["model_id"], "provider": "OpenRouter", "prompt.version": PROMPT_VERSION}, error=True)
+            attributes={"span.type": "LLM", "model": config["model_id"], "provider": config.get("provider", "openrouter"), "prompt.version": PROMPT_VERSION}, error=True)
         raise
     cp["history"][cp["role"]].append(result["message"])
     cp["pending"] = result["calls"]
     cp["modelCalls"] += 1
     await tracing.record(run, f"model:{sequence}", f"{cp['role']} model call", started,
         inputs={"messages": messages, "tools": model_tools(cp["role"])}, outputs=result,
-        attributes={"span.type": "LLM", "model": config["model_id"], "provider": "OpenRouter", "prompt.version": PROMPT_VERSION,
+        attributes={"span.type": "LLM", "model": config["model_id"], "provider": config.get("provider", "openrouter"), "prompt.version": PROMPT_VERSION,
         "input.tokens": result["inputTokens"], "output.tokens": result["outputTokens"], "cost": result.get("cost")})
     await db.insert("generations", {"id": str(uuid5(NAMESPACE_URL, f"{run['id']}:{sequence}")), "run_id": run["id"],
         "ordinal": sequence, "role": cp["role"], "model_id": config["model_id"], "config_version": config["version"],
@@ -160,8 +175,9 @@ async def build_candidate(run, cp, limits, key):
         return cp["validated"]["report"]
     if cp.get("lastFailedCandidate") == expected:
         raise Pause("The candidate has not changed since its failed build. No identical build was repeated; edit the source before continuing.")
-    if cp["repairs"] > limits.maxRepairs:
-        raise Pause(f"Stopped after {cp['attempts']} build attempts. The repair limit was reached; your saved design is unchanged.")
+    # Build/repair work is governed by the run's total model/time budget.  A
+    # fixed domain-agnostic repair count caused complex assemblies to stop
+    # before the agent received useful geometric evidence.
     await ensure_sandbox(run, cp, limits)
     cp["attempts"] += 1
     await repo.event(run["id"], f"Building candidate · attempt {cp['attempts']}.", stage="execution", attempt=cp["attempts"])
@@ -240,8 +256,8 @@ async def reject_candidate(run, cp, expected, error, limits):
     repeated = error["fingerprint"] == cp.get("lastFailure")
     cp["lastFailure"] = error["fingerprint"]
     await repo.event(run["id"], f"Attempt {cp['attempts']} failed: {error['guidance']}", kind="validation", stage=error["stage"], attempt=cp["attempts"])
-    if repeated or cp["repairs"] > limits.maxRepairs:
-        cp["stopAfterTool"] = "The same build failure repeated." if repeated else "The bounded repair limit was reached."
+    if repeated:
+        cp["stopAfterTool"] = "The same build failure repeated. Change the source or re-plan the affected component."
     return {"ok": False, "error": error, "attempt": cp["attempts"], "repeated": repeated,
         "repairsRemaining": max(0, limits.maxRepairs-cp["repairs"])}
 
@@ -259,7 +275,10 @@ async def execute_tool(run, cp, call, app_settings, worker):
             raise ValueError("Engineering can edit only calculations/ files and cannot modify the manifest.")
         if cp["role"] == "cad" and any(p.startswith("calculations/") for p in value["files"]):
             raise ValueError("Delegate calculations to the engineering agent.")
-        candidate = Snapshot.model_validate({"manifest": value["manifest"] or snapshot["manifest"], "files": {**snapshot["files"], **value["files"]}}).model_dump()
+        files = {**snapshot["files"], **value["files"]}
+        for path in value.get("deletePaths", []):
+            files.pop(path, None)
+        candidate = Snapshot.model_validate({"manifest": value["manifest"] or snapshot["manifest"], "files": files}).model_dump()
         if not app_settings.surfacingEnabled and any(c["kind"] == "surface" for c in candidate["manifest"]["components"]):
             raise ValueError("Surface modeling is disabled by the administrator.")
         cp["snapshot"] = candidate
@@ -269,6 +288,9 @@ async def execute_tool(run, cp, call, app_settings, worker):
         return {"ok": True, "candidateHash": digest(candidate)}
     if name == "inspect_geometry":
         return cp.get("validated", {"verified": False, "message": "Build the current candidate first."})
+    if name == "request_engineering":
+        cp["engineeringRequest"] = value["task"]
+        return {"requested": True}
     if name == "delegate":
         if value["role"] == "engineering" and not app_settings.engineeringEnabled:
             raise ValueError("Engineering calculations are disabled.")
