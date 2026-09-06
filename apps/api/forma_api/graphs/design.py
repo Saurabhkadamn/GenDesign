@@ -496,7 +496,27 @@ for holes normal to the XY plane and axis=Y for holes normal to the XZ frame pla
 checks in kind=unverified without inventing values. In particular, an M10 bolt size does not specify a hole
 diameter, so record the frame bolt pattern as unverified unless a clearance diameter is explicitly supplied.
 Web search is available only when current external engineering facts are necessary; prefer the request and deterministic calculation."""
-    value, usage = await structured_turn(state, "engineering", "triage", prompt, "submit_triage", Triage, web=True)
+    try:
+        value, usage = await structured_turn(state, "engineering", "triage", prompt, "submit_triage", Triage, web=True)
+    except Pause as exc:
+        # A malformed structured response must not block an otherwise
+        # explicit request. Preserve the user's original requirements and
+        # choose the conservative deterministic route; the model is still
+        # used for CAD generation, while triage contract noise cannot strand
+        # the run indefinitely.
+        if "contract" not in str(exc).lower() and "invalid" not in str(exc).lower():
+            raise
+        fallback_route = ("analyze" if deterministic_analysis_needed(state["original_request"])
+                          else "cad" if design_work_requested(state["original_request"])
+                          else "answer")
+        value = Triage(route=fallback_route,
+            remarks=["The model triage response was malformed; Forma preserved the request and used deterministic routing."],
+            assumptions=["No numeric requirement was invented; unsupported checks remain unverified."])
+        usage = {"model_calls": state.get("model_calls", 0),
+                 "search_count": state.get("search_count", 0)}
+        await repo.event(state["run_id"],
+            "Engineering triage contract was malformed; deterministic routing preserved the request.",
+            kind="validation", stage="engineering")
     requirements = merge_requirements(state["original_request"], normalize_triage_requirements(value.requirements))
     route = value.route
     if design_work_requested(state["original_request"]) and route == "answer":
