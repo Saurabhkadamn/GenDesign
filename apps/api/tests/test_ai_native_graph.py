@@ -298,6 +298,9 @@ async def test_cad_session_forces_build_after_three_edits(monkeypatch, graph_moc
             "calls": [{"id": "forced-build", "name": "build", "input": {}}],
             "inputTokens": 10, "outputTokens": 20, "webSearchRequests": 0}
     monkeypatch.setattr(design.models, "turn", turn)
+    async def build(_state):
+        return {"phase": "validate", "build_result": {"ok": True}}
+    monkeypatch.setattr(design, "build", build)
     result = await design.cad_session(state(cad_edits_since_build=3))
     assert "apply_changes" not in seen["tools"]
-    assert result["phase"] == "build"
+    assert result["phase"] == "validate"

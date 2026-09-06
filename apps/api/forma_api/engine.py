@@ -180,8 +180,9 @@ async def model_turn(run, cp, limits):
 async def build_candidate(run, cp, limits, key):
     snapshot = Snapshot.model_validate(cp["snapshot"]).model_dump()
     expected = identity(snapshot, cp["requirements"])
-    if cp.get("validated", {}).get("identity") == expected:
-        return cp["validated"]["report"]
+    validated = cp.get("validated") or {}
+    if validated.get("identity") == expected:
+        return validated["report"]
     if cp.get("lastFailedCandidate") == expected:
         raise Pause("The candidate has not changed since its failed build. No identical build was repeated; edit the source before continuing.")
     # Build/repair work is governed by the run's total model/time budget.  A
