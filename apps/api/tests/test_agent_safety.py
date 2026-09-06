@@ -123,11 +123,28 @@ async def test_explicit_continue_authorizes_failed_model_http_retry_only(monkeyp
         calls.append((args, kwargs))
         return []
     monkeypatch.setattr(engine.db, "rest", rest)
-    await engine.authorize_ambiguous_model_retry("run")
+    await engine.authorize_ambiguous_retry("run")
     _, kwargs = calls[0]
-    assert kwargs["params"]["kind"] == "eq.model"
+    assert kwargs["params"]["kind"] == "in.(model,calculate)"
     assert kwargs["params"]["status"] == "in.(started,ambiguous,failed)"
     assert kwargs["body"]["result"]["category"] == "user_retry_authorized"
+
+
+@pytest.mark.asyncio
+async def test_explicit_continue_can_retry_an_ambiguous_calculation(monkeypatch):
+    async def one(*a, **kw):
+        return {"status": "failed", "result": {"category": "user_retry_authorized"}}
+    monkeypatch.setattr(engine.db, "one", one)
+    async def update(*a, **kw):
+        return []
+    monkeypatch.setattr(engine.db, "update", update)
+    called = False
+    async def callback():
+        nonlocal called
+        called = True
+        return {"ok": True}
+    assert await engine.operation({"id": "run"}, "graph:engineering-calculation:x", "calculate", callback) == {"ok": True}
+    assert called
 
 
 @pytest.mark.asyncio

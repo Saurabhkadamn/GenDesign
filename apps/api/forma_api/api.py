@@ -198,8 +198,8 @@ async def dispatch(path: str, request: Request, response: Response):
             if parts[2] == "continue":
                 from .services.runs import resume
                 from .graphs.runner import dispatch_run
-                from .engine import authorize_ambiguous_model_retry
-                await authorize_ambiguous_model_retry(run["id"])
+                from .engine import authorize_ambiguous_retry
+                await authorize_ambiguous_retry(run["id"])
                 await resume(run["id"], owner)
                 await dispatch_run(run["id"], {"kind": "continue"})
                 return {"runId": run["id"]}
@@ -211,8 +211,8 @@ async def dispatch(path: str, request: Request, response: Response):
                 from .graphs.runner import dispatch_run
                 value = payload.model_dump()
                 if payload.kind == "continue":
-                    from .engine import authorize_ambiguous_model_retry
-                    await authorize_ambiguous_model_retry(run["id"])
+                    from .engine import authorize_ambiguous_retry
+                    await authorize_ambiguous_retry(run["id"])
                 message = payload.message or ({"approval": "Approved engineering proposal.",
                     "rejection": "Rejected engineering proposal.", "continue": "Continue."}.get(payload.kind))
                 if message:

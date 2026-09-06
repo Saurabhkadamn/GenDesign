@@ -27,15 +27,16 @@ async def operation(run, key, kind, callback, *, idempotent=False):
     # A definitive provider throttle did not execute a model request.  An
     # explicit Continue may retry it; timeouts and unknown failures remain
     # non-repeatable because the provider may have accepted the request.
-    retryable_model_failure = (
-        old and kind == "model" and old["status"] == "failed"
+    retryable_explicit_failure = (
+        old and old["status"] == "failed"
         and (old.get("result") or {}).get("category") in {
             "rate_limit", "overloaded", "tool_protocol", "user_retry_authorized"}
+        and kind in {"model", "calculate"}
     )
     if old and not idempotent:
         if old["status"] == "started":
             await db.update("run_operations", {"status": "ambiguous"}, run_id=run["id"], operation_key=key)
-        if not retryable_model_failure:
+        if not retryable_explicit_failure:
             raise Pause("The previous external request has an uncertain or failed outcome. It was not repeated automatically. Review the connection and Continue when ready.")
         await db.update("run_operations", {"status": "started", "result": None, "updated_at": repo.utcnow()},
                         run_id=run["id"], operation_key=key)
@@ -51,18 +52,26 @@ async def operation(run, key, kind, callback, *, idempotent=False):
     return result
 
 
-async def authorize_ambiguous_model_retry(run_id: str) -> None:
-    """Record explicit user consent before retrying an unfinished model call.
+async def authorize_ambiguous_retry(run_id: str) -> None:
+    """Record explicit user consent before retrying safe deterministic work.
 
-    Model failures are stored only when the provider returned an HTTP error or
-    the connection outcome was uncertain. A Continue action may retry either;
-    completed calls and every non-model external operation remain immutable.
+    Model requests may have been accepted by a provider, so Continue is the
+    only path that can retry them. Engineering calculations are deterministic
+    source execution in an isolated sandbox and use the same explicit retry
+    path when a workflow interruption leaves their ledger entry ambiguous.
+    Completed calls and other external operations remain immutable.
     """
     await db.rest("run_operations", "PATCH", params={
-        "run_id": f"eq.{run_id}", "kind": "eq.model", "status": "in.(started,ambiguous,failed)",
+        "run_id": f"eq.{run_id}", "kind": "in.(model,calculate)",
+        "status": "in.(started,ambiguous,failed)",
     }, body={"status": "failed", "result": {"category": "user_retry_authorized",
-        "diagnostic": "The user explicitly continued after an uncertain model request."},
+        "diagnostic": "The user explicitly continued after an uncertain model or deterministic calculation operation."},
         "updated_at": repo.utcnow()})
+
+
+async def authorize_ambiguous_model_retry(run_id: str) -> None:
+    """Backward-compatible alias for callers using the old helper name."""
+    await authorize_ambiguous_retry(run_id)
 
 
 async def persist(run, cp, worker, version):
