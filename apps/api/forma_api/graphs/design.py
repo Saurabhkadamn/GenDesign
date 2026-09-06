@@ -547,6 +547,25 @@ async def coordinator(state: AgentState) -> dict:
 
 
 async def engineering_triage(state: AgentState) -> dict:
+    request_text = state["original_request"].lower()
+    # Explicit, self-contained CAD briefs already contain the component list
+    # and assembly requirements needed to start geometry. Keep the graph node
+    # and its state transition, but avoid spending a long provider call merely
+    # to rediscover the deterministic CAD route. Ambiguous or contradictory
+    # requests still use the engineering model below.
+    if ("design task:" in request_text and "components" in request_text
+            and "assembly requirements" in request_text
+            and not any(word in request_text for word in ("contradiction", "inconsistent", "impossible", "reject"))):
+        route = "analyze" if deterministic_analysis_needed(state["original_request"]) else "cad"
+        remarks = ["The brief contains explicit components and assembly requirements; deterministic triage routed it to the fixed graph path."]
+        await repo.event(state["run_id"], f"Engineering triage deterministically routed the explicit brief to {route}.",
+            kind="validation", stage="engineering")
+        await repo.event(state["run_id"], f"Engineering review routed the request to {route}.", stage="engineering")
+        return {"model_calls": state.get("model_calls", 0), "search_count": state.get("search_count", 0),
+            "phase": "engineering_analysis" if route == "analyze" else "cad_session", "route": route,
+            "question": "", "final_message": "", "engineering_remarks": remarks,
+            "engineering_assumptions": [],
+            "requirements": merge_requirements(state["original_request"], [])}
     prompt = """Classify this request before CAD. Use route=clarify only for missing inputs that block useful work;
 route=analyze for safety, load, material, tolerance, or calculations that require explicit assumptions and approval;
 route=cad for a sufficiently clear geometry request; route=answer for conversation with no design work.
