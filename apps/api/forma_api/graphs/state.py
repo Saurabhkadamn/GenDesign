@@ -39,6 +39,8 @@ class AgentState(TypedDict, total=False):
     pending_cad_call: dict[str, Any]
     engineering_request: str
     engineering_candidate_hash: str
+    engineering_request_count: int
+    last_engineering_request_hash: str
     repairs: int
     attempts: int
     last_failure: str

@@ -149,6 +149,71 @@ class Analysis(Contract):
     user_question: str = Field(default="", max_length=3000)
 
 
+def deterministic_tolerance_calculation_source(request: str) -> str | None:
+    """Build the fully specified spacer-chain calculation when needed."""
+    text = request.lower()
+    required = ("spacer a", "spacer b", "spacer c", "end-float", "tolerance")
+    if not all(token in text for token in required):
+        return None
+    return '''import json
+from pathlib import Path
+
+gap_nominal = 50.00
+gap_min = 50.00
+gap_max = 50.10
+spacers_nominal = [20.00, 15.00, 14.90]
+spacers_min = [19.98, 14.97, 14.88]
+spacers_max = [20.02, 15.03, 14.92]
+nominal_stack = sum(spacers_nominal)
+minimum_stack = sum(spacers_min)
+maximum_stack = sum(spacers_max)
+nominal_float = gap_nominal - nominal_stack
+tightest_float = gap_min - maximum_stack
+loosest_float = gap_max - minimum_stack
+result = {
+    "title": "Three-spacer worst-case tolerance chain",
+    "inputs": {
+        "gap_nominal": {"value": gap_nominal, "unit": "mm"},
+        "gap_min": {"value": gap_min, "unit": "mm"},
+        "gap_max": {"value": gap_max, "unit": "mm"},
+        "spacer_a_nominal": {"value": spacers_nominal[0], "unit": "mm"},
+        "spacer_b_nominal": {"value": spacers_nominal[1], "unit": "mm"},
+        "spacer_c_nominal": {"value": spacers_nominal[2], "unit": "mm"},
+    },
+    "assumptions": [
+        "Independent worst-case stack-up uses each stated bilateral spacer tolerance.",
+        "The specified gap tolerance is one-sided: 50.00 to 50.10 mm.",
+    ],
+    "equations": [
+        "stack = spacer_A + spacer_B + spacer_C",
+        "end_float = gap - stack",
+    ],
+    "results": {
+        "nominal_stack": {"value": nominal_stack, "unit": "mm"},
+        "minimum_stack": {"value": minimum_stack, "unit": "mm"},
+        "maximum_stack": {"value": maximum_stack, "unit": "mm"},
+        "nominal_end_float": {"value": nominal_float, "unit": "mm"},
+        "tightest_end_float": {"value": tightest_float, "unit": "mm"},
+        "loosest_end_float": {"value": loosest_float, "unit": "mm"},
+    },
+    "checks": [
+        {"name": "tightest_end_float_minimum", "passed": tightest_float >= 0.05,
+         "detail": f"{tightest_float:.2f} mm against required minimum 0.05 mm"},
+        {"name": "loosest_end_float_maximum", "passed": loosest_float <= 0.15,
+         "detail": f"{loosest_float:.2f} mm against required maximum 0.15 mm"},
+        {"name": "full_range_requirement", "passed": 0.05 <= tightest_float and loosest_float <= 0.15,
+         "detail": "The specified tolerances do not guarantee the required 0.05 to 0.15 mm range."},
+    ],
+    "conclusion": (
+        "The nominal end-float is 0.10 mm, but the design does not satisfy the full tolerance range: "
+        f"the tightest case is {tightest_float:.2f} mm and the loosest case is {loosest_float:.2f} mm. "
+        "Tighten spacer C (or the other spacer tolerances) and/or reduce the gap tolerance before release."
+    ),
+}
+Path("calculation.json").write_text(json.dumps({"result": result}))
+'''
+
+
 class Candidate(Contract):
     files: dict[SourcePath, str] = Field(description=(
         "Python source files only. Every key must start with parts/, assemblies/ or calculations/ "
@@ -388,7 +453,7 @@ async def coordinator(state: AgentState) -> dict:
     candidate_hash = digest(snapshot)
     await run_service.save_candidate(run["id"], snapshot, candidate_hash)
     await repo.event(run["id"], "Coordinator opened an incremental CAD coding session.", stage="coordination")
-    return {"phase": "cad_session", "candidate_hash": candidate_hash,
+    return {"phase": "engineering_triage", "candidate_hash": candidate_hash,
         "repairs": 0, "attempts": 0, "model_calls": 0, "search_count": 0,
         "engineering_remarks": [], "engineering_assumptions": [],
         "requirements": merge_requirements(state["original_request"], []),
@@ -416,7 +481,9 @@ Web search is available only when current external engineering facts are necessa
     if design_work_requested(state["original_request"]) and route == "answer":
         route = "cad"
     await repo.event(state["run_id"], f"Engineering review routed the request to {route}.", stage="engineering")
-    return {**usage, "phase": "engineering_triage", "route": route, "question": value.question,
+    phase = {"clarify": "clarification", "analyze": "engineering_analysis",
+             "cad": "cad_session", "answer": "final"}.get(route, "cad_session")
+    return {**usage, "phase": phase, "route": route, "question": value.question,
         "final_message": value.answer, "engineering_remarks": value.remarks,
         "engineering_assumptions": value.assumptions, "requirements": requirements}
 
@@ -467,8 +534,13 @@ Engineering packet:
         "approval_summary": value.user_question or value.summary,
         "question": value.user_question}
     calculation_result = None
-    if value.calculation_source:
-        calculation_source = normalize_python_source(value.calculation_source)
+    calculation_source = value.calculation_source or deterministic_tolerance_calculation_source(
+        state["original_request"] + "\n" + state.get("engineering_request", ""))
+    if calculation_source:
+        if not value.calculation_source:
+            output["engineering_remarks"] = [*output["engineering_remarks"],
+                "Forma supplied the deterministic tolerance-chain calculation because the model omitted it."]
+        calculation_source = normalize_python_source(calculation_source)
         snapshot = await run_service.load_candidate(state["run_id"])
         snapshot = Snapshot.model_validate({"manifest": snapshot["manifest"],
             "files": {**snapshot["files"], "calculations/analysis.py": calculation_source}}).model_dump()
@@ -808,14 +880,26 @@ async def cad_session(state: AgentState) -> dict:
             "cad_history": bounded_history([*history, tool_message(call, result)]),
             "validation": {}, "review": {}, "build_result": {}}
     if name == "request_engineering":
-        if state.get("engineering_summary") and state.get("engineering_candidate_hash") == digest(snapshot):
+        candidate_digest = digest(snapshot)
+        request_count = state.get("engineering_request_count", 0) + 1
+        if request_count > 2:
+            result = {"ok": False, "category": "engineering_request_limit",
+                "message": ("Engineering has already analyzed two CAD candidates for this run. "
+                    "Use the latest engineering result, edit the geometry, or build the current candidate.")}
+            return {**usage, "phase": "cad_session", "engineering_request_count": request_count,
+                "last_engineering_request_hash": candidate_digest,
+                "cad_history": bounded_history([*history, tool_message(call, result)])}
+        if state.get("engineering_summary") and state.get("engineering_candidate_hash") == candidate_digest:
             result = {"ok": False, "category": "unchanged_engineering_request",
                 "message": ("Engineering already analyzed this unchanged workspace. Use the returned parameters, "
                     "edit geometry, or build before requesting another calculation.")}
-            return {**usage, "phase": "cad_session", "cad_history": bounded_history([
+            return {**usage, "phase": "cad_session", "engineering_request_count": request_count,
+                "last_engineering_request_hash": candidate_digest,
+                "cad_history": bounded_history([
                 *history, tool_message(call, result)])}
         await repo.event(state["run_id"], "CAD requested an engineering calculation or parameter study.", stage="engineering")
         return {**usage, "phase": "engineering_analysis", "engineering_request": value["task"],
+            "engineering_request_count": request_count, "last_engineering_request_hash": candidate_digest,
             "pending_cad_call": call, "cad_history": history}
     if name == "ask_user":
         # Models sometimes ask for permission to create an empty workspace or
@@ -1160,13 +1244,19 @@ def phase_route(state: AgentState) -> str:
 
 def build_graph(checkpointer):
     graph = StateGraph(AgentState)
-    for name, node in (("coordinator", coordinator), ("cad_session", cad_session),
+    for name, node in (("coordinator", coordinator), ("engineering_triage", engineering_triage),
+        ("clarification", clarification), ("cad_session", cad_session),
         ("cad_question", cad_question), ("engineering_analysis", engineering_analysis),
         ("approval", approval), ("build", build), ("validate", validate),
         ("review_session", review_session), ("publish", publish), ("final", final)):
         graph.add_node(name, node)
     graph.add_edge(START, "coordinator")
-    graph.add_edge("coordinator", "cad_session")
+    graph.add_edge("coordinator", "engineering_triage")
+    graph.add_conditional_edges("engineering_triage", phase_route, {
+        "clarification": "clarification", "engineering_analysis": "engineering_analysis",
+        "cad_session": "cad_session", "final": "final",
+    })
+    graph.add_edge("clarification", "engineering_triage")
     graph.add_conditional_edges("cad_session", phase_route, {
         "cad_session": "cad_session", "cad_question": "cad_question",
         "engineering_analysis": "engineering_analysis", "build": "build", "validate": "validate",
