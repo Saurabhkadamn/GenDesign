@@ -37,6 +37,10 @@ You cannot edit calculations/. If engineering has already answered for the uncha
 create or build geometry before requesting another calculation.
 Parameters accept numbers, strings, booleans, numeric lists and numeric coordinate lists such as hole_positions:[[x,y],...].
 When the workspace is empty, create the component directly; searching nonexistent source files adds no information.
+Only call read_file with an exact path from the workspace.files list; directory names, empty paths, and invented
+metadata paths are invalid. If workspace.files is empty, your next action must be apply_changes containing the
+requested executable part source and a complete manifest. Never submit an empty file or an empty manifest for a
+nontrivial design. A missing-file response is a contract error: correct the path or create the source immediately.
 Workplane('XY').box(width, depth, thickness) creates a solid centered at the origin.
 For a plate with rounded outer corners, build the box FIRST, select its vertical edges with edges('|Z'), then fillet(radius), then drill holes.
 Workplane.fillet requires an existing solid. Do not call it on a 2D rectangle or wire. Do not pass a Python list to edges().

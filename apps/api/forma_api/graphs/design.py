@@ -677,6 +677,9 @@ async def cad_session(state: AgentState) -> dict:
             "manifest": snapshot["manifest"],
             "files": sorted(snapshot["files"]),
             "candidateHash": digest(snapshot),
+            "instruction": ("Use only exact file paths listed in workspace.files. A path such as 'parts' or "
+                "'.metadata/manifest.json' is not a file. If the list is empty, create the requested source "
+                "with apply_changes immediately; do not probe directories or invent metadata files."),
         },
         "lastBuild": state.get("build_result"),
         "lastReview": state.get("review"),
@@ -718,9 +721,26 @@ async def cad_session(state: AgentState) -> dict:
     name = call["name"]
     if name == "read_file":
         safe_path(value["path"])
-        result = {"path": value["path"], "content": snapshot["files"].get(value["path"])}
-        return {**usage, "phase": "cad_session",
-            "cad_history": bounded_history([*history, tool_message(call, result)])}
+        content = snapshot["files"].get(value["path"])
+        if content is None:
+            invalid_attempts = state.get("cad_invalid_tool_attempts", 0) + 1
+            result = {"ok": False, "category": "file_not_found", "path": value["path"],
+                "message": "That path is not a file in the workspace. Read only an exact path from workspace.files.",
+                "availablePaths": sorted(snapshot["files"]),
+                "repairGuidance": ("The workspace is empty; create the requested parts with apply_changes instead "
+                    "of reading a directory or invented metadata file." if not snapshot["files"] else
+                    "Choose one of the listed file paths or patch the requested component.")}
+            next_history = bounded_history([*history, tool_message(call, result)])
+            if invalid_attempts >= 3:
+                return {**usage, "phase": "final", "terminal_status": "failed",
+                    "cad_invalid_tool_attempts": invalid_attempts, "cad_history": next_history,
+                    "final_message": ("The CAD model repeatedly requested paths that are not in the workspace, "
+                        "so no source was executed. Start a new run or edit the request and try again.")}
+            return {**usage, "phase": "cad_session", "cad_invalid_tool_attempts": invalid_attempts,
+                "cad_history": next_history}
+        return {**usage, "phase": "cad_session", "cad_invalid_tool_attempts": 0,
+            "cad_history": bounded_history([*history, tool_message(call, {
+                "ok": True, "path": value["path"], "content": content})])}
     if name == "search_files":
         matches = [{"path": path, "line": index + 1, "text": line[:300]}
             for path, source in snapshot["files"].items()
@@ -743,6 +763,21 @@ async def cad_session(state: AgentState) -> dict:
                 "paths": invalid_paths[:20]}
             return {**usage, "phase": "cad_session", "cad_history": bounded_history([
                 *history, tool_message(call, result)])}
+        empty_sources = [path for path, source in value["files"].items()
+                         if not str(source).strip()]
+        if empty_sources:
+            result = {"ok": False, "category": "empty_source",
+                "message": "Every changed Python file must contain executable source; empty files cannot build.",
+                "paths": empty_sources[:20],
+                "repairGuidance": "Write the requested component build(parameters, dependencies) function and manifest together."}
+            invalid_attempts = state.get("cad_invalid_tool_attempts", 0) + 1
+            next_history = bounded_history([*history, tool_message(call, result)])
+            if invalid_attempts >= 3:
+                return {**usage, "phase": "final", "terminal_status": "failed",
+                    "cad_invalid_tool_attempts": invalid_attempts, "cad_history": next_history,
+                    "final_message": "The CAD model repeatedly returned empty source files, so no source was executed."}
+            return {**usage, "phase": "cad_session", "cad_invalid_tool_attempts": invalid_attempts,
+                "cad_history": next_history}
         try:
             files = dict(snapshot["files"])
             for path in value.get("deletePaths", []):
@@ -768,6 +803,7 @@ async def cad_session(state: AgentState) -> dict:
             "hierarchyNote": ("Top-level or invalid parent sentinels were normalized to null; parentId must name "
                 "another instance id." if hierarchy_normalized else "")}
         return {**usage, "phase": "cad_session", "candidate_hash": candidate_hash,
+            "cad_invalid_tool_attempts": 0,
             "cad_edits_since_build": edits_since_build + 1,
             "cad_history": bounded_history([*history, tool_message(call, result)]),
             "validation": {}, "review": {}, "build_result": {}}
