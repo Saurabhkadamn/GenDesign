@@ -501,7 +501,7 @@ Web search is available only when current external engineering facts are necessa
     route = value.route
     if design_work_requested(state["original_request"]) and route == "answer":
         route = "cad"
-    if route == "cad" and deterministic_analysis_needed(state["original_request"]):
+    if route in ("cad", "clarify") and deterministic_analysis_needed(state["original_request"]):
         route = "analyze"
         await repo.event(state["run_id"],
             "Engineering triage detected explicit calculations or load validation and routed to analysis.",
