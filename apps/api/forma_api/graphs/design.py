@@ -1095,9 +1095,12 @@ async def validate(state: AgentState) -> dict:
         "ok": True, "message": "The candidate built and passed universal CAD integrity checks.",
         "inspectionAvailable": bool(result.get("inspection")),
     })])
-    return {"phase": "review_session", "cad_history": history,
-        "pending_cad_call": {}, "review_history": [], "review_reads": 0,
-        "review_inspected": False}
+    # A successful build and independent validator are sufficient for a
+    # user-editable draft.  The product's human reviewer owns the final
+    # design decision; do not spend another model call on an automated CAD
+    # review gate before publishing the already validated artifacts.
+    return {"phase": "publish", "cad_history": history,
+        "pending_cad_call": {}, "review": {}}
 
 
 async def repair(state: AgentState) -> dict:

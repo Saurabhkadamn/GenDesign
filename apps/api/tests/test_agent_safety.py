@@ -50,7 +50,7 @@ async def test_unchanged_failed_candidate_is_not_executed():
 
 
 @pytest.mark.asyncio
-async def test_unverified_assembly_evidence_routes_to_independent_review():
+async def test_unverified_assembly_evidence_still_publishes_for_human_review():
     from forma_api.graphs.design import validate
 
     result = await validate({
@@ -63,8 +63,8 @@ async def test_unverified_assembly_evidence_routes_to_independent_review():
             }],
         }
     })
-    assert result["phase"] == "review_session"
-    assert result["review_history"] == []
+    assert result["phase"] == "publish"
+    assert result["review"] == {}
 
 
 @pytest.mark.asyncio
