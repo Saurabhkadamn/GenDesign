@@ -51,13 +51,16 @@ async def advance(*, run_id: str, worker: str, resume: dict | None = None) -> st
 
 
 @wf.step(max_retries=1)
-async def pause_interrupted(*, run_id: str, worker: str) -> None:
+async def pause_interrupted(*, run_id: str, worker: str, diagnostic: str = "") -> None:
     from . import db
     from .services.runs import finish
     run = await db.one("runs", {"id": f"eq.{run_id}"})
     try:
-        await finish(run, worker, "paused",
-            "Execution was interrupted. LangGraph preserved the last completed node; Continue when the connection is ready.")
+        message = ("Execution was interrupted. LangGraph preserved the last completed node; "
+                   "Continue when the connection is ready.")
+        if diagnostic:
+            message += f" Diagnostic: {diagnostic[:1200]}"
+        await finish(run, worker, "paused", message)
     except Exception:
         pass
 
@@ -73,7 +76,13 @@ async def design_workflow(*, run_id: str, worker: str, resume: dict | None = Non
                 return {"runId": run_id, "state": state}
             if state == "busy":
                 await workflow.sleep("5 seconds")
-    except Exception:
-        await pause_interrupted(run_id=run_id, worker=worker)
+    except Exception as exc:
+        # Never hide a workflow/runtime exception behind a generic pause. The
+        # checkpoint remains authoritative, while the bounded diagnostic makes
+        # provider, serialization, and resume failures actionable to the user
+        # and visible in Vercel runtime logs.
+        diagnostic = f"{type(exc).__name__}: {exc}"
+        print(f"Forma workflow interrupted for {run_id}: {diagnostic}", flush=True)
+        await pause_interrupted(run_id=run_id, worker=worker, diagnostic=diagnostic)
         return {"runId": run_id, "state": "paused"}
     return {"runId": run_id, "state": "bounded"}
