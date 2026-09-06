@@ -924,6 +924,12 @@ async def cad_session(state: AgentState) -> dict:
         ])}
 
     name = call["name"]
+    if name == "read_file" and state.get("last_read_path") == value.get("path"):
+        feedback = {"ok": False, "category": "repeated_tool_action",
+            "message": "This file was just read in the previous CAD turn.",
+            "repairGuidance": "Use the returned source now. Patch it with apply_changes or build the candidate."}
+        return {**usage, "phase": "cad_session", "last_read_path": value.get("path"),
+            "cad_history": bounded_history([*history, tool_message(call, feedback)])}
     if name == "read_file":
         safe_path(value["path"])
         content = snapshot["files"].get(value["path"])
@@ -942,8 +948,9 @@ async def cad_session(state: AgentState) -> dict:
                     "final_message": ("The CAD model repeatedly requested paths that are not in the workspace, "
                         "so no source was executed. Start a new run or edit the request and try again.")}
             return {**usage, "phase": "cad_session", "cad_invalid_tool_attempts": invalid_attempts,
-                "cad_history": next_history}
+                "last_read_path": value.get("path"), "cad_history": next_history}
         return {**usage, "phase": "cad_session", "cad_invalid_tool_attempts": 0,
+            "last_read_path": value.get("path"),
             "cad_history": bounded_history([*history, tool_message(call, {
                 "ok": True, "path": value["path"], "content": content})])}
     if name == "search_files":
@@ -952,7 +959,7 @@ async def cad_session(state: AgentState) -> dict:
             for index, line in enumerate(source.splitlines())
             if value["query"] in line][:100]
         return {**usage, "phase": "cad_session", "cad_history": bounded_history([
-            *history, tool_message(call, {"matches": matches})])}
+            *history, tool_message(call, {"matches": matches})]), "last_read_path": None}
     if name == "inspect_geometry":
         result = state.get("validation") or {
             "verified": False, "message": "Build the current candidate before inspecting imported geometry."
@@ -1020,6 +1027,7 @@ async def cad_session(state: AgentState) -> dict:
         return {**usage, "phase": "cad_session", "candidate_hash": candidate_hash,
             "cad_invalid_tool_attempts": 0,
             "cad_edits_since_build": edits_since_build + 1,
+            "last_read_path": None,
             "cad_history": bounded_history([*history, tool_message(call, result)]),
             "validation": {}, "review": {}, "build_result": {}}
     if name == "request_engineering":
@@ -1043,7 +1051,7 @@ async def cad_session(state: AgentState) -> dict:
         await repo.event(state["run_id"], "CAD requested an engineering calculation or parameter study.", stage="engineering")
         return {**usage, "phase": "engineering_analysis", "engineering_request": value["task"],
             "engineering_request_count": request_count, "last_engineering_request_hash": candidate_digest,
-            "pending_cad_call": call, "cad_history": history}
+            "pending_cad_call": call, "last_read_path": None, "cad_history": history}
     if name == "ask_user":
         # Models sometimes ask for permission to create an empty workspace or
         # to inspect it before starting.  That is an internal CAD action, not
@@ -1063,7 +1071,7 @@ async def cad_session(state: AgentState) -> dict:
             return {**usage, "phase": "cad_session", "question": "",
                 "pending_cad_call": {}, "cad_history": history}
         return {**usage, "phase": "cad_question", "question": value["question"],
-            "pending_cad_call": call, "cad_history": history}
+            "pending_cad_call": call, "last_read_path": None, "cad_history": history}
     if name == "build":
         if not snapshot["manifest"].get("components") or not snapshot["manifest"].get("rootComponentId"):
             history = bounded_history([*history, tool_message(call, {
@@ -1084,7 +1092,7 @@ async def cad_session(state: AgentState) -> dict:
         # another CAD turn without ever entering the build node.
         return await build({**state, **usage, "phase": "build",
             "pending_cad_call": call, "cad_history": history,
-            "cad_edits_since_build": 0})
+            "cad_edits_since_build": 0, "last_read_path": None})
     history = bounded_history([*history, tool_message(call, {
         "ok": False, "category": "unsupported_action", "message": f"Unsupported CAD action: {name}",
     })])
