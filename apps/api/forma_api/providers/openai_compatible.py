@@ -115,8 +115,12 @@ def _tool_choice(config: dict, tools: list[dict]) -> str:
     if not tools:
         return "none"
     host = urlsplit(base_url(config)).hostname
-    # NVIDIA's hosted agent models use the OpenAI-compatible auto tool mode.
-    return "auto" if host == NVIDIA_BASE_HOST else "required"
+    # Hosted OpenAI-compatible gateways may advertise required tool calls but
+    # return an empty assistant message for large CAD prompts when
+    # ``tool_choice=required`` is forced.  Auto still selects a tool when one
+    # is appropriate, while allowing these models to emit a valid assistant
+    # turn first.  NVIDIA's hosted agent models also require auto mode.
+    return "auto"
 
 
 def _sampling(config: dict) -> tuple[float, float | None]:
