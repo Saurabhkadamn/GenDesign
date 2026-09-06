@@ -46,7 +46,8 @@ class TriageRequirement(Contract):
     to fail.
     """
     id: SafeId
-    description: str = Field(min_length=1, max_length=500)
+    description: str = Field(default="Requirement details are recorded in the original request.",
+                              min_length=1, max_length=500)
     kind: Literal["dimensions", "center", "solid_count", "through_holes", "corner_radius", "unverified"] = Field(description=(
         "Use dimensions, center, solid_count, through_holes or corner_radius only "
         "when every value required by that check is present. Use unverified for "
