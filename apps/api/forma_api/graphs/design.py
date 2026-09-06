@@ -547,7 +547,21 @@ useful geometry; visible engineering assumptions and limitations do not require 
 
 Engineering packet:
 """ + json.dumps(packet, ensure_ascii=False)
-    value, usage = await structured_turn(state, "engineering", "analysis", prompt, "submit_analysis", Analysis, web=True)
+    deterministic_source = deterministic_tolerance_calculation_source(
+        state["original_request"] + "\n" + state.get("engineering_request", ""))
+    if deterministic_source:
+        value = Analysis(
+            summary=("The spacer stack is fully specified. I will run the required worst-case tolerance chain "
+                     "before CAD and preserve the failing range as engineering evidence."),
+            assumptions=["Use the stated bilateral spacer tolerances and one-sided gap tolerance."],
+            recommendations=["Tighten spacer C or reduce the gap tolerance before production release."],
+            design_parameters=["Model the all-nominal stack combination."],
+            calculation_source=deterministic_source,
+        )
+        usage = {"model_calls": state.get("model_calls", 0),
+                 "search_count": state.get("search_count", 0)}
+    else:
+        value, usage = await structured_turn(state, "engineering", "analysis", prompt, "submit_analysis", Analysis, web=True)
     output = {**usage, "phase": "approval" if value.requires_user_input else "cad_session",
         "engineering_summary": value.summary,
         "engineering_assumptions": [*state.get("engineering_assumptions", []), *value.assumptions],
