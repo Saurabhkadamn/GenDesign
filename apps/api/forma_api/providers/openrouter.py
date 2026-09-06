@@ -22,7 +22,11 @@ DEFAULT_MAX_COMPLETION_TOKENS = 24576
 # may still use its advertised completion-token maximum; this is only the
 # transport deadline for a single provider request.
 DEFAULT_REQUEST_TIMEOUT_SECONDS = 180
-AUTO_TOOL_CHOICE_PREFIXES = ("meta/muse-spark-",)
+# A few OpenRouter endpoints advertise tool support but reject the strict
+# ``required`` selector at routing time.  Let them choose a tool call while
+# still sending the full tool schema; connection tests and the graph validate
+# the returned call before executing anything.
+AUTO_TOOL_CHOICE_PREFIXES = ("meta/muse-spark-", "minimax/minimax-")
 
 
 class ModelFailure(Exception):
