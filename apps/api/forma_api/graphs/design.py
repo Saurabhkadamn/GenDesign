@@ -292,10 +292,14 @@ async def structured_turn(state: AgentState, role: str, node: str, prompt: str,
     messages = [{"role": "system", "content": system_prompt(role)},
         {"role": "system", "content": prompt},
         {"role": "user", "content": state.get("clarified_request") or state["original_request"]}]
+    # OpenRouter exposes its web-search server tool; generic OpenAI-compatible
+    # endpoints do not. Keep the engineering node usable on either provider
+    # without turning an unsupported optional tool into a run-stopping error.
+    web_enabled = web and config.get("provider", "openrouter") == "openrouter"
 
     async def call(call_messages):
         return await models.turn(config, call_messages, tools, max_tokens=None,
-            web_search=web, max_searches=max(0, 2-state.get("search_count", 0)))
+            web_search=web_enabled, max_searches=max(0, 2-state.get("search_count", 0)))
 
     result = await operation(run, f"graph:{node}:{ordinal}", "model", lambda: call(messages))
 
