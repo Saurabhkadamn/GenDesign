@@ -114,6 +114,14 @@ def test_openai_compatible_base_url_rejects_embedded_credentials():
         openai_compatible.base_url({"base_url": "https://user:pass@example.com/v1"})
 
 
+def test_recover_json_tool_list_from_text_only_provider_response():
+    tools = [{"type": "function", "function": {"name": "read_file"}}]
+    recovered = openai_compatible._recover_text_tool_call(
+        '[[{"name":"read_file","parameters":{"path":"parts/block.py"}}]]', tools)
+    assert recovered["name"] == "read_file"
+    assert recovered["input"] == {"path": "parts/block.py"}
+
+
 def test_stream_deltas_reconstruct_reasoning_and_tool_arguments():
     second_argument = '"ready"}'
     events = [

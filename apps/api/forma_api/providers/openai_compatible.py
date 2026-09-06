@@ -13,7 +13,7 @@ from langsmith import traceable
 
 from .. import db
 from ..tracing import sanitize
-from .openrouter import ModelFailure
+from .openrouter import ModelFailure, _recover_text_tool_call
 
 DEFAULT_BASE_URL = "https://api.openai.com/v1"
 DEFAULT_MAX_OUTPUT_TOKENS = 32768
@@ -289,6 +289,12 @@ async def _turn_once(config: dict, messages: list[dict], tools: list[dict], *, m
             safe_message.setdefault("tool_calls", []).append({"id": item["id"], "type": "function",
                 "function": {"name": item["function"]["name"], "arguments": json.dumps(arguments)}})
             calls.append({"id": item["id"], "name": item["function"]["name"], "input": arguments})
+        if not calls:
+            recovered = _recover_text_tool_call(message.get("content"), tools)
+            if recovered:
+                safe_message.setdefault("tool_calls", []).append(recovered["tool_call"])
+                calls.append({"id": recovered["id"], "name": recovered["name"],
+                              "input": recovered["input"]})
         usage = body.get("usage") or {}
         return {"message": safe_message, "calls": calls,
                 "inputTokens": usage.get("prompt_tokens", 0), "outputTokens": usage.get("completion_tokens", 0),

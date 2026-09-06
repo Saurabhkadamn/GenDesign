@@ -5,6 +5,7 @@ import math
 import os
 import re
 import time
+from uuid import uuid4
 
 import httpx
 from fastapi import HTTPException
@@ -27,6 +28,33 @@ DEFAULT_REQUEST_TIMEOUT_SECONDS = 180
 # still sending the full tool schema; connection tests and the graph validate
 # the returned call before executing anything.
 AUTO_TOOL_CHOICE_PREFIXES = ("meta/muse-spark-", "minimax/minimax-")
+
+
+def _recover_text_tool_call(content, tools):
+    """Recover a JSON tool-shaped answer from providers that omit tool_calls."""
+    if not isinstance(content, str) or not content.strip():
+        return None
+    allowed = {item.get("function", {}).get("name") for item in tools
+               if isinstance(item, dict) and isinstance(item.get("function"), dict)}
+    if not allowed:
+        return None
+    try:
+        value = json.loads(content)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+    if isinstance(value, list) and len(value) == 1 and isinstance(value[0], list):
+        value = value[0]
+    if not isinstance(value, list) or not value or not isinstance(value[0], dict):
+        return None
+    item = value[0]
+    name = item.get("name")
+    arguments = item.get("parameters", item.get("arguments", item.get("input")))
+    if name not in allowed or not isinstance(arguments, dict):
+        return None
+    call_id = "recovered-" + uuid4().hex
+    return {"id": call_id, "name": name, "input": arguments,
+        "tool_call": {"id": call_id, "type": "function", "function": {
+            "name": name, "arguments": json.dumps(arguments, ensure_ascii=False)}}}
 
 
 class ModelFailure(Exception):
@@ -225,6 +253,12 @@ async def _turn_openrouter(config: dict, messages: list[dict], tools: list[dict]
             for item in message["tool_calls"]:
                 calls.append({"id": item["id"], "name": item["function"]["name"],
                               "input": json.loads(item["function"]["arguments"])})
+        if not calls:
+            recovered = _recover_text_tool_call(message.get("content"), tools)
+            if recovered:
+                safe_message["tool_calls"] = [recovered["tool_call"]]
+                calls.append({"id": recovered["id"], "name": recovered["name"],
+                              "input": recovered["input"]})
         usage = body.get("usage", {})
         return {"message": safe_message, "calls": calls, "inputTokens": usage.get("prompt_tokens", 0),
                 "outputTokens": usage.get("completion_tokens", 0), "cost": usage.get("cost"),
