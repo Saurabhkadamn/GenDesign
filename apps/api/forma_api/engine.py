@@ -323,7 +323,19 @@ async def execute_tool(run, cp, call, app_settings, worker):
         if receipt["exitCode"] or not receipt["clean"] or receipt["identity"] != expected:
             return {"ok": False, "error": build_error(receipt, "calculation")}
         result = json.loads(await executor().read(box, "calculation.json"))
-        calculation = CalculationResult.model_validate(result["result"]).model_dump()
+        try:
+            calculation = CalculationResult.model_validate(result["result"]).model_dump()
+        except ValidationError as exc:
+            details = "; ".join(
+                f"{'.'.join(map(str, item['loc']))}: {item['msg']}"
+                for item in exc.errors(include_url=False, include_input=False)[:8]
+            )
+            return {"ok": False, "error": {
+                "stage": "calculation",
+                "category": "calculation_contract",
+                "guidance": "The calculation ran but its report did not match the calculation contract. "
+                    f"Repair the calculation output fields and run it again. {details}",
+            }}
         cid = str(uuid5(NAMESPACE_URL, f"{run['id']}:calculation:{cp['sequence']}"))
         await db.insert("calculations", {"id": cid, "run_id": run["id"], "project_id": run["project_id"], "revision_id": run["base_revision_id"], "result": calculation, "reproducible": True}, conflict="id")
         await db.insert("calculation_sources", {"calculation_id": cid, "source": snapshot["files"][value["path"]], "runtime_version": settings().runtime_version}, conflict="calculation_id")

@@ -15,6 +15,7 @@ Vector = tuple[float, float, float]
 NumericList = Annotated[list[float], Field(max_length=1000)]
 NumericMatrix = Annotated[list[NumericList], Field(max_length=1000)]
 Parameter = float | str | bool | NumericList | NumericMatrix
+CalculationValue = float | bool | Annotated[str, Field(max_length=1000)]
 SOURCE_PATH_PATTERN = r"^(?:parts|assemblies|calculations)/(?:[a-zA-Z0-9_-]+/)*[a-zA-Z0-9_-]+\.py$"
 SourcePath = Annotated[str, Field(pattern=SOURCE_PATH_PATTERN, max_length=180)]
 GEOMETRY_SOURCE_PATH_PATTERN = r"^(?:parts|assemblies)/(?:[a-zA-Z0-9_-]+/)*[a-zA-Z0-9_-]+\.py$"
@@ -261,7 +262,7 @@ class ResumeRequest(Contract):
 
 
 class Quantity(Contract):
-    value: float
+    value: CalculationValue
     unit: str
 
 
