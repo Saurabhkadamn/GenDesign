@@ -943,6 +943,14 @@ async def cad_session(state: AgentState) -> dict:
         ])}
 
     name = call["name"]
+    if (name == "read_file" and str(value.get("path", "")).startswith("calculations/")
+            and state.get("engineering_summary")):
+        feedback = {"ok": False, "category": "role_boundary",
+            "message": "Engineering has already executed the calculation and supplied its result; CAD cannot edit or re-read calculations.",
+            "engineeringSummary": state.get("engineering_summary", ""),
+            "repairGuidance": "Use the engineering summary and parameters, then create or build the requested CAD source."}
+        return {**usage, "phase": "cad_session", "last_read_path": None,
+            "cad_history": bounded_history([*history, tool_message(call, feedback)])}
     if name == "read_file" and state.get("last_read_path") == value.get("path"):
         feedback = {"ok": False, "category": "repeated_tool_action",
             "message": "This file was just read in the previous CAD turn.",
