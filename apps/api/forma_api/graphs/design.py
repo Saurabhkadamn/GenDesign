@@ -493,6 +493,28 @@ def tool_message(call: dict, result: dict) -> dict:
     return {"role": "tool", "tool_call_id": call["id"], "content": json.dumps(result, ensure_ascii=False)}
 
 
+def repeated_tool_action(history: list[dict], call: dict) -> bool:
+    """Detect a model selecting the same tool and arguments twice in a row."""
+    actions = []
+    for message in reversed(history):
+        if message.get("role") != "assistant" or not message.get("tool_calls"):
+            continue
+        item = message["tool_calls"][0]
+        try:
+            arguments = item.get("function", {}).get("arguments", {})
+            if isinstance(arguments, str):
+                arguments = json.loads(arguments)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            arguments = {}
+        actions.append((item.get("function", {}).get("name"), arguments))
+        if len(actions) == 2:
+            break
+    if len(actions) < 2:
+        return False
+    current = (call.get("name"), call.get("input", {}))
+    return actions[0] == current and actions[1] == current
+
+
 async def coordinator(state: AgentState) -> dict:
     if state.get("phase"):
         return {}
@@ -876,6 +898,18 @@ async def cad_session(state: AgentState) -> dict:
             "ok": False, "category": "tool_contract", "message": str(exc)[:3000]
         })])
         return {**usage, "phase": "cad_session", "cad_history": history}
+
+    if repeated_tool_action(history, call):
+        feedback = {
+            "ok": False,
+            "category": "repeated_tool_action",
+            "message": "This exact tool action was already accepted twice without changing the workspace.",
+            "repairGuidance": ("Use the returned file content now. Apply a focused source change, build the "
+                "candidate, request engineering, or ask the user; do not repeat the same read/search action."),
+        }
+        return {**usage, "phase": "cad_session", "cad_history": bounded_history([
+            *history, tool_message(call, feedback)
+        ])}
 
     name = call["name"]
     if name == "read_file":

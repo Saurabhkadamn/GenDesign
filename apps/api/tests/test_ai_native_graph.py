@@ -120,6 +120,28 @@ async def test_cad_session_rejects_malformed_source_before_persisting(monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_cad_session_feedback_breaks_repeated_read_loop(monkeypatch, graph_mocks):
+    arguments = {"path": "parts/block.py"}
+
+    async def turn(*_args, **_kwargs):
+        return {"message": {"role": "assistant", "content": "", "tool_calls": [{
+            "id": "read-again", "type": "function", "function": {
+                "name": "read_file", "arguments": json.dumps(arguments)}}]},
+            "calls": [{"id": "read-again", "name": "read_file", "input": arguments}],
+            "inputTokens": 10, "outputTokens": 20, "webSearchRequests": 0}
+
+    monkeypatch.setattr(design.models, "turn", turn)
+    prior = [
+        {"role": "user", "content": "Create a block."},
+        {"role": "assistant", "tool_calls": [{"id": "old-1", "type": "function",
+            "function": {"name": "read_file", "arguments": json.dumps(arguments)}}]},
+        {"role": "tool", "tool_call_id": "old-1", "content": "{}"},
+    ]
+    result = await design.cad_session(state(cad_history=prior))
+    assert "repeated_tool_action" in result["cad_history"][-1]["content"]
+
+
+@pytest.mark.asyncio
 async def test_cad_session_normalizes_model_root_sentinels(monkeypatch, graph_mocks):
     manifest = {
         "schemaVersion": 1, "units": "mm",
