@@ -851,8 +851,13 @@ async def cad_session(state: AgentState) -> dict:
                 "message": "The independent review requested a source change. Edit the candidate before rebuilding.",
             })])
             return {**usage, "phase": "cad_session", "cad_history": history}
-        return {**usage, "phase": "build", "pending_cad_call": call, "cad_history": history,
-            "cad_edits_since_build": 0}
+        # Execute the build transition in the same graph step as the explicit
+        # CAD build action.  Hosted LangGraph interrupts after each node; in
+        # practice that boundary could lose the phase update and schedule
+        # another CAD turn without ever entering the build node.
+        return await build({**state, **usage, "phase": "build",
+            "pending_cad_call": call, "cad_history": history,
+            "cad_edits_since_build": 0})
     history = bounded_history([*history, tool_message(call, {
         "ok": False, "category": "unsupported_action", "message": f"Unsupported CAD action: {name}",
     })])
@@ -1164,7 +1169,8 @@ def build_graph(checkpointer):
     graph.add_edge("coordinator", "cad_session")
     graph.add_conditional_edges("cad_session", phase_route, {
         "cad_session": "cad_session", "cad_question": "cad_question",
-        "engineering_analysis": "engineering_analysis", "build": "build", "final": "final",
+        "engineering_analysis": "engineering_analysis", "build": "build", "validate": "validate",
+        "final": "final",
     })
     graph.add_edge("cad_question", "cad_session")
     graph.add_conditional_edges("engineering_analysis", phase_route,
