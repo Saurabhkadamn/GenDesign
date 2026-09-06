@@ -31,7 +31,9 @@ VERCEL_MODEL_CHAIN = (
 # deployment, but it must remain on the same NVIDIA OpenAI-compatible endpoint
 # so the graph does not silently cross provider credentials or policies.
 NVIDIA_FIRST_FALLBACK = "nvidia/nemotron-3-ultra-550b-a55b"
-FALLBACK_CATEGORIES = {"overloaded", "rate_limit", "quota", "access"}
+# A model that exceeds the provider timeout is unavailable for this step just
+# like a rate-limited model; use the ordered same-endpoint fallback chain.
+FALLBACK_CATEGORIES = {"overloaded", "rate_limit", "quota", "access", "timeout"}
 
 
 def base_url(config: dict) -> str:
