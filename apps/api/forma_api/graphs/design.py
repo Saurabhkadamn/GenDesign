@@ -554,7 +554,7 @@ async def engineering_triage(state: AgentState) -> dict:
     # to rediscover the deterministic CAD route. Ambiguous or contradictory
     # requests still use the engineering model below.
     if ("design task:" in request_text and "components" in request_text
-            and "assembly requirements" in request_text
+            and ("assembly requirements" in request_text or "requirements" in request_text)
             and not any(word in request_text for word in ("contradiction", "inconsistent", "impossible", "reject"))):
         route = "analyze" if deterministic_analysis_needed(state["original_request"]) else "cad"
         remarks = ["The brief contains explicit components and assembly requirements; deterministic triage routed it to the fixed graph path."]
