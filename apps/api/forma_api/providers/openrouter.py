@@ -76,7 +76,8 @@ def free_tool_model(model):
         return False
 
 
-def completion_settings(model: dict | None, requested: int | None = None) -> tuple[str, int]:
+def completion_settings(model: dict | None, requested: int | None = None,
+                        configured_override: int | None = None) -> tuple[str, int]:
     """Choose a useful output budget bounded by the provider's advertised limit.
 
     OpenRouter reserves against ``max_tokens`` when checking account credit. Asking
@@ -92,7 +93,7 @@ def completion_settings(model: dict | None, requested: int | None = None) -> tup
         advertised = 0
     if advertised <= 0:
         advertised = DEFAULT_MAX_COMPLETION_TOKENS
-    configured = os.getenv("OPENROUTER_MAX_OUTPUT_TOKENS", str(DEFAULT_MAX_COMPLETION_TOKENS))
+    configured = configured_override or os.getenv("OPENROUTER_MAX_OUTPUT_TOKENS", str(DEFAULT_MAX_COMPLETION_TOKENS))
     try:
         application_budget = max(16, int(configured))
     except (TypeError, ValueError):
@@ -161,7 +162,8 @@ async def _turn_openrouter(config: dict, messages: list[dict], tools: list[dict]
     if cfg.free_only:
         if not model or not free_tool_model(model):
             raise ModelFailure("free_only", "Testing is restricted to listed zero-price models with tool support.")
-    token_parameter, output_tokens = completion_settings(model, max_tokens)
+    token_parameter, output_tokens = completion_settings(model, max_tokens,
+        config.get("max_output_tokens"))
     supports_parallel_parameter = "parallel_tool_calls" in set((model or {}).get("supported_parameters") or [])
     # The request contains one exact model ID, so provider fallback may select a
     # different compatible endpoint but cannot silently substitute another model.
