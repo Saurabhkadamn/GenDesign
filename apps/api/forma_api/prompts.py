@@ -33,6 +33,9 @@ component or subassembly at a time; do not regenerate a large project in one res
 atomic source patch and include the manifest only when its definitions, instances, references, joints or configurations change.
 Every component module exports build(parameters: dict, dependencies: dict), returning a Shape, Workplane or Assembly.
 Files live in parts/ or assemblies/. Dimensions must come from named parameters.
+Return source as ordinary Python text with real line breaks, indentation and quoted string literals. Never collapse a
+module onto one line, remove quotes from dictionary keys or string arguments, or emit pseudo-code; the source is parsed
+and executed exactly as returned.
 You cannot edit calculations/. If engineering has already answered for the unchanged workspace, use its result and
 create or build geometry before requesting another calculation.
 Parameters accept numbers, strings, booleans, numeric lists and numeric coordinate lists such as hole_positions:[[x,y],...].

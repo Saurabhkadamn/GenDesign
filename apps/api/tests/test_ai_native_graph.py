@@ -94,6 +94,32 @@ async def test_cad_session_applies_one_incremental_source_patch(monkeypatch, gra
 
 
 @pytest.mark.asyncio
+async def test_cad_session_rejects_malformed_source_before_persisting(monkeypatch, graph_mocks):
+    manifest = {
+        "schemaVersion": 1, "units": "mm",
+        "components": [{"id": "block", "name": "Block", "source": "parts/block.py",
+            "kind": "solid", "dependencies": [], "parameters": {}, "color": "#b9c4ad"}],
+        "instances": [], "rootComponentId": "block", "references": [], "joints": [],
+        "configurations": [], "featureOperations": [],
+    }
+    arguments = {"files": [{"path": "parts/block.py",
+        "content": "import cadquery as cq  def build(p,d): return cq.Workplane(XY).box(10,10,10)"}],
+        "manifest": manifest, "deletePaths": []}
+
+    async def turn(*_args, **_kwargs):
+        return {"message": {"role": "assistant", "content": "", "tool_calls": [{
+            "id": "bad-source", "type": "function", "function": {
+                "name": "apply_changes", "arguments": json.dumps(arguments)}}]},
+            "calls": [{"id": "bad-source", "name": "apply_changes", "input": arguments}],
+            "inputTokens": 10, "outputTokens": 20, "webSearchRequests": 0}
+
+    monkeypatch.setattr(design.models, "turn", turn)
+    result = await design.cad_session(state())
+    assert "python_syntax" in result["cad_history"][-1]["content"]
+    assert "candidate" not in graph_mocks
+
+
+@pytest.mark.asyncio
 async def test_cad_session_normalizes_model_root_sentinels(monkeypatch, graph_mocks):
     manifest = {
         "schemaVersion": 1, "units": "mm",

@@ -3,6 +3,7 @@ import json
 import re
 import time
 from copy import deepcopy
+import ast
 from contextvars import ContextVar
 from typing import Literal
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
@@ -246,6 +247,32 @@ class Candidate(Contract):
             return {item["path"]: item["content"] for item in value
                     if isinstance(item, dict) and "path" in item and "content" in item}
         return value
+
+
+def source_syntax_error(files: dict[str, str]) -> dict | None:
+    """Reject malformed generated Python before it is persisted or built.
+
+    OpenAI-compatible gateways occasionally return a tool argument whose
+    source has been collapsed onto one line or has lost string quotes.  The
+    build sandbox catches that too late: the bad candidate is already saved
+    and the next retry spends another durable step rediscovering the same
+    defect.  Parsing here keeps the candidate immutable until every changed
+    module is syntactically valid and gives the model a precise repair target.
+    """
+    for path, source in files.items():
+        if not path.endswith(".py"):
+            continue
+        try:
+            ast.parse(str(source), filename=path)
+        except SyntaxError as exc:
+            return {
+                "file": path,
+                "line": exc.lineno or 1,
+                "column": exc.offset or 1,
+                "message": exc.msg,
+                "text": (exc.text or "").strip()[:300],
+            }
+    return None
 
 
 class ReviewFinding(Contract):
@@ -919,6 +946,16 @@ async def cad_session(state: AgentState) -> dict:
             manifest, hierarchy_normalized = normalize_instance_hierarchy(
                 value["manifest"] or snapshot["manifest"])
             hierarchy_normalized = hierarchy_pre_normalized or hierarchy_normalized
+            syntax = source_syntax_error(files)
+            if syntax:
+                result = {"ok": False, "category": "python_syntax",
+                    "message": "The changed source is not valid Python and was not saved.",
+                    "location": syntax,
+                    "repairGuidance": ("Return real Python source with line breaks and quoted string literals. "
+                        "Fix only the reported file, then submit it again with apply_changes.")}
+                return {**usage, "phase": "cad_session", "cad_history": bounded_history([
+                    *history, tool_message(call, result)
+                ])}
             candidate = Snapshot.model_validate({
                 "manifest": manifest, "files": files,
             }).model_dump()
@@ -1037,17 +1074,27 @@ async def cad_candidate(state: AgentState, *, repair=False) -> dict:
         prompt + "\nPrivate context: " + json.dumps(context), "submit_candidate", Candidate)
     try:
         manifest, hierarchy_changed = normalize_instance_hierarchy(value.manifest.model_dump())
+        merged_files = {**snapshot["files"], **value.files}
+        syntax = source_syntax_error(merged_files)
+        if syntax:
+            raise ValueError(
+                f"{syntax['file']}:{syntax['line']}:{syntax['column']}: "
+                f"{syntax['message']}; {syntax['text']}"
+            )
         candidate = Snapshot.model_validate({"manifest": manifest,
-            "files": {**snapshot["files"], **value.files}}).model_dump()
+            "files": merged_files}).model_dump()
         if hierarchy_changed:
             await repo.event(state["run_id"],
                 "CAD assembly hierarchy had invalid parent references; flattened those edges for a buildable draft.",
                 kind="validation", stage="cad")
-    except ValidationError as exc:
-        feedback = "; ".join(
-            f"{'.'.join(map(str, item['loc']))}: {item['msg']}"
-            for item in exc.errors(include_url=False, include_input=False)[:12]
-        )
+    except (ValidationError, ValueError) as exc:
+        if isinstance(exc, ValidationError):
+            feedback = "; ".join(
+                f"{'.'.join(map(str, item['loc']))}: {item['msg']}"
+                for item in exc.errors(include_url=False, include_input=False)[:12]
+            )
+        else:
+            feedback = str(exc)
         repairs = state.get("repairs", 0) + 1
         await repo.event(state["run_id"],
             f"CAD candidate contract failed before execution: {feedback}",
