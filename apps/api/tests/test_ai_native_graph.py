@@ -218,6 +218,23 @@ async def test_cad_session_does_not_repeat_engineering_for_unchanged_workspace(m
 
 
 @pytest.mark.asyncio
+async def test_engineering_contract_failure_continues_to_cad_as_unverified(monkeypatch, graph_mocks):
+    request = """Design Task: a mounting bracket with a 2g static load, material selection,
+    and a minimum factor of safety of 2. Create the complete CAD design."""
+
+    async def structured_failure(*_args, **_kwargs):
+        raise design.Pause("The engineering model returned an invalid analysis result twice. summary: missing")
+
+    monkeypatch.setattr(design, "structured_turn", structured_failure)
+    result = await design.engineering_analysis(state(original_request=request))
+
+    assert result["phase"] == "cad_session"
+    assert "typed analysis contract" in result["engineering_summary"]
+    assert any("unverified" in item.lower() for item in result["engineering_remarks"])
+    assert result["model_calls"] == 2
+
+
+@pytest.mark.asyncio
 async def test_reviewer_returns_measured_defect_to_cad(monkeypatch, graph_mocks):
     graph_mocks["candidate"] = {
         "manifest": {"schemaVersion": 1, "units": "mm", "components": [], "instances": [],

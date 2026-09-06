@@ -661,7 +661,47 @@ Engineering packet:
         usage = {"model_calls": state.get("model_calls", 0),
                  "search_count": state.get("search_count", 0)}
     else:
-        value, usage = await structured_turn(state, "engineering", "analysis", prompt, "submit_analysis", Analysis, web=True)
+        try:
+            value, usage = await structured_turn(
+                state, "engineering", "analysis", prompt, "submit_analysis", Analysis, web=True)
+        except Pause as exc:
+            # OpenAI-compatible gateways can return a successful response whose
+            # structured tool payload is absent or malformed.  That is a
+            # provider protocol problem, not evidence that the user's design
+            # is unsafe or that CAD cannot proceed.  Preserve the failure as an
+            # explicit unverified engineering note and continue to the user-
+            # reviewable CAD draft.  Provider outages, calculation failures,
+            # model budgets and real missing-input pauses still propagate.
+            diagnostic = str(exc)
+            contract_failure = ("invalid analysis" in diagnostic.lower()
+                                 or "analysis result violated" in diagnostic.lower())
+            if not contract_failure:
+                raise
+            value = Analysis(
+                summary=(
+                    "The engineering provider did not return its typed analysis contract. "
+                    "The request is explicit enough to prepare a CAD draft, but no numerical "
+                    "engineering claim is verified from this step. Review the generated design "
+                    "and add or approve calculations before relying on it."
+                ),
+                assumptions=[
+                    "No material, load, tolerance, or safety value was invented after the provider contract failure."
+                ],
+                recommendations=[
+                    "Treat engineering calculations and safety factors as unverified until a valid analysis is available."
+                ],
+                open_items=["Typed engineering analysis was unavailable from the selected model."],
+                requires_user_input=False,
+            )
+            usage = {
+                "model_calls": state.get("model_calls", 0) + 2,
+                "search_count": state.get("search_count", 0),
+            }
+            await repo.event(
+                state["run_id"],
+                "Engineering analysis contract was unavailable; preserved as unverified and continued to CAD review.",
+                kind="validation", stage="engineering",
+            )
     output = {**usage, "phase": "approval" if value.requires_user_input else "cad_session",
         "engineering_summary": value.summary,
         "engineering_assumptions": [*state.get("engineering_assumptions", []), *value.assumptions],
