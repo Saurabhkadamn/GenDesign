@@ -49,6 +49,18 @@ async def advance_graph(run_id: str, worker: str, resume: dict | None = None) ->
                 # let the workflow exit without retrying a deterministic error.
                 await run_service.finish(run, worker, "paused", str(exc))
                 return "done"
+            except Exception as exc:
+                # A fresh Workflow invocation must be diagnosable when a
+                # checkpoint cannot be decoded, a resume payload is rejected,
+                # or a provider/runtime integration raises outside the bounded
+                # Pause/ModelFailure types. Keep the checkpoint authoritative
+                # and stop this transition without silently replacing the
+                # user's last visible state with a generic interruption.
+                diagnostic = f"{type(exc).__name__}: {exc}"
+                await run_service.finish(
+                    run, worker, "paused", f"Graph transition could not resume safely. {diagnostic[:1200]}"
+                )
+                return "done"
             snapshot = await graph.aget_state(config)
             await db.update("runs", {"model_calls": result.get("model_calls", 0),
                 "updated_at": repo.utcnow()}, id=run_id)
