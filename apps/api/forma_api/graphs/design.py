@@ -782,6 +782,23 @@ async def cad_session(state: AgentState) -> dict:
         return {**usage, "phase": "engineering_analysis", "engineering_request": value["task"],
             "pending_cad_call": call, "cad_history": history}
     if name == "ask_user":
+        # Models sometimes ask for permission to create an empty workspace or
+        # to inspect it before starting.  That is an internal CAD action, not
+        # a missing design decision; interrupting the user here creates an
+        # unproductive clarification loop.  Feed the agent a deterministic
+        # acknowledgement and keep the graph in the CAD session.
+        question = str(value.get("question") or "").strip()
+        internal_workspace_question = any(term in question.lower() for term in (
+            "fresh workspace", "start with a fresh", "create the initial component",
+            "proceed with building", "workspace appears to have no", "should i proceed",
+        ))
+        if internal_workspace_question:
+            history = bounded_history([*history, tool_message(call, {
+                "answered": True,
+                "message": "Proceed directly. Create the requested components in the empty workspace; do not ask for confirmation.",
+            })])
+            return {**usage, "phase": "cad_session", "question": "",
+                "pending_cad_call": {}, "cad_history": history}
         return {**usage, "phase": "cad_question", "question": value["question"],
             "pending_cad_call": call, "cad_history": history}
     if name == "build":
