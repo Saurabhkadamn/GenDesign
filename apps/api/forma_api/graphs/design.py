@@ -510,6 +510,19 @@ def repeated_tool_action(history: list[dict], call: dict) -> bool:
         if len(actions) == 2:
             break
     if len(actions) < 2:
+        # Some providers omit the previous assistant call when they compact a
+        # tool transcript. The completed read result still carries the exact
+        # path, so use it as a conservative immediate-repeat signal.
+        if call.get("name") == "read_file":
+            target = (call.get("input") or {}).get("path")
+            for message in reversed(history):
+                if message.get("role") != "tool":
+                    continue
+                try:
+                    result = json.loads(message.get("content") or "{}")
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    return False
+                return result.get("ok") is True and result.get("path") == target
         return False
     current = (call.get("name"), call.get("input", {}))
     return actions[0] == current and actions[1] == current
