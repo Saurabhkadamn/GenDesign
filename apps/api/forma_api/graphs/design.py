@@ -157,9 +157,7 @@ def deterministic_tolerance_calculation_source(request: str) -> str | None:
     required = ("spacer a", "spacer b", "spacer c", "end-float", "tolerance")
     if not all(token in text for token in required):
         return None
-    return '''import json
-from pathlib import Path
-
+    return '''
 gap_nominal = 50.00
 gap_min = 50.00
 gap_max = 50.10
@@ -172,7 +170,8 @@ maximum_stack = sum(spacers_max)
 nominal_float = gap_nominal - nominal_stack
 tightest_float = gap_min - maximum_stack
 loosest_float = gap_max - minimum_stack
-result = {
+def calculate():
+    result = {
     "title": "Three-spacer worst-case tolerance chain",
     "inputs": {
         "gap_nominal": {"value": gap_nominal, "unit": "mm"},
@@ -211,8 +210,8 @@ result = {
         f"the tightest case is {tightest_float:.2f} mm and the loosest case is {loosest_float:.2f} mm. "
         "Tighten spacer C (or the other spacer tolerances) and/or reduce the gap tolerance before release."
     ),
-}
-Path("calculation.json").write_text(json.dumps({"result": result}))
+    }
+    return result
 '''
 
 
@@ -622,8 +621,8 @@ those design choices, state them in selected_material and manufacturing_method, 
 fillet, reinforcement, bolt and load-path recommendations. Distinguish an engineering choice from a truly blocking
 unknown in open_items. The CAD agent's request is the immediate task. State equations, loads, units, assumptions, recommended design parameters, safety-factor
 target and limitations. When numerical validation is useful, provide a calculations/analysis.py module that writes
-calculation.json matching the CalculationResult contract used by Forma. The result will be executed twice in isolated
-processes. Return calculation_source as ordinary Python source with real newline characters; do not return literal
+    calculation.py module exposing calculate() that returns the CalculationResult contract used by Forma. The runtime
+    writes calculation.json after executing it twice in isolated processes. Return calculation_source as ordinary Python source with real newline characters; do not return literal
 backslash-n escape sequences in place of line breaks. Set requires_user_input only when a missing user choice prevents
 useful geometry; visible engineering assumptions and limitations do not require an approval pause. Do not claim FEA or certification.
 
