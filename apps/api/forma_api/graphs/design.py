@@ -1499,7 +1499,7 @@ def build_graph(checkpointer):
     graph.add_conditional_edges("approval", phase_route, {"cad_session": "cad_session", "final": "final"})
     graph.add_edge("build", "validate")
     graph.add_conditional_edges("validate", phase_route,
-        {"cad_session": "cad_session", "review_session": "review_session", "final": "final"})
+        {"cad_session": "cad_session", "review_session": "review_session", "publish": "publish", "final": "final"})
     graph.add_conditional_edges("review_session", phase_route, {
         "review_session": "review_session", "cad_session": "cad_session",
         "publish": "publish", "final": "final",
