@@ -214,6 +214,22 @@ Path("calculation.json").write_text(json.dumps({"result": result}))
 '''
 
 
+def deterministic_analysis_needed(request: str) -> bool:
+    """Keep explicit math/load requests on the engineering branch.
+
+    A triage model may choose ``cad`` for a request that contains enough
+    geometry to start, while still skipping a required tolerance or load
+    calculation. These phrases are objective routing signals, not inferred
+    design decisions.
+    """
+    text = request.lower()
+    if "tolerance" in text and any(term in text for term in ("stack", "end-float", "worst-case", "chain")):
+        return True
+    if "factor of safety" in text and any(term in text for term in ("load", "weight", "dynamic", "shock", "acceleration")):
+        return True
+    return any(term in text for term in ("calculate and report", "compute and report", "stress validation"))
+
+
 class Candidate(Contract):
     files: dict[SourcePath, str] = Field(description=(
         "Python source files only. Every key must start with parts/, assemblies/ or calculations/ "
@@ -480,6 +496,11 @@ Web search is available only when current external engineering facts are necessa
     route = value.route
     if design_work_requested(state["original_request"]) and route == "answer":
         route = "cad"
+    if route == "cad" and deterministic_analysis_needed(state["original_request"]):
+        route = "analyze"
+        await repo.event(state["run_id"],
+            "Engineering triage detected explicit calculations or load validation and routed to analysis.",
+            kind="validation", stage="engineering")
     await repo.event(state["run_id"], f"Engineering review routed the request to {route}.", stage="engineering")
     phase = {"clarify": "clarification", "analyze": "engineering_analysis",
              "cad": "cad_session", "answer": "final"}.get(route, "cad_session")
