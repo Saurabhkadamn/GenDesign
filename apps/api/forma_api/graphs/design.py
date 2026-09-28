@@ -240,7 +240,7 @@ def requested_part_type_count(request: str) -> int | None:
 
 def model_step_token_budget(config: dict, node: str) -> int:
     """Bound one Vercel step, while allowing a design to span many tool turns."""
-    caps = {"coordinator-session": 8192, "cad-session": 20000,
+    caps = {"coordinator-session": 8192, "cad-session": 64000,
             "review-session": 8192, "analysis": 24000, "triage": 8192}
     try:
         configured = int(config.get("max_output_tokens") or 32768)
