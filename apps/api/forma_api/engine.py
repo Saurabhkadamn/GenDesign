@@ -10,7 +10,7 @@ from pydantic import ValidationError
 from . import db, models, repository as repo, tracing
 from .config import settings
 from .contracts import AppSettings, CalculationResult, Snapshot, TERMINAL
-from .execution import ExecutionFailure, build_error, digest, executor, identity
+from .execution import ExecutionFailure, SandboxExpired, build_error, digest, executor, identity
 from .prompts import VERSION as PROMPT_VERSION, system_prompt
 from .requirements import design_work_requested, merge_requirements
 from .tools import model_tools, parse_tool
@@ -107,9 +107,31 @@ async def finish_run(run, cp, worker, status, message):
     return "done"
 
 
+async def replace_expired_sandbox(run, cp):
+    """Retire a stopped environment without losing the saved candidate."""
+    from .maintenance import release_sandbox
+
+    old = cp.get("sandbox")
+    cp.pop("sandboxReady", None)
+    if old:
+        try:
+            await release_sandbox(old)
+        except Exception:
+            # The expired sandbox is isolated by name. Its platform lifetime
+            # remains the cleanup backstop if the control plane cannot retire it.
+            pass
+    cp["sandbox"] = f"forma-{UUID(run['id']).hex}-{uuid4().hex[:12]}"
+
+
 async def ensure_sandbox(run, cp, limits):
     if cp.get("sandboxReady"):
-        return
+        try:
+            await executor().is_running(cp["sandbox"])
+            return
+        except SandboxExpired:
+            await replace_expired_sandbox(run, cp)
+            await repo.event(run["id"], "The previous build environment expired; preparing a fresh one for the saved design.", stage="preparation")
+    cp["sandbox"] = cp.get("sandbox") or f"forma-{UUID(run['id']).hex}-{uuid4().hex[:12]}"
     name = cp["sandbox"]
     started = time.time_ns()
 
@@ -195,8 +217,29 @@ async def build_candidate(run, cp, limits, key):
     metadata = {"manifest.json": encode(snapshot["manifest"]), "requirements.json": encode(cp["requirements"]), "identity.json": encode(expected)}
     files = {**metadata, **{path: content.encode() for path, content in snapshot["files"].items() if not path.startswith("calculations/")}}
     started = time.time_ns()
-    await executor().stage(cp["sandbox"], files)
-    receipt = await executor().execute(cp["sandbox"], "build", limits.commandTimeoutSeconds)
+    for recovery in range(2):
+        try:
+            await ensure_sandbox(run, cp, limits)
+            await executor().stage(cp["sandbox"], files)
+            receipt = await executor().execute(cp["sandbox"], "build", limits.commandTimeoutSeconds)
+            if receipt.get("identity") != expected:
+                raise ExecutionFailure("Build identity mismatch; stale output rejected")
+            if receipt["exitCode"] or not receipt["clean"] or receipt["timedOut"]:
+                break
+            step_files, total = {}, 0
+            for component in snapshot["manifest"]["components"]:
+                name = component["id"] + ".step"
+                content = await executor().read(cp["sandbox"], name)
+                total += len(content)
+                if total > 120 * 1024 * 1024:
+                    raise Pause("The generated STEP files exceed the transfer limit.")
+                step_files[name] = content
+            break
+        except SandboxExpired:
+            await replace_expired_sandbox(run, cp)
+            if recovery:
+                raise Pause("The CAD environment expired twice during one build. The candidate is saved; Continue when sandbox capacity is available.") from None
+            await repo.event(run["id"], "The build environment expired during execution; retrying the same saved candidate in a fresh environment.", stage="preparation")
     if receipt.get("identity") != expected:
         raise ExecutionFailure("Build identity mismatch; stale output rejected")
     await tracing.record(run, f"{key}:execution", "CAD execution", started, inputs={"snapshot": snapshot, "requirements": cp["requirements"]},
@@ -206,14 +249,6 @@ async def build_candidate(run, cp, limits, key):
         raise Pause("The CAD process timed out or could not be cleaned up. Its environment was discarded. Continue to create a fresh one.")
     if receipt["exitCode"]:
         return await reject_candidate(run, cp, expected, build_error(receipt, "build"), limits)
-    step_files, total = {}, 0
-    for component in snapshot["manifest"]["components"]:
-        name = component["id"] + ".step"
-        content = await executor().read(cp["sandbox"], name)
-        total += len(content)
-        if total > 120 * 1024 * 1024:
-            raise Pause("The generated STEP files exceed the transfer limit.")
-        step_files[name] = content
     # One fresh validator for this candidate; no Python source or builder memory crosses over.
     validator = cp["validator"]
     started = time.time_ns()

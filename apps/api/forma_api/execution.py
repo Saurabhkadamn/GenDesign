@@ -39,8 +39,13 @@ class ExecutionFailure(Exception):
     pass
 
 
+class SandboxExpired(ExecutionFailure):
+    """The named build environment no longer has a running session."""
+
+
 class Executor(Protocol):
     async def create(self, name: str, lifetime: int = 1800) -> str: ...
+    async def is_running(self, name: str) -> bool: ...
     async def stage(self, name: str, files: dict[str, bytes]) -> None: ...
     async def execute(self, name: str, operation: str, timeout: int, path: str = "") -> dict: ...
     async def inspect(self, name: str) -> dict: ...
@@ -66,10 +71,19 @@ def filename(value):
 class VercelExecutor:
     async def box(self, name):
         from vercel import sandbox
-        box = await sandbox.get_sandbox(name=name)
+        try:
+            box = await sandbox.get_sandbox(name=name)
+        except sandbox.SandboxApiError as exc:
+            if exc.status_code == 404:
+                raise SandboxExpired("The build environment expired or stopped.") from exc
+            raise
         if box.current_session is None or box.current_session.status != sandbox.SandboxStatus.RUNNING:
-            raise ExecutionFailure("The build environment expired or stopped. Continue to create a fresh environment.")
+            raise SandboxExpired("The build environment expired or stopped.")
         return box
+
+    async def is_running(self, name):
+        await self.box(name)
+        return True
 
     async def command(self, box, args, timeout=30):
         result = await box.run_process("/opt/forma/.venv/bin/python", ["-I", "/opt/forma/control.py", *args],
@@ -125,8 +139,12 @@ class VercelExecutor:
 
     async def destroy(self, name):
         from vercel import sandbox
-        box = await sandbox.get_sandbox(name=name)
-        await box.destroy()
+        try:
+            box = await sandbox.get_sandbox(name=name)
+            await box.destroy()
+        except sandbox.SandboxApiError as exc:
+            if exc.status_code != 404:
+                raise
 
 
 def executor() -> Executor:
