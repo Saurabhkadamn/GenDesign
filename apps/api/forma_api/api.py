@@ -142,6 +142,8 @@ async def dispatch(path: str, request: Request, response: Response):
     profile = await require_profile(request, response, admin=path.startswith("admin/"), allow_password=path == "auth/password")
     owner = profile["id"]
     if path == "auth/password" and method == "POST":
+        if profile.get("is_public_demo"):
+            raise HTTPException(403, "The shared demo account cannot change its password.")
         password = text(await body(request), "password", 12, 128)
         await db.auth("user", method="PUT", token=request.state.access_token, body={"password": password})
         await db.update("profiles", {"must_change_password": False}, id=owner)
@@ -190,6 +192,11 @@ async def dispatch(path: str, request: Request, response: Response):
         if len(parts) == 3 and method == "POST":
             if run.get("backend_version") != 3 or run.get("execution_environment") != settings().environment:
                 raise HTTPException(409, "This run belongs to another runtime. Start a new request here.")
+            if profile.get("is_public_demo") and parts[2] in ("continue", "resume"):
+                demo_messages = await db.rest("messages", params={"run_id": f"eq.{run['id']}",
+                    "role": "eq.user", "select": "id", "limit": "4"})
+                if len(demo_messages) >= 4:
+                    raise HTTPException(429, "This demo run has reached its follow-up limit. Start a new design later.")
             if parts[2] == "cancel":
                 await db.rest("runs", "PATCH", params={"id": f"eq.{run['id']}", "status": "in.(queued,running,paused,waiting_input)"}, body={"status": "cancelled", "updated_at": repo.utcnow()})
                 from .engine import cancel_run

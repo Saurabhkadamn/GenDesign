@@ -44,6 +44,7 @@ async def rest(table: str, method="GET", *, params=None, body=None, prefer=None)
             "LEASE_LOST": (409, "The worker lease expired. Continue to retry this run."),
             "VALIDATION_REQUIRED": (422, "The CAD validation evidence is incomplete."),
             "ACCOUNT_INACTIVE": (403, "The account is not active for publishing."),
+            "PUBLIC_DEMO_DAILY_LIMIT": (429, "The shared demo has used its six design runs for the last 24 hours. Please try again later."),
             "EMERGENCY_STOP": (503, "CAD publication is temporarily stopped by the administrator."),
         }
         for key, (status_code, message) in known.items():

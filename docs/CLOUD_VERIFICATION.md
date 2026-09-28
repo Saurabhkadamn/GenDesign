@@ -1,37 +1,29 @@
-# Python cloud migration verification
+# Forma: live demo and architecture
 
-Updated 1 September 2026. This report separates verified components from the remaining production release gates.
+**[Open the live Forma app](https://forma-cad-eosin.vercel.app/)** · [Read the README and reviewer login guide](../README.md) · [Browse the source](https://github.com/Saurabhkadamn/GenDesign)
 
-## Confirmed
+This URL is retained for people following the project from my resume. It now describes the current product instead of an old cloud-migration checklist.
 
-- Vercel Services deploys Next.js and Python under one preview URL; `/api/health` identifies Python 0.2.0.
-- A hosted Python workflow completed two steps separated by durable sleep, returning 42.
-- Authenticated preview checks previously passed for login, HTTP-only secure cookies, session, projects, administration and duplicate chat submission. The LangGraph/LangSmith cutover requires a new preview acceptance run.
-- Python API tests cover credential isolation, CSRF, model selection, role permissions, bounded failures, exact request extraction, LangSmith redaction and paid model selection.
-- Database tests cover cross-environment rejection, worker fencing, cancellation precedence and publication guards.
-- Browser verification confirms persistent Show/Hide workspace controls and unrestricted model-ID fields with all-catalog suggestions. Saved keys remain masked.
-- The new testing key passed a real free Nemotron tool call; all three saved Nemotron role connections were updated using role-bound encryption.
-- The supplied paid key passed a real structured tool call for `deepseek/deepseek-v4-flash-0731` through OpenRouter and the deployed Python API. The coordinator connection is encrypted, tested and active; no model fallback is used.
-- LangSmith verification is pending the new preview deployment.
+Forma is an experimental conversational CAD workspace. The goal is to let a user describe a part or assembly, inspect the generated result, download the CAD files, and ask for changes in the same conversation. It is a copilot for exploration, not a replacement for engineering review.
 
-## Actual cloud geometry and timings
+## Request flow
 
-The exact mounting plate fixture was built remotely, then imported and independently verified in a separate Vercel sandbox. STEP and GLB were produced. All five checks passed: 80×50×6 mm dimensions, origin centering, one solid, four Ø6 mm through-holes at X=±30/Y=±15, and four R3 outer corners. Bounding-box tolerances are reported in the evidence. An intentionally failed next build could not reuse the previous STEP output.
+```text
+Chat request
+  → engineering triage (clarify if needed)
+  → optional calculation and user approval
+  → CAD source generation
+  → isolated build and bounded repair
+  → artifact publication
+  → preview, files and follow-up edits
+```
 
-Latest measured sample, no model calls:
+The Next.js frontend handles chat and inspection. A Python FastAPI service owns authentication, projects and artifacts. LangGraph stores agent state and checkpoints in Supabase Postgres; Vercel Workflow advances cloud work. Generated CadQuery code runs in Vercel Sandbox, not in the API process. Supabase stores private files, and LangSmith records server-side development traces. [The README](../README.md) explains the service boundaries and how to try the hosted app.
 
-| Attempt | Environment | Preparation | Python execution | Total build |
-|---|---|---:|---:|---:|
-| 1 | Fresh | 6.49 s | 4.28 s | 11.71 s |
-| 2 | Reused | 2.53 s | 2.93 s | 6.69 s |
-| 3 | Reused | 2.19 s | 2.88 s | 5.95 s |
+## What to expect when testing
 
-Independent validation is additional; these totals are build measurements, not end-to-end chat latency. Results are a small fixture benchmark, not an SLA. Raw evidence is in ignored `test-results/cloud-execution.json`.
+The live app requires an account. The public reviewer account and its bounded usage are documented in the [README](../README.md); there is no self-signup flow. The account is shared, so its projects are not private. Start with a simple part, inspect the preview and exported STEP/GLB, and ask for an edit.
 
-## Still being verified
+Forma can build and export CAD geometry, but a successful build does not prove every dimensional, assembly, motion, tolerance, strength or manufacturing requirement. In particular, earlier complex-assembly tests exposed interference and clearance errors even when components were correctly positioned. Engineering calculations are preliminary screens; dynamic performance, fatigue, sealing, and real-world safety require independent analysis and testing. If a check cannot be performed deterministically, it should be treated as unverified.
 
-- Complete live model request → build → publication → preview/download path with paid DeepSeek has not been run end to end; its structured tool connection check passed. Free Nemotron has intermittently rejected model requests; runs paused safely before publication.
-- Full resume/restart and cancellation acceptance against hosted workflows, beyond unit/database coverage.
-- Mobile layout, measured contrast and actual published GLB inspection in the new frontend.
-- Production cutover is complete: the stable `forma-cad-eosin.vercel.app` health endpoint reports Python 0.2.0. The promoted production deployment was verified before alias promotion.
-- Full paid-model design inference remains untested. The app allows paid/free model selection at the owner's request; the only paid call so far was the synthetic structured-tool connection check.
+The project is still being developed. Model availability, cloud quotas and the shared demo allowance can interrupt a run. Published outputs are drafts for human review, and the downloadable source and geometry let a reviewer inspect or revise them outside Forma.
