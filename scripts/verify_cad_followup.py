@@ -8,7 +8,8 @@ from uuid import uuid4
 import httpx
 
 ROOT = Path(__file__).resolve().parents[1]
-access = json.loads((ROOT / "test-results" / "preview-access.json").read_text())
+access = json.loads((ROOT / "test-results" /
+    os.getenv("FORMA_ACCEPTANCE_ACCESS", "preview-access.json")).read_text())
 credentials = dict(line.split(":", 1) for line in
     (ROOT / "test-results" / "forma-admin-credentials.txt").read_text().splitlines() if ":" in line)
 project_id = os.environ["FORMA_TEST_PROJECT_ID"]

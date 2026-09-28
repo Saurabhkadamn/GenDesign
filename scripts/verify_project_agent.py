@@ -11,14 +11,24 @@ from uuid import uuid4
 import httpx
 
 ROOT = Path(__file__).resolve().parents[1]
-access = json.loads((ROOT / "test-results" / "preview-access.json").read_text())
+access = json.loads((ROOT / "test-results" /
+    os.getenv("FORMA_ACCEPTANCE_ACCESS", "preview-access.json")).read_text())
 credentials = dict(line.split(":", 1) for line in
     (ROOT / "test-results" / "forma-admin-credentials.txt").read_text().splitlines() if ":" in line)
 
 
 def wait(client: httpx.Client, run_id: str) -> str:
+    transport_failures = 0
     for _ in range(60):
-        response = client.get(f"/api/runs/{run_id}")
+        try:
+            response = client.get(f"/api/runs/{run_id}")
+            transport_failures = 0
+        except httpx.TransportError:
+            transport_failures += 1
+            if transport_failures >= 5:
+                raise
+            time.sleep(2)
+            continue
         response.raise_for_status()
         status = response.json()["status"]
         if status not in ("queued", "running"):
