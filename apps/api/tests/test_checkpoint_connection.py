@@ -1,4 +1,5 @@
 import pytest
+from contextlib import asynccontextmanager
 
 from forma_api.services import checkpoints
 
@@ -26,7 +27,7 @@ async def test_checkpoint_saver_leases_checked_connections(monkeypatch):
 
     monkeypatch.setenv("SUPABASE_DATABASE_URL", "postgresql://test.invalid/checkpoints")
     monkeypatch.setattr(checkpoints, "AsyncConnectionPool", FakePool)
-    monkeypatch.setattr(checkpoints, "AsyncPostgresSaver", FakeSaver)
+    monkeypatch.setattr(checkpoints, "FormaPostgresSaver", FakeSaver)
 
     async with checkpoints.checkpoint_saver() as saver:
         assert isinstance(saver, FakeSaver)
@@ -60,3 +61,38 @@ def test_dedicated_transaction_pooler_is_rejected_for_pipelined_checkpoints():
         checkpoints.checkpoint_database_url(
             "postgresql://postgres:secret@db.example.supabase.co:6543/postgres"
         )
+
+
+@pytest.mark.asyncio
+async def test_checkpoint_batch_uses_sequential_queries_in_one_transaction(monkeypatch):
+    calls = []
+
+    class FakeConnection:
+        @asynccontextmanager
+        async def transaction(self):
+            calls.append("begin")
+            yield
+            calls.append("commit")
+
+    class FakeCursor:
+        connection = FakeConnection()
+
+        async def execute(self, query, params):
+            calls.append((query, params))
+
+    @asynccontextmanager
+    async def base_cursor(_self, *, pipeline=False):
+        calls.append(("upstream_pipeline", pipeline))
+        yield FakeCursor()
+
+    monkeypatch.setattr(checkpoints.AsyncPostgresSaver, "_cursor", base_cursor)
+    saver = checkpoints.FormaPostgresSaver(object())
+    async with saver._cursor(pipeline=True) as cursor:
+        await cursor.executemany("INSERT", [(1,), (2,)])
+        await cursor.execute("CHECKPOINT", (3,))
+
+    assert calls == [
+        ("upstream_pipeline", False), "begin",
+        ("INSERT", (1,)), ("INSERT", (2,)), ("CHECKPOINT", (3,)),
+        "commit",
+    ]
