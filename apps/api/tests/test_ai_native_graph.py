@@ -94,6 +94,56 @@ async def test_cad_session_applies_one_incremental_source_patch(monkeypatch, gra
 
 
 @pytest.mark.asyncio
+async def test_new_run_loads_prior_brief_and_revision_for_followup(monkeypatch, graph_mocks):
+    async def run_row(_state):
+        return {"id": _state["run_id"], "project_id": _state["project_id"],
+            "owner_id": _state["owner_id"], "base_revision_id": "revision-1",
+            "selected_ids": ["outer_race"]}
+
+    async def snapshot(_revision_id):
+        return {"manifest": {"schemaVersion": 1, "units": "mm", "components": [],
+            "instances": [], "rootComponentId": None, "references": [], "joints": [],
+            "configurations": [], "featureOperations": []}, "files": {"parts/race.py": "def build(p,d): pass"}}
+
+    async def context(*_args):
+        return {"previousMessages": [{"role": "user", "content": "Design the original bearing."}],
+            "revision": {"id": "revision-1", "allRequirementsVerified": False}}
+
+    monkeypatch.setattr(design, "run_row", run_row)
+    monkeypatch.setattr(design.repo, "load_snapshot", snapshot)
+    monkeypatch.setattr(design.repo, "agent_context", context)
+    result = await design.coordinator(state(original_request="Change the outer race groove."))
+    assert result["phase"] == "coordinator_session"
+    assert result["project_context"]["previousMessages"][0]["content"] == "Design the original bearing."
+    assert result["project_context"]["sourceFiles"] == ["parts/race.py"]
+
+
+@pytest.mark.asyncio
+async def test_followup_cad_delegation_preserves_original_brief_and_selection(monkeypatch, graph_mocks):
+    arguments = {"role": "cad", "task": "Enlarge only the outer race groove."}
+    async def turn(_config, messages, _tools, **_kwargs):
+        assert "Design the original bearing" in messages[1]["content"]
+        return {"message": {"role": "assistant", "content": "", "tool_calls": [{
+            "id": "delegate-1", "type": "function", "function": {
+                "name": "delegate", "arguments": json.dumps(arguments)}}]},
+            "calls": [{"id": "delegate-1", "name": "delegate", "input": arguments}],
+            "inputTokens": 10, "outputTokens": 20, "webSearchRequests": 0}
+
+    monkeypatch.setattr(design.models, "turn", turn)
+    result = await design.coordinator_session(state(
+        original_request="Change its outer race groove.", selected_ids=["outer_race"],
+        project_context={"previousMessages": [{"role": "user",
+            "content": "Design the original bearing."}]},
+        coordinator_history=[{"role": "user", "content": "Change its outer race groove."}],
+    ))
+    assert result["phase"] == "cad_session"
+    delegated = json.loads(result["cad_history"][0]["content"])
+    assert delegated["originalBrief"] == "Design the original bearing."
+    assert delegated["selectedIds"] == ["outer_race"]
+    assert "outer race" in delegated["delegatedTask"]
+
+
+@pytest.mark.asyncio
 async def test_cad_session_rejects_malformed_source_before_persisting(monkeypatch, graph_mocks):
     manifest = {
         "schemaVersion": 1, "units": "mm",

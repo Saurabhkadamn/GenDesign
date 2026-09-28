@@ -11,7 +11,7 @@ from langsmith import Client
 from .config import settings
 
 SECRET_KEY = re.compile(r"authorization|cookie|password|api.?key|encrypted.?key|access.?token|refresh.?token|secret|signed.?url", re.I)
-TOKEN = re.compile(r"(?:sk-or-v1-|lsv2_[A-Za-z0-9_]*|sb_secret_|sb_publishable_)[A-Za-z0-9_-]+|Bearer\s+[^\s\"']+|eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+", re.I)
+TOKEN = re.compile(r"(?:sk-or-v1-|sk-[A-Za-z0-9_-]{16,}|lsv2_[A-Za-z0-9_]*|sb_secret_|sb_publishable_|nvapi-|vck_)[A-Za-z0-9_-]+|AIza[A-Za-z0-9_-]{20,}|v1\.[A-Za-z0-9_-]{70,}(?:\.[A-Za-z0-9_-]{20,})?|Bearer\s+[^\s\"']+|eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+", re.I)
 SIGNED = re.compile(r"https?://[^\s\"'<>]+(?:[?&](?:token|signature|x-amz-signature|key)=[^\s\"'<>]*)", re.I)
 
 

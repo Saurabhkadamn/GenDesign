@@ -750,7 +750,9 @@ export function Workspace({
                 </span>
                 <span>
                   {manifest.components.length} components <span className="footer-dot">·</span>{' '}
-                  {revision ? 'Validated geometry' : 'No geometry yet'}
+                  {revision ? (revision.validation?.allRequirementsVerified
+                    ? 'CAD draft · automated checks passed'
+                    : 'CAD draft · review requirements') : 'No geometry yet'}
                 </span>
               </div>
             </div>
