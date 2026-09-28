@@ -109,6 +109,20 @@ async def test_openai_compatible_connection_budget_is_sent_when_no_request_overr
     assert client.payload["max_tokens"] == 777
 
 
+@pytest.mark.asyncio
+async def test_baseten_deepseek_uses_high_reasoning_with_tools(monkeypatch):
+    client = FakeClient()
+    monkeypatch.setattr(openai_compatible.db, "client", lambda: client)
+    result = await openai_compatible.turn({
+        "provider": "openai_compatible", "base_url": "https://inference.baseten.co/v1",
+        "model_id": "deepseek-ai/DeepSeek-V4.1-Flash", "api_key": "secret", "stream": False,
+    }, [{"role": "user", "content": "Call the check."}], [{"type": "function", "function": {
+        "name": "connection_check", "parameters": {"type": "object"}}}], max_tokens=2048)
+    assert client.payload["reasoning_effort"] == "high"
+    assert client.payload["tool_choice"] == "auto"
+    assert result["calls"][0]["name"] == "connection_check"
+
+
 def test_openai_compatible_base_url_rejects_embedded_credentials():
     with pytest.raises(openai_compatible.ModelFailure):
         openai_compatible.base_url({"base_url": "https://user:pass@example.com/v1"})

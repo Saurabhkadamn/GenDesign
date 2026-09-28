@@ -20,6 +20,8 @@ DEFAULT_MAX_OUTPUT_TOKENS = 32768
 NVIDIA_BASE_HOST = "integrate.api.nvidia.com"
 NVIDIA_NEMOTRON_PREFIX = "nvidia/nemotron-3-ultra-550b-a55b"
 NVIDIA_KIMI_PREFIX = "moonshotai/kimi-k3"
+BASETEN_BASE_HOST = "inference.baseten.co"
+BASETEN_DEEPSEEK_MODEL = "deepseek-ai/DeepSeek-V4.1-Flash"
 VERCEL_GATEWAY_HOST = "ai-gateway.vercel.sh"
 VERCEL_MODEL_CHAIN = (
     "spacexai/grok-4.6",
@@ -114,8 +116,11 @@ def _extra_body(config: dict, output_tokens: int, tools: list[dict]) -> dict:
 
 def _reasoning_effort(config: dict) -> str | None:
     host = urlsplit(base_url(config)).hostname
-    if host == NVIDIA_BASE_HOST and str(config.get("model_id", "")).startswith(NVIDIA_KIMI_PREFIX):
+    model_id = str(config.get("model_id", ""))
+    if host == NVIDIA_BASE_HOST and model_id.startswith(NVIDIA_KIMI_PREFIX):
         return "max"
+    if host == BASETEN_BASE_HOST and model_id == BASETEN_DEEPSEEK_MODEL:
+        return "high"
     return None
 
 
