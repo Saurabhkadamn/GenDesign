@@ -5,6 +5,7 @@ work may use the in-memory saver when no database URL is configured.
 """
 import os
 from contextlib import asynccontextmanager
+from collections.abc import Iterable
 
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
@@ -16,6 +17,38 @@ from psycopg_pool import AsyncConnectionPool
 
 class CheckpointConfigurationError(RuntimeError):
     pass
+
+
+class _SequentialCursor:
+    """Avoid Psycopg's implicit pipeline in executemany for checkpoint writes."""
+
+    def __init__(self, cursor):
+        self._cursor = cursor
+
+    def __getattr__(self, name):
+        return getattr(self._cursor, name)
+
+    async def executemany(self, query, params_seq: Iterable):
+        for params in params_seq:
+            await self._cursor.execute(query, params)
+
+
+class FormaPostgresSaver(AsyncPostgresSaver):
+    """Official LangGraph saver with transactional, non-pipelined batch writes."""
+
+    @asynccontextmanager
+    async def _cursor(self, *, pipeline: bool = False):
+        # The upstream saver requests pipeline=True for checkpoint blobs and
+        # writes. Psycopg also pipelines executemany implicitly. Both paths
+        # have produced SSL failures against this project's hosted database.
+        # Keep upstream serialization and SQL while executing its batch inside
+        # one ordinary transaction, one query at a time.
+        async with super()._cursor(pipeline=False) as cursor:
+            if pipeline:
+                async with cursor.connection.transaction():
+                    yield _SequentialCursor(cursor)
+            else:
+                yield cursor
 
 
 def checkpoint_database_url(database_url: str) -> str:
@@ -55,7 +88,7 @@ async def checkpoint_saver():
         max_size=1,
         check=AsyncConnectionPool.check_connection,
     ) as pool:
-        yield AsyncPostgresSaver(pool)
+        yield FormaPostgresSaver(pool)
 
 
 async def setup_checkpoints() -> None:

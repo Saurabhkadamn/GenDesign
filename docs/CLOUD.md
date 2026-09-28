@@ -43,6 +43,6 @@ Keep `MODEL_ENCRYPTION_KEY` backed up. Rotating it requires re-encrypting saved 
 
 ## LangGraph and LangSmith
 
-LangGraph is the sole agent-state checkpoint owner. Vercel Workflow only schedules bounded transitions and exits at human interrupts. `SUPABASE_DATABASE_URL` is server-only and must reach the existing project's direct database or shared session pooler (port 5432). Forma converts a shared transaction-pooler URL on port 6543 to its session endpoint for checkpoints because LangGraph uses query pipelining, which Supabase transaction mode does not support. Run `python -m forma_api.setup_checkpoints` once before cutover.
+LangGraph is the sole agent-state checkpoint owner. Vercel Workflow only schedules bounded transitions and exits at human interrupts. `SUPABASE_DATABASE_URL` is server-only and must reach the existing project's direct database or shared session pooler (port 5432). Forma converts a shared transaction-pooler URL on port 6543 to its session endpoint for checkpoints. Checkpoint batches use sequential statements in one transaction because LangGraph/Psycopg pipelined writes failed in hosted runs. Run `python -m forma_api.setup_checkpoints` once before cutover.
 
 LangSmith records graph transitions, sanitized prompts, model and tool metadata, token usage, cost and timings. Cookies, authorization headers, credentials and signed URLs are removed. Trace delivery failures cannot fail a design run. Rotate testing tokens before inviting other users or handling private designs.
