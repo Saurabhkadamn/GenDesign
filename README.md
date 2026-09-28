@@ -6,13 +6,13 @@ Forma is an experimental CAD copilot. You describe a part or assembly in chat; i
 
 ## Try the hosted app
 
-The shared reviewer login is being provisioned. Once available, its email and password will appear here. This is a shared testing workspace: other visitors can see its projects, so **do not enter private designs or personal information**. The demo is limited to six new design runs in a rolling 24-hour period and three follow-ups per run to bound cloud/model usage.
+This is a shared testing workspace: other visitors can see its projects, so **do not enter private designs or personal information**. The demo is limited to six new design runs in a rolling 24-hour period and three follow-ups per run to bound cloud/model usage.
 
 1. Open the [live Forma workspace](https://forma-cad-eosin.vercel.app/) and sign in with the reviewer account below.
 2. Create a project and ask for a simple part, for example: “Create an 80 × 50 × 6 mm mounting plate with four Ø6 mm through-holes at X = ±30 mm and Y = ±15 mm, and R3 outer corners.”
 3. Watch the run activity, inspect the 3D preview and files, then request an edit in the same chat. Download the STEP or GLB file if the run publishes one.
 
-**Reviewer account:** provisioning in progress. Do not assume the app supports self-signup; accounts are created by an administrator.
+**Reviewer account:** Email: `forma.public.demo@example.com` · Password: `ngsa0Jr-R3zLhVyqh-pYZLR1`. There is no self-signup flow.
 
 If the shared run allowance has been used, try later or [contact the maintainer](https://github.com/Saurabhkadamn) for individual access. A healthy website does not guarantee that an AI provider or CAD build will succeed for every request.
 
