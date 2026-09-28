@@ -1,4 +1,5 @@
 """Bridge between durable Vercel scheduling and LangGraph checkpoints."""
+import traceback
 from uuid import uuid4
 
 from langgraph.types import Command
@@ -57,6 +58,12 @@ async def advance_graph(run_id: str, worker: str, resume: dict | None = None) ->
                 # and stop this transition without silently replacing the
                 # user's last visible state with a generic interruption.
                 diagnostic = f"{type(exc).__name__}: {exc}"
+                frames = traceback.extract_tb(exc.__traceback__)
+                locations = " -> ".join(
+                    f"{frame.name}:{frame.lineno}" for frame in frames[-8:]
+                )
+                print(f"Forma graph transition failure for {run_id}: {type(exc).__name__} at {locations}",
+                      flush=True)
                 await run_service.finish(
                     run, worker, "paused", f"Graph transition could not resume safely. {diagnostic[:1200]}"
                 )

@@ -454,9 +454,46 @@ def protocol_safe_history(history: list[dict], *, allow_pending: bool = False) -
     return safe
 
 
+def compact_completed_changes(history: list[dict]) -> list[dict]:
+    """Keep tool outcomes in checkpoints without copying saved source files."""
+    compacted = []
+    index = 0
+    while index < len(history):
+        message = history[index]
+        calls = (message.get("tool_calls") or []) if message.get("role") == "assistant" else []
+        if len(calls) == 1 and index + 1 < len(history):
+            call = calls[0]
+            following = history[index + 1]
+            if (call.get("function", {}).get("name") == "apply_changes"
+                    and following.get("role") == "tool"
+                    and following.get("tool_call_id") == call.get("id")):
+                try:
+                    result = json.loads(following.get("content") or "{}")
+                    arguments = call.get("function", {}).get("arguments") or "{}"
+                    arguments = json.loads(arguments) if isinstance(arguments, str) else arguments
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    result, arguments = {}, {}
+                if result.get("ok") is True:
+                    changed = result.get("changedFiles") or []
+                    if not changed:
+                        files = arguments.get("files") or {}
+                        changed = list(files) if isinstance(files, dict) else [
+                            item.get("path", "") for item in files if isinstance(item, dict)]
+                    compacted.append({"role": "assistant", "content":
+                        "Applied source changes to " + ", ".join(changed[:30]) +
+                        ". Tool result: " + json.dumps(result, ensure_ascii=False)[:2000] +
+                        ". The saved workspace is authoritative; use read_file to inspect source."})
+                    index += 2
+                    continue
+        compacted.append(message)
+        index += 1
+    return compacted
+
+
 def bounded_history(history: list[dict], *, messages: int = 30, characters: int = 500_000,
                     allow_pending: bool = False) -> list[dict]:
     """Keep recent tool context without duplicating a whole workspace in checkpoints."""
+    history = compact_completed_changes(history)
     if len(history) <= messages and len(json.dumps(history)) <= characters:
         return protocol_safe_history(history, allow_pending=allow_pending)
     first = history[:1]
