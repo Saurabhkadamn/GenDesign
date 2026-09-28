@@ -163,3 +163,27 @@ async def test_nvidia_kimi_uses_nemotron_as_first_fallback(monkeypatch):
     assert client.payloads[0]["model"] == "moonshotai/kimi-k3"
     assert client.payloads[1]["model"] == "nvidia/nemotron-3-ultra-550b-a55b"
     assert client.payloads[1]["chat_template_kwargs"]["enable_thinking"] is True
+
+
+@pytest.mark.asyncio
+async def test_vercel_gateway_uses_ordered_grok_tencent_alibaba_fallbacks(monkeypatch):
+    calls = []
+
+    async def fake_turn_once(config, messages, tools, **kwargs):
+        calls.append(config["model_id"])
+        if config["model_id"] != "alibaba/qwen3.8-max-0902":
+            raise openai_compatible.ModelFailure("rate_limit", "limited")
+        return {"message": {"role": "assistant", "content": "ready"}, "calls": []}
+
+    monkeypatch.setattr(openai_compatible, "_turn_once", fake_turn_once)
+    result = await openai_compatible.turn({
+        "provider": "openai_compatible", "base_url": "https://ai-gateway.vercel.sh/v1",
+        "model_id": "spacexai/grok-4.6", "api_key": "secret", "stream": False,
+    }, [{"role": "user", "content": "Reply."}], [], max_tokens=1024)
+
+    assert calls == ["spacexai/grok-4.6", "tencent/hy4-preview", "alibaba/qwen3.8-max-0902"]
+    assert result["fallback"] == {
+        "from": "spacexai/grok-4.6",
+        "to": "alibaba/qwen3.8-max-0902",
+        "reason": "rate_limit",
+    }

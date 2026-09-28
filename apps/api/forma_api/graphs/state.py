@@ -10,6 +10,12 @@ class AgentState(TypedDict, total=False):
     original_request: str
     clarified_request: str
     selected_ids: list[str]
+    project_context: dict[str, Any]
+    coordinator_history: list[dict[str, Any]]
+    coordinator_task: str
+    coordinator_pending_call: dict[str, Any]
+    coordinator_actions: int
+    engineering_from_coordinator: bool
     phase: str
     route: Literal["clarify", "analyze", "cad", "answer"]
     question: str

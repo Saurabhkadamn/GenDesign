@@ -101,4 +101,4 @@ async def cancel_graph_run(run_id: str) -> None:
         pass
     message = "Work stopped. Published revisions are preserved."
     await db.insert("messages", {"project_id": run["project_id"], "run_id": run_id,
-        "role": "assistant", "content": message}, conflict="run_id,role")
+        "role": "assistant", "content": message})
