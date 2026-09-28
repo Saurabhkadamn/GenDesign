@@ -1,30 +1,38 @@
 # Forma
 
-A chat-driven CAD workspace with a milk-white/sage interface, private Supabase data, independently verified STEP exports and a 3D GLB preview.
+**[Open the live app](https://forma-cad-eosin.vercel.app/)** · [Project architecture and current limitations](docs/CLOUD_VERIFICATION.md)
 
-## Cloud services
+Forma is an experimental CAD copilot. You describe a part or assembly in chat; it can ask for missing information, perform a preliminary engineering calculation when needed, generate Python CAD source, build it in an isolated sandbox, and return a 3D preview with downloadable design files. You can continue the conversation to request edits. The engineer remains responsible for reviewing dimensions, fit, strength, and manufacturability before using a design.
 
-- `apps/web`: Next.js/React presentation only. No TypeScript authentication, database, model or workflow server.
-- `apps/api`: Python 3.12 FastAPI authentication, projects, model settings, agent tools, artifacts, administration and durable Vercel Workflows.
-- `packages/core`: browser types generated from Python/Pydantic OpenAPI, plus generated defaults.
-- `runtimes/python`: locked CadQuery/OCP runtime and deterministic STEP validator. Generated code executes only in Vercel Sandbox, never in the API or on the developer laptop.
-- `supabase/migrations`: account and ownership rules, LangGraph persistence, fenced publication and operation ledgers.
+## Try the hosted app
 
-Vercel Services routes `/api/*` to Python and all other requests to Next.js under one domain. The API service entrypoint is `pyproject.toml`, so the Python builder discovers the workflow registry. Production remains on its previous deployment until the new preview passes the hosted acceptance checks.
+The shared reviewer login is being provisioned. Once available, its email and password will appear here. This is a shared testing workspace: other visitors can see its projects, so **do not enter private designs or personal information**. The demo is limited to six new design runs in a rolling 24-hour period and three follow-ups per run to bound cloud/model usage.
 
-**No Docker or local CAD execution is required.** Application data and LangGraph checkpoints stay in the existing Supabase project. Traces go directly to LangSmith.
+1. Open the [live Forma workspace](https://forma-cad-eosin.vercel.app/) and sign in with the reviewer account below.
+2. Create a project and ask for a simple part, for example: “Create an 80 × 50 × 6 mm mounting plate with four Ø6 mm through-holes at X = ±30 mm and Y = ±15 mm, and R3 outer corners.”
+3. Watch the run activity, inspect the 3D preview and files, then request an edit in the same chat. Download the STEP or GLB file if the run publishes one.
 
-## Models
+**Reviewer account:** provisioning in progress. Do not assume the app supports self-signup; accounts are created by an administrator.
 
-Admin → Models accepts any exact OpenRouter model ID, paid or free. The dropdown is only a suggestion list containing the full catalog. Save, test tool calling, then activate the connection. Specialists inherit the active default unless they have an active tested override. Provider failures never switch models automatically.
+If the shared run allowance has been used, try later or [contact the maintainer](https://github.com/Saurabhkadamn) for individual access. A healthy website does not guarantee that an AI provider or CAD build will succeed for every request.
 
-`OPENROUTER_FREE_ONLY=false` follows the owner's request to allow any selected model. Verification scripts use the requested Nemotron free endpoint. The supplied DeepSeek paid connection passed a structured tool-call check and is active for the coordinator; a complete paid CAD run is still untested. The exact Nemotron testing exception allows provider prompt retention; do not submit confidential designs while it is enabled.
+## How Forma is built
 
-## Tracing
+| Layer | Responsibility |
+| --- | --- |
+| `apps/web` | Next.js chat, project workspace, preview, files, downloads and Web Analytics. |
+| `apps/api` | Python FastAPI routes, accounts, projects, model settings, run admission and artifacts. |
+| LangGraph | Engineering triage, optional calculation/approval, CAD generation, repair and publication state. Checkpoints are stored in Supabase Postgres. |
+| Vercel Workflow | Advances graph work after the HTTP request finishes; human pauses resume through the API. |
+| Vercel Sandbox | Runs generated CadQuery code away from the API process and exports STEP/GLB. |
+| Supabase | Authentication, project and run records, private artifacts and graph checkpoints. |
+| LangSmith | Server-side traces for diagnosing model and graph behavior. |
 
-Vercel server configuration uses the variables in `apps/api/.env.example`. Never put the LangSmith key, database URL, model keys or encryption key in frontend variables. LangGraph automatically traces graph transitions; custom OpenRouter and CAD boundaries use sanitized LangSmith instrumentation. Trace delivery is best-effort and cannot invalidate a CAD revision.
+The frontend never receives model provider keys, database secrets or sandbox credentials. Model connections are configured by an administrator. The model can produce plausible geometry that still misses a requested constraint; the UI and downloadable files are **draft engineering outputs**, not certification of safety or manufacture. See the [architecture and limitations page](docs/CLOUD_VERIFICATION.md) for the current verification boundary.
 
-## Lightweight development checks
+## Development
+
+The repository is a Vercel Services project: `/api/*` routes to Python and the remaining paths route to Next.js. Local Docker is not required. Local development still needs access to the configured Supabase project and hosted CAD sandbox.
 
 ```sh
 npm ci
@@ -35,13 +43,4 @@ uv sync --project apps/api
 uv run --project apps/api pytest apps/api/tests
 ```
 
-Generate browser contracts with the API environment's Python:
-
-```sh
-python scripts/generate_contracts.py
-npx --yes openapi-typescript@7.13.0 packages/core/openapi.json -o packages/core/src/generated.ts
-```
-
-Cloud verification scripts under `scripts/` require ignored server configuration files in `test-results/`; they never print keys. `verify_execution.py` runs reviewed fixtures remotely and records preparation/build timings and independent geometric evidence. `verify_hosted_api.py` checks LangSmith and submits the exact mounting-plate request.
-
-See [cloud operations](docs/CLOUD.md) and [verification evidence](docs/CLOUD_VERIFICATION.md). Historical implementation reports in the other documents describe the earlier TypeScript release and are not current deployment evidence.
+Browser contracts are generated from FastAPI's OpenAPI schema with `npm run contracts`. Never commit local `.env` files or service credentials.

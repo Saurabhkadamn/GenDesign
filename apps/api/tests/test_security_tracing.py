@@ -70,3 +70,43 @@ def test_custom_paid_model_can_keep_saved_key_without_exposing_it(monkeypatch):
     assert saved[0]["model_id"] == "provider/arbitrary-paid-model"
     assert saved[0]["encrypted_key"] == "existing-encrypted-key"
     assert saved[0]["active"] is False and saved[0]["tested_at"] is None
+
+
+def test_public_demo_cannot_change_shared_password(monkeypatch):
+    from fastapi.testclient import TestClient
+    from forma_api import api
+    from forma_api.main import app
+
+    async def demo_profile(*args, **kwargs):
+        return {"id": "demo", "role": "engineer", "is_public_demo": True}
+
+    monkeypatch.setattr(api, "require_profile", demo_profile)
+    with TestClient(app) as client:
+        response = client.post("/api/auth/password",
+            headers={"Origin": "http://localhost:3000"},
+            json={"password": "new-public-password"})
+    assert response.status_code == 403
+    assert "shared demo" in response.json()["error"]
+
+
+def test_public_demo_follow_up_limit_is_checked_before_dispatch(monkeypatch):
+    from fastapi.testclient import TestClient
+    from forma_api import api
+    from forma_api.main import app
+
+    async def demo_profile(*args, **kwargs):
+        return {"id": "demo", "role": "engineer", "is_public_demo": True}
+    async def owned_run(*args, **kwargs):
+        return {"id": "run", "backend_version": 3,
+            "execution_environment": settings().environment, "status": "paused"}
+    async def messages(*args, **kwargs):
+        return [{"id": str(i)} for i in range(4)]
+
+    monkeypatch.setattr(api, "require_profile", demo_profile)
+    monkeypatch.setattr(api.repo, "owned_run", owned_run)
+    monkeypatch.setattr(api.db, "rest", messages)
+    with TestClient(app) as client:
+        response = client.post("/api/runs/run/continue",
+            headers={"Origin": "http://localhost:3000"})
+    assert response.status_code == 429
+    assert "follow-up limit" in response.json()["error"]
