@@ -441,19 +441,16 @@ async def test_cad_session_forces_build_after_three_edits(monkeypatch, graph_moc
         "files": {"parts/block.py": "def build(p,d): return None"},
     }
     seen = {}
-    async def turn(_config, _messages, tools, **_kwargs):
-        seen["tools"] = [item["function"]["name"] for item in tools]
-        return {"message": {"role": "assistant", "content": "", "tool_calls": [{
-            "id": "forced-build", "type": "function", "function": {
-                "name": "build", "arguments": "{}"}}]},
-            "calls": [{"id": "forced-build", "name": "build", "input": {}}],
-            "inputTokens": 10, "outputTokens": 20, "webSearchRequests": 0}
+    async def turn(*_args, **_kwargs):
+        raise AssertionError("CAD must build without another model call")
     monkeypatch.setattr(design.models, "turn", turn)
-    async def build(_state):
+    async def build(build_state):
+        seen.update(build_state)
         return {"phase": "validate", "build_result": {"ok": True}}
     monkeypatch.setattr(design, "build", build)
     result = await design.cad_session(state(cad_edits_since_build=3))
-    assert "apply_changes" not in seen["tools"]
+    assert seen["pending_cad_call"]["name"] == "build"
+    assert seen["cad_edits_since_build"] == 0
     assert result["phase"] == "validate"
 
 
