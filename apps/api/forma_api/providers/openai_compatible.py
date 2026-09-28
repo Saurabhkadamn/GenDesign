@@ -20,12 +20,20 @@ DEFAULT_MAX_OUTPUT_TOKENS = 32768
 NVIDIA_BASE_HOST = "integrate.api.nvidia.com"
 NVIDIA_NEMOTRON_PREFIX = "nvidia/nemotron-3-ultra-550b-a55b"
 NVIDIA_KIMI_PREFIX = "moonshotai/kimi-k3"
+VERCEL_GATEWAY_HOST = "ai-gateway.vercel.sh"
+VERCEL_MODEL_CHAIN = (
+    "spacexai/grok-4.6",
+    "tencent/hy4-preview",
+    "alibaba/qwen3.8-max-0902",
+)
 # Testing policy for NVIDIA's hosted endpoints: Kimi is the primary model and
 # Nemotron is the first fallback. The fallback can still be overridden for a
 # deployment, but it must remain on the same NVIDIA OpenAI-compatible endpoint
 # so the graph does not silently cross provider credentials or policies.
 NVIDIA_FIRST_FALLBACK = "nvidia/nemotron-3-ultra-550b-a55b"
-FALLBACK_CATEGORIES = {"overloaded", "rate_limit", "quota", "access"}
+# A model that exceeds the provider timeout is unavailable for this step just
+# like a rate-limited model; use the ordered same-endpoint fallback chain.
+FALLBACK_CATEGORIES = {"overloaded", "rate_limit", "quota", "access", "timeout"}
 
 
 def base_url(config: dict) -> str:
@@ -309,43 +317,59 @@ async def _turn_once(config: dict, messages: list[dict], tools: list[dict], *, m
         raise ModelFailure("tool_protocol", "The model returned an invalid tool action. No action was executed.") from None
 
 
-def _fallback_config(config: dict) -> dict | None:
-    """Return the configured first fallback without crossing provider boundaries.
+def _fallback_configs(config: dict) -> list[dict]:
+    """Return the ordered fallback chain for this compatible endpoint.
 
-    NVIDIA's hosted Kimi and Nemotron endpoints use the same OpenAI-compatible
-    contract and key. Kimi is the primary testing model; only a Kimi failure
-    can select the first fallback, so fallback handling cannot recurse.
+    Fallbacks stay on the same endpoint and use the same encrypted provider key.
+    The Vercel Gateway chain is deliberately explicit so arbitrary model IDs do
+    not silently cross provider credentials or privacy policies. NVIDIA keeps
+    its existing Kimi -> Nemotron behavior.
     """
     model_id = str(config.get("model_id", ""))
-    if not model_id.startswith(NVIDIA_KIMI_PREFIX):
-        return None
-    if urlsplit(base_url(config)).hostname != NVIDIA_BASE_HOST:
-        return None
-    fallback_id = os.getenv("OPENAI_COMPATIBLE_FALLBACK_MODEL_ID", NVIDIA_FIRST_FALLBACK).strip()
-    if not fallback_id or fallback_id == model_id:
-        return None
-    return {**config, "model_id": fallback_id, "stream": True, "fallback_for": model_id}
+    host = urlsplit(base_url(config)).hostname
+    if host == NVIDIA_BASE_HOST and model_id.startswith(NVIDIA_KIMI_PREFIX):
+        fallback_ids = [os.getenv("OPENAI_COMPATIBLE_FALLBACK_MODEL_ID", NVIDIA_FIRST_FALLBACK).strip()]
+    elif host == VERCEL_GATEWAY_HOST and model_id in VERCEL_MODEL_CHAIN:
+        fallback_ids = list(VERCEL_MODEL_CHAIN[VERCEL_MODEL_CHAIN.index(model_id) + 1:])
+    else:
+        fallback_ids = []
+    return [
+        {**config, "model_id": fallback_id, "stream": True, "fallback_for": model_id}
+        for fallback_id in fallback_ids
+        if fallback_id and fallback_id != model_id
+    ]
+
+
+# Kept as a small compatibility helper for callers that only need one candidate.
+def _fallback_config(config: dict) -> dict | None:
+    return next(iter(_fallback_configs(config)), None)
 
 
 async def turn(config: dict, messages: list[dict], tools: list[dict], *, max_tokens: int | None = None,
-               web_search=False, max_searches=0):
+               web_search=False, max_searches=0, allow_fallback=True):
     try:
         return await _turn_once(config, messages, tools, max_tokens=max_tokens,
                                 web_search=web_search, max_searches=max_searches)
     except ModelFailure as primary_error:
-        fallback = _fallback_config(config)
-        if not fallback or primary_error.category not in FALLBACK_CATEGORIES:
+        fallback_chain = _fallback_configs(config) if allow_fallback else []
+        if not fallback_chain or primary_error.category not in FALLBACK_CATEGORIES:
             raise
-        try:
-            result = await _turn_once(fallback, messages, tools, max_tokens=max_tokens,
-                                      web_search=web_search, max_searches=max_searches)
-        except ModelFailure as fallback_error:
-            raise ModelFailure(fallback_error.category,
-                f"The primary NVIDIA Kimi-K3 model and its Nemotron fallback failed. {fallback_error}",
-                fallback_error.diagnostic) from None
-        result["fallback"] = {"from": config.get("model_id"), "to": fallback["model_id"],
-                               "reason": primary_error.category}
-        return result
+        last_error = primary_error
+        for fallback in fallback_chain:
+            try:
+                result = await _turn_once(fallback, messages, tools, max_tokens=max_tokens,
+                                          web_search=web_search, max_searches=max_searches)
+            except ModelFailure as fallback_error:
+                last_error = fallback_error
+                if fallback_error.category not in FALLBACK_CATEGORIES:
+                    break
+                continue
+            result["fallback"] = {"from": config.get("model_id"), "to": fallback["model_id"],
+                                   "reason": primary_error.category}
+            return result
+        raise ModelFailure(last_error.category,
+            f"The selected model and its configured fallbacks failed. {last_error}",
+            last_error.diagnostic) from None
 
 
 async def catalog(config: dict, refresh=False) -> list[dict]:

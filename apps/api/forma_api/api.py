@@ -216,8 +216,15 @@ async def dispatch(path: str, request: Request, response: Response):
                 message = payload.message or ({"approval": "Approved engineering proposal.",
                     "rejection": "Rejected engineering proposal.", "continue": "Continue."}.get(payload.kind))
                 if message:
-                    await db.update("messages", {"content": f"{run['message']}\n\nResponse: {message}"},
-                        run_id=run["id"], role="user")
+                    # Keep the original request and each clarification as
+                    # separate chat turns. The deterministic ID makes a
+                    # repeated HTTP submission for this paused state safe.
+                    from uuid import NAMESPACE_URL, uuid5
+                    message_id = str(uuid5(NAMESPACE_URL,
+                        f"{run['id']}:{run['updated_at']}:{payload.kind}:{message}"))
+                    await db.insert("messages", {"id": message_id,
+                        "project_id": run["project_id"], "run_id": run["id"],
+                        "role": "user", "content": message}, conflict="id")
                 await resume(run["id"], owner)
                 await dispatch_run(run["id"], value)
                 return {"runId": run["id"]}

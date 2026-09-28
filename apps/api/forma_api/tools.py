@@ -34,7 +34,7 @@ class ApplyChanges(Contract):
 class Delegate(Contract):
     role: Literal["cad", "engineering"]
     task: str = Field(min_length=1, max_length=6000)
-    requirements: list[Requirement] = Field(max_length=100)
+    requirements: list[Requirement] = Field(default_factory=list, max_length=100)
 
 
 class Publish(Contract):
@@ -63,6 +63,7 @@ SPECS = {
     "apply_changes": (ApplyChanges, "Atomically stage related files and an optional complete manifest. Does not execute code."),
     "build": (Empty, "Build STEP geometry and verify artifact integrity. Report any available requirement evidence for human review."),
     "inspect_geometry": (Empty, "Inspect the current candidate's build report and optional requirement evidence."),
+    "inspect_project": (Empty, "Inspect the current project, previous conversation, selected parts, revision, and verification evidence."),
     "request_engineering": (RequestEngineering, "Ask the engineering agent for calculations or design parameters, then return to CAD."),
     "calculate": (ReadFile, "Execute a calculations/ module twice in separate Python processes."),
     "delegate": (Delegate, "Delegate a complete task and explicit requirements to one specialist."),
@@ -72,7 +73,7 @@ SPECS = {
     "finish": (Finish, "Finish with a factual answer supported by completed tool results."),
 }
 ROLE_TOOLS = {
-    "coordinator": ("delegate", "inspect_geometry", "publish_revision", "restore_revision", "ask_user", "finish"),
+    "coordinator": ("inspect_project", "read_file", "search_files", "delegate", "inspect_geometry", "publish_revision", "restore_revision", "ask_user", "finish"),
     "cad": ("read_file", "search_files", "apply_changes", "build", "inspect_geometry", "request_engineering", "ask_user", "finish"),
     "engineering": ("read_file", "search_files", "apply_changes", "calculate", "inspect_geometry", "ask_user", "finish"),
 }

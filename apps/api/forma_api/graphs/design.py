@@ -17,6 +17,7 @@ from ..contracts import AppSettings, Contract, Manifest, Requirement, SafeId, Sn
 from ..engine import Pause, build_candidate, destroy_sandboxes, execute_tool, operation
 from ..execution import digest, normalize_python_source
 from ..prompts import VERSION as PROMPT_VERSION, system_prompt
+from ..providers.openrouter import ModelFailure
 from ..requirements import design_work_requested, merge_requirements
 from ..services import runs as run_service
 from ..tools import model_tools, parse_tool, portable_schema
@@ -534,9 +535,15 @@ async def coordinator(state: AgentState) -> dict:
     snapshot = await repo.load_snapshot(run["base_revision_id"])
     candidate_hash = digest(snapshot)
     await run_service.save_candidate(run["id"], snapshot, candidate_hash)
-    await repo.event(run["id"], "Coordinator opened an incremental CAD coding session.", stage="coordination")
-    return {"phase": "engineering_triage", "candidate_hash": candidate_hash,
+    project_context = await repo.agent_context(run["project_id"], run["owner_id"],
+        run["id"], run["base_revision_id"], run.get("selected_ids") or [])
+    project_context["sourceFiles"] = sorted(snapshot["files"])
+    await repo.event(run["id"], "Coordinator loaded project history and current design evidence.", stage="coordination")
+    return {"phase": "coordinator_session", "candidate_hash": candidate_hash,
         "repairs": 0, "attempts": 0, "model_calls": 0, "search_count": 0,
+        "project_context": project_context,
+        "coordinator_history": [{"role": "user", "content": state["original_request"]}],
+        "coordinator_actions": 0,
         "engineering_remarks": [], "engineering_assumptions": [],
         "requirements": merge_requirements(state["original_request"], []),
         "cad_edits_since_build": 0,
@@ -544,6 +551,129 @@ async def coordinator(state: AgentState) -> dict:
         "review_history": [], "review": {},
         "review_repairs": 0,
         "started_ns": time.time_ns()}
+
+
+COORDINATOR_SESSION_TOOL_NAMES = {
+    "inspect_project", "read_file", "search_files", "inspect_geometry",
+    "delegate", "restore_revision", "ask_user", "finish",
+}
+
+
+async def coordinator_session(state: AgentState) -> dict:
+    """One bounded project-aware reasoning/tool step, persisted by LangGraph."""
+    actions = state.get("coordinator_actions", 0)
+    if actions >= 12:
+        raise Pause("The coordinator reached its tool-action limit. Continue with a focused follow-up.")
+    snapshot = await run_service.load_candidate(state["run_id"])
+    context = {
+        "latestRequest": state["original_request"],
+        "project": state.get("project_context", {}),
+        "selectedIds": state.get("selected_ids", []),
+        "currentWorkspace": {"manifest": snapshot["manifest"],
+            "files": sorted(snapshot["files"]), "candidateHash": digest(snapshot)},
+        "engineeringSummary": state.get("engineering_summary", ""),
+        "engineeringRemarks": state.get("engineering_remarks", []),
+        "build": state.get("build_result"),
+        "validation": state.get("validation", {}).get("report") if state.get("validation") else None,
+        "publishedRevisionId": state.get("published_revision_id"),
+    }
+    allowed = {"inspect_project", "read_file", "search_files", "inspect_geometry", "finish"} \
+        if state.get("published_revision_id") else COORDINATOR_SESSION_TOOL_NAMES
+    tools = [item for item in model_tools("coordinator")
+             if item["function"]["name"] in allowed]
+    history = state.get("coordinator_history") or [{"role": "user", "content": state["original_request"]}]
+    try:
+        call, history, usage = await agent_tool_turn(
+            state, model_role="coordinator", prompt_role="coordinator", node="coordinator-session",
+            context=context, history=history, tools=tools,
+        )
+    except (Pause, ModelFailure):
+        if state.get("published_revision_id") and state.get("final_message"):
+            return {"phase": "final"}
+        raise
+    update = {**usage, "phase": "coordinator_session", "coordinator_history": history,
+              "coordinator_actions": actions + 1}
+    if not call:
+        return {**update, "coordinator_history": bounded_history([*history, {
+            "role": "user", "content": "Choose one available tool action. Do not leave this turn without a tool call."
+        }])}
+    try:
+        value = parse_tool("coordinator", call["name"], call["input"]).model_dump()
+    except (ValidationError, ValueError) as exc:
+        return {**update, "coordinator_history": bounded_history([*history, tool_message(call, {
+            "ok": False, "category": "tool_contract", "message": str(exc)[:3000],
+        })])}
+    name = call["name"]
+    if name == "inspect_project":
+        result = state.get("project_context", {})
+    elif name == "read_file":
+        content = snapshot["files"].get(value["path"])
+        result = {"ok": content is not None, "path": value["path"],
+            "content": content[:60_000] if content is not None else None,
+            "availablePaths": sorted(snapshot["files"]) if content is None else []}
+    elif name == "search_files":
+        result = {"matches": [{"path": path, "line": index + 1, "text": line[:300]}
+            for path, source in snapshot["files"].items()
+            for index, line in enumerate(source.splitlines())
+            if value["query"].lower() in line.lower()][:80]}
+    elif name == "inspect_geometry":
+        result = state.get("validation") or (state.get("project_context", {}).get("revision") or {})
+    elif name == "ask_user":
+        return {**update, "phase": "coordinator_question", "question": value["question"],
+            "coordinator_pending_call": call}
+    elif name == "delegate":
+        requirements = merge_requirements(state["original_request"], value.get("requirements") or [])
+        if value["role"] == "engineering":
+            await repo.event(state["run_id"], "Coordinator requested engineering analysis.", stage="engineering")
+            return {**update, "phase": "engineering_analysis", "engineering_request": value["task"],
+                "engineering_from_coordinator": True, "coordinator_pending_call": call,
+                "requirements": requirements}
+        task = value["task"]
+        history_request = {
+            "originalBrief": next((m["content"] for m in state.get("project_context", {}).get("previousMessages", [])
+                if m.get("role") == "user"), state["original_request"]),
+            "latestRequest": state["original_request"],
+            "delegatedTask": task,
+            "selectedIds": state.get("selected_ids", []),
+            "priorDecisions": state.get("project_context", {}).get("previousMessages", [])[-8:],
+        }
+        await repo.event(state["run_id"], "Coordinator delegated a project-aware CAD edit.", stage="cad")
+        return {**update, "phase": "cad_session", "coordinator_task": task,
+            "requirements": requirements, "coordinator_pending_call": call,
+            "cad_history": [{"role": "user", "content": json.dumps(history_request, ensure_ascii=False)}]}
+    elif name == "restore_revision":
+        revision = await db.one("revisions", {"id": f"eq.{repo.identifier(value['revisionId'])}",
+            "project_id": f"eq.{state['project_id']}"})
+        restored = await repo.load_snapshot(revision["id"])
+        restored_hash = digest(restored)
+        await run_service.save_candidate(state["run_id"], restored, restored_hash)
+        await repo.event(state["run_id"], "Coordinator loaded a prior owned revision for rebuilding.", stage="coordination")
+        return {**update, "phase": "cad_session", "candidate_hash": restored_hash,
+            "coordinator_task": f"Rebuild the restored revision {revision['id']} and preserve its design.",
+            "cad_history": [{"role": "user", "content":
+                f"Rebuild restored revision {revision['id']} as a new reviewable draft. Do not change unrelated geometry."}],
+            "coordinator_pending_call": call}
+    elif name == "finish":
+        return {**update, "phase": "final", "final_message": value["message"]}
+    else:
+        result = {"ok": False, "category": "unsupported_action"}
+    return {**update, "coordinator_history": bounded_history([*history, tool_message(call, result)])}
+
+
+async def coordinator_question(state: AgentState) -> dict:
+    response = interrupt({"kind": "clarification", "message": state.get("question") or
+        "What should I use for the missing design decision?"})
+    message = str((response or {}).get("message", "")).strip()
+    if not message:
+        raise Pause("A clarification answer is required.")
+    call = state.get("coordinator_pending_call") or {"id": "user-answer"}
+    history = bounded_history([*state.get("coordinator_history", []), tool_message(call, {
+        "answered": True, "message": message,
+    })])
+    return {"phase": "coordinator_session", "question": "", "coordinator_pending_call": {},
+        "coordinator_history": history,
+        "clarified_request": (state.get("clarified_request") or state["original_request"]) +
+            "\n\nUser clarification: " + message}
 
 
 async def engineering_triage(state: AgentState) -> dict:
@@ -627,6 +757,7 @@ async def clarification(state: AgentState) -> dict:
 async def engineering_analysis(state: AgentState) -> dict:
     packet = {
         "originalRequest": state["original_request"],
+        "projectContext": state.get("project_context", {}),
         "clarifiedRequest": state.get("clarified_request", ""),
         "explicitRequirements": state.get("requirements", []),
         "triageAssumptions": state.get("engineering_assumptions", []),
@@ -765,6 +896,17 @@ Engineering packet:
         output["pending_cad_call"] = {}
     current_snapshot = await run_service.load_candidate(state["run_id"])
     output["engineering_candidate_hash"] = digest(current_snapshot)
+    if state.get("engineering_from_coordinator") and not value.requires_user_input:
+        call = state.get("coordinator_pending_call") or {"id": "engineering"}
+        output["phase"] = "coordinator_session"
+        output["engineering_from_coordinator"] = False
+        output["coordinator_pending_call"] = {}
+        output["coordinator_history"] = bounded_history([
+            *state.get("coordinator_history", []), tool_message(call, {
+                "ok": True, "summary": output["engineering_summary"],
+                "remarks": output["engineering_remarks"], "calculation": calculation_result,
+            }),
+        ])
     return output
 
 
@@ -780,6 +922,13 @@ async def approval(state: AgentState) -> dict:
             (response or {}).get("message") or "The engineering proposal was rejected. No design revision was created."}
     if kind != "approval":
         raise Pause("Approve or reject the engineering proposal before CAD begins.")
+    if state.get("engineering_from_coordinator"):
+        call = state.get("coordinator_pending_call") or {"id": "engineering"}
+        return {"approved": True, "phase": "coordinator_session",
+            "engineering_from_coordinator": False, "coordinator_pending_call": {},
+            "coordinator_history": bounded_history([*state.get("coordinator_history", []),
+                tool_message(call, {"ok": True, "approved": True,
+                    "summary": state.get("engineering_summary", "")})])}
     return {"approved": True, "phase": "cad_session"}
 
 
@@ -923,6 +1072,9 @@ async def cad_session(state: AgentState) -> dict:
     }]
     context = {
         "request": state.get("clarified_request") or state["original_request"],
+        "delegatedTask": state.get("coordinator_task", ""),
+        "projectContext": state.get("project_context", {}),
+        "selectedIds": state.get("selected_ids", []),
         "engineeringSummary": state.get("engineering_summary", ""),
         "engineeringRemarks": state.get("engineering_remarks", []),
         "workspace": {
@@ -1454,8 +1606,15 @@ async def publish(state: AgentState) -> dict:
     if review.get("summary"):
         message += " Independent review: " + review["summary"]
     message += " You can continue editing or download the files; engineering and physical validation remain your responsibility."
-    return {**sync_checkpoint(cp), "phase": "final", "published_revision_id": result["revisionId"],
-        "final_message": message}
+    call = state.get("coordinator_pending_call") or {"id": "cad-result"}
+    history = bounded_history([*state.get("coordinator_history", []), tool_message(call, {
+        "ok": True, "revisionId": result["revisionId"],
+        "validation": cp.get("validated", {}).get("report"),
+        "message": "The CAD draft was built and published for review.",
+    })])
+    return {**sync_checkpoint(cp), "phase": "coordinator_session",
+        "coordinator_pending_call": {}, "coordinator_history": history,
+        "published_revision_id": result["revisionId"], "final_message": message}
 
 
 async def final(state: AgentState) -> dict:
@@ -1475,14 +1634,20 @@ def phase_route(state: AgentState) -> str:
 
 def build_graph(checkpointer):
     graph = StateGraph(AgentState)
-    for name, node in (("coordinator", coordinator), ("engineering_triage", engineering_triage),
+    for name, node in (("coordinator", coordinator), ("coordinator_session", coordinator_session),
+        ("coordinator_question", coordinator_question), ("engineering_triage", engineering_triage),
         ("clarification", clarification), ("cad_session", cad_session),
         ("cad_question", cad_question), ("engineering_analysis", engineering_analysis),
         ("approval", approval), ("build", build), ("validate", validate),
         ("review_session", review_session), ("publish", publish), ("final", final)):
         graph.add_node(name, node)
     graph.add_edge(START, "coordinator")
-    graph.add_edge("coordinator", "engineering_triage")
+    graph.add_edge("coordinator", "coordinator_session")
+    graph.add_conditional_edges("coordinator_session", phase_route, {
+        "coordinator_session": "coordinator_session", "coordinator_question": "coordinator_question",
+        "engineering_analysis": "engineering_analysis", "cad_session": "cad_session", "final": "final",
+    })
+    graph.add_edge("coordinator_question", "coordinator_session")
     graph.add_conditional_edges("engineering_triage", phase_route, {
         "clarification": "clarification", "engineering_analysis": "engineering_analysis",
         "cad_session": "cad_session", "final": "final",
@@ -1495,15 +1660,17 @@ def build_graph(checkpointer):
     })
     graph.add_edge("cad_question", "cad_session")
     graph.add_conditional_edges("engineering_analysis", phase_route,
-        {"cad_session": "cad_session", "approval": "approval", "final": "final"})
-    graph.add_conditional_edges("approval", phase_route, {"cad_session": "cad_session", "final": "final"})
+        {"cad_session": "cad_session", "coordinator_session": "coordinator_session",
+         "approval": "approval", "final": "final"})
+    graph.add_conditional_edges("approval", phase_route,
+        {"cad_session": "cad_session", "coordinator_session": "coordinator_session", "final": "final"})
     graph.add_edge("build", "validate")
     graph.add_conditional_edges("validate", phase_route,
-        {"cad_session": "cad_session", "review_session": "review_session", "final": "final"})
+        {"cad_session": "cad_session", "review_session": "review_session", "publish": "publish", "final": "final"})
     graph.add_conditional_edges("review_session", phase_route, {
         "review_session": "review_session", "cad_session": "cad_session",
         "publish": "publish", "final": "final",
     })
-    graph.add_edge("publish", "final")
+    graph.add_edge("publish", "coordinator_session")
     graph.add_edge("final", END)
     return graph.compile(checkpointer=checkpointer, interrupt_after="*", name="forma-design")

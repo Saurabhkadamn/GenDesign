@@ -268,12 +268,13 @@ async def _turn_openrouter(config: dict, messages: list[dict], tools: list[dict]
 
 
 async def turn(config: dict, messages: list[dict], tools: list[dict], *, max_tokens: int | None = None,
-               web_search=False, max_searches=0):
+               web_search=False, max_searches=0, allow_fallback=True):
     """Dispatch through the configured provider without leaking provider details into graph code."""
     if config.get("provider", "openrouter") == "openai_compatible":
         from .openai_compatible import turn as compatible_turn
         return await compatible_turn(config, messages, tools, max_tokens=max_tokens,
-                                     web_search=web_search, max_searches=max_searches)
+                                     web_search=web_search, max_searches=max_searches,
+                                     allow_fallback=allow_fallback)
     return await _turn_openrouter(config, messages, tools, max_tokens=max_tokens,
                                   web_search=web_search, max_searches=max_searches)
 
@@ -284,7 +285,9 @@ async def test_connection(role: str):
                   "parameters": {"type": "object", "properties": {"value": {"type": "string", "enum": ["ready"]}},
                                  "required": ["value"], "additionalProperties": False}}}]
     try:
-        result = await turn(config, [{"role": "user", "content": "Call connection_check with value ready. Do not answer with text."}], test_tool, max_tokens=2048)
+        # A connection test must prove the selected model itself works. Do not
+        # let a production fallback mark a rate-limited primary as tested.
+        result = await turn(config, [{"role": "user", "content": "Call connection_check with value ready. Do not answer with text."}], test_tool, max_tokens=2048, allow_fallback=False)
         if not any(c["name"] == "connection_check" and c["input"] == {"value": "ready"} for c in result["calls"]):
             raise ModelFailure("tool_protocol", "The model did not produce a valid connection-check tool call.")
     except ModelFailure:
