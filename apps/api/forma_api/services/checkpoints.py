@@ -1,6 +1,6 @@
 """LangGraph checkpoint connections.
 
-Production uses Supabase's PostgreSQL transaction pooler. Tests and local API
+Production uses Supabase's PostgreSQL session pooler. Tests and local API
 work may use the in-memory saver when no database URL is configured.
 """
 import os
@@ -9,12 +9,29 @@ from contextlib import asynccontextmanager
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from psycopg import AsyncConnection
+from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 
 
 class CheckpointConfigurationError(RuntimeError):
     pass
+
+
+def checkpoint_database_url(database_url: str) -> str:
+    """Use a session pooler for LangGraph's pipelined checkpoint writes."""
+    options = conninfo_to_dict(database_url)
+    host = str(options.get("host", ""))
+    port = str(options.get("port", "5432"))
+    if host.endswith(".pooler.supabase.com") and port == "6543":
+        options["port"] = "5432"
+    elif host.startswith("db.") and host.endswith(".supabase.co") and port == "6543":
+        raise CheckpointConfigurationError(
+            "LangGraph checkpoints require the Supabase session pooler or direct connection; "
+            "the dedicated transaction pooler does not support query pipelining."
+        )
+    options["sslmode"] = "require"
+    return make_conninfo(**options)
 
 
 @asynccontextmanager
@@ -28,14 +45,14 @@ async def checkpoint_saver():
         yield InMemorySaver()
         return
     # A graph transition can spend minutes inside model and CAD calls between
-    # checkpoints. Supabase's transaction pooler may close an idle connection
-    # during that interval. Lease a checked connection for each saver operation
-    # instead of pinning one socket for the entire graph invocation.
+    # checkpoints. Lease a checked connection for each saver operation instead
+    # of pinning one socket for the entire graph invocation. LangGraph uses
+    # query pipelines, so the transaction pooler is not compatible here.
     async with AsyncConnectionPool(
-        database_url,
+        checkpoint_database_url(database_url),
         kwargs={"autocommit": True, "prepare_threshold": None, "row_factory": dict_row},
         min_size=0,
-        max_size=2,
+        max_size=1,
         check=AsyncConnectionPool.check_connection,
     ) as pool:
         yield AsyncPostgresSaver(pool)
@@ -52,7 +69,7 @@ async def setup_checkpoints() -> None:
 async def setup_and_harden() -> None:
     """Create official saver tables, then deny browser roles access."""
     await setup_checkpoints()
-    database_url = os.environ["SUPABASE_DATABASE_URL"]
+    database_url = checkpoint_database_url(os.environ["SUPABASE_DATABASE_URL"])
     connection = await AsyncConnection.connect(database_url, autocommit=True,
         prepare_threshold=None)
     try:
