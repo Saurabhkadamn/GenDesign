@@ -10,6 +10,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from psycopg import AsyncConnection
 from psycopg.rows import dict_row
+from psycopg_pool import AsyncConnectionPool
 
 
 class CheckpointConfigurationError(RuntimeError):
@@ -26,16 +27,18 @@ async def checkpoint_saver():
             )
         yield InMemorySaver()
         return
-    connection = await AsyncConnection.connect(
+    # A graph transition can spend minutes inside model and CAD calls between
+    # checkpoints. Supabase's transaction pooler may close an idle connection
+    # during that interval. Lease a checked connection for each saver operation
+    # instead of pinning one socket for the entire graph invocation.
+    async with AsyncConnectionPool(
         database_url,
-        autocommit=True,
-        prepare_threshold=None,
-        row_factory=dict_row,
-    )
-    try:
-        yield AsyncPostgresSaver(connection)
-    finally:
-        await connection.close()
+        kwargs={"autocommit": True, "prepare_threshold": None, "row_factory": dict_row},
+        min_size=0,
+        max_size=2,
+        check=AsyncConnectionPool.check_connection,
+    ) as pool:
+        yield AsyncPostgresSaver(pool)
 
 
 async def setup_checkpoints() -> None:
