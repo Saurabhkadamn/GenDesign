@@ -30,6 +30,10 @@ class AgentState(TypedDict, total=False):
     candidate_hash: str
     candidate_summary: str
     build_result: dict[str, Any]
+    build_final: bool
+    requested_part_types: int
+    built_part_types: int
+    last_milestone_hash: str
     validation: dict[str, Any]
     published_revision_id: str
     cad_history: list[dict[str, Any]]

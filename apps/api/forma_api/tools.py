@@ -31,6 +31,13 @@ class ApplyChanges(Contract):
         return value
 
 
+class Build(Contract):
+    final: bool = Field(default=True, description=(
+        "False for an intermediate assembly milestone; true only when all requested "
+        "part types and instances are present and the draft is ready to publish."
+    ))
+
+
 class Delegate(Contract):
     role: Literal["cad", "engineering"]
     task: str = Field(min_length=1, max_length=6000)
@@ -61,7 +68,7 @@ SPECS = {
     "read_file": (ReadFile, "Read a private workspace source file before editing it."),
     "search_files": (Search, "Search private workspace files by literal text."),
     "apply_changes": (ApplyChanges, "Atomically stage related files and an optional complete manifest. Does not execute code."),
-    "build": (Empty, "Build STEP geometry and verify artifact integrity. Report any available requirement evidence for human review."),
+    "build": (Build, "Build and validate the current CAD workspace. Use final=false for an intermediate assembly milestone, or final=true only when the requested design is represented."),
     "inspect_geometry": (Empty, "Inspect the current candidate's build report and optional requirement evidence."),
     "inspect_project": (Empty, "Inspect the current project, previous conversation, selected parts, revision, and verification evidence."),
     "request_engineering": (RequestEngineering, "Ask the engineering agent for calculations or design parameters, then return to CAD."),
