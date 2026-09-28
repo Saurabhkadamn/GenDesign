@@ -1132,6 +1132,32 @@ async def cad_session(state: AgentState) -> dict:
     history = state.get("cad_history") or [{
         "role": "user", "content": state.get("clarified_request") or state["original_request"]
     }]
+    edits_since_build = state.get("cad_edits_since_build", 0)
+    buildable = bool(snapshot["manifest"].get("components")
+                     and snapshot["manifest"].get("rootComponentId"))
+    if edits_since_build >= MAX_CAD_EDITS_WITHOUT_BUILD and buildable:
+        # Tool availability is advisory for some OpenAI-compatible providers:
+        # they can still return apply_changes after it is removed from the
+        # schema. Enforce the edit bound in graph code and give CAD real build
+        # feedback before another source patch consumes a model call.
+        required = requested_part_type_count(state["original_request"])
+        built = sum(component.get("kind") != "assembly"
+                    for component in snapshot["manifest"]["components"])
+        final = required is not None and built >= required
+        call_id = f"auto-build-{state.get('model_calls', 0)}-{state.get('attempts', 0)}"
+        call = {"id": call_id, "name": "build", "input": {"final": final}}
+        assistant = {"role": "assistant", "content": "", "tool_calls": [{
+            "id": call_id, "type": "function", "function": {
+                "name": "build", "arguments": json.dumps({"final": final}),
+            },
+        }]}
+        await repo.event(state["run_id"],
+            f"CAD reached {edits_since_build} edits; building the saved candidate before more changes.",
+            stage="execution")
+        return await build({**state, "phase": "build", "pending_cad_call": call,
+            "cad_history": bounded_history([*history, assistant], allow_pending=True),
+            "cad_edits_since_build": 0, "build_final": final,
+            "requested_part_types": required or 0, "built_part_types": built})
     context = {
         "request": state.get("clarified_request") or state["original_request"],
         "delegatedTask": state.get("coordinator_task", ""),
@@ -1152,8 +1178,7 @@ async def cad_session(state: AgentState) -> dict:
     }
     tools = [item for item in model_tools("cad")
              if item["function"]["name"] in CAD_SESSION_TOOL_NAMES]
-    edits_since_build = state.get("cad_edits_since_build", 0)
-    if edits_since_build >= MAX_CAD_EDITS_WITHOUT_BUILD:
+    if edits_since_build >= MAX_CAD_EDITS_WITHOUT_BUILD and buildable:
         # Keep the graph progressing even when a model repeatedly proposes
         # patches. A build is the only useful next action after this bound.
         tools = [item for item in tools if item["function"]["name"] in
