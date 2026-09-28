@@ -455,3 +455,80 @@ async def test_cad_session_forces_build_after_three_edits(monkeypatch, graph_moc
     result = await design.cad_session(state(cad_edits_since_build=3))
     assert "apply_changes" not in seen["tools"]
     assert result["phase"] == "validate"
+
+
+def test_model_step_budget_bounds_each_tool_turn_not_the_whole_design():
+    config = {"max_output_tokens": 64000}
+    assert design.model_step_token_budget(config, "cad-session") == 20000
+    assert design.model_step_token_budget(config, "coordinator-session") == 8192
+    assert design.model_step_token_budget({"max_output_tokens": 4096}, "cad-session") == 4096
+
+
+@pytest.mark.asyncio
+async def test_incomplete_assembly_build_remains_an_intermediate_milestone(monkeypatch, graph_mocks):
+    graph_mocks["candidate"] = {
+        "manifest": {"schemaVersion": 1, "units": "mm",
+            "components": [
+                {"id": "assembly", "name": "Assembly", "source": "assemblies/root.py",
+                 "kind": "assembly", "dependencies": ["mount", "bushing"],
+                 "parameters": {}, "color": "#b9c4ad"},
+                {"id": "mount", "name": "Mount", "source": "parts/mount.py",
+                 "kind": "solid", "dependencies": [], "parameters": {}, "color": "#b9c4ad"},
+                {"id": "bushing", "name": "Bushing", "source": "parts/bushing.py",
+                 "kind": "solid", "dependencies": [], "parameters": {}, "color": "#b9c4ad"}],
+            "instances": [], "rootComponentId": "assembly", "references": [],
+            "joints": [], "configurations": [], "featureOperations": []},
+        "files": {"assemblies/root.py": "def build(p,d): return None",
+                  "parts/mount.py": "def build(p,d): return None",
+                  "parts/bushing.py": "def build(p,d): return None"},
+    }
+    async def turn(_config, _messages, _tools, **_kwargs):
+        return {"message": {"role": "assistant", "content": "", "tool_calls": [{
+            "id": "build-1", "type": "function",
+            "function": {"name": "build", "arguments": '{"final":true}'}}]},
+            "calls": [{"id": "build-1", "name": "build", "input": {"final": True}}],
+            "inputTokens": 10, "outputTokens": 20, "webSearchRequests": 0}
+    async def capture_build(next_state):
+        return {"phase": "validate", "build_final": next_state["build_final"],
+                "requested_part_types": next_state["requested_part_types"],
+                "built_part_types": next_state["built_part_types"]}
+    monkeypatch.setattr(design.models, "turn", turn)
+    monkeypatch.setattr(design, "build", capture_build)
+    result = await design.cad_session(state(original_request=(
+        "Design Task: suspension. Components (10 part types, ~22 instances).")))
+    assert result["phase"] == "validate"
+    assert result["build_final"] is False
+    assert result["requested_part_types"] == 10
+    assert result["built_part_types"] == 2
+
+
+@pytest.mark.asyncio
+async def test_successful_intermediate_build_returns_to_cad():
+    result = await design.validate(state(
+        build_result={"ok": True, "inspection": {}}, build_final=False,
+        candidate_hash="partial-hash", pending_cad_call={"id": "build-1"},
+    ))
+    assert result["phase"] == "cad_session"
+    assert result["last_milestone_hash"] == "partial-hash"
+    assert result["pending_cad_call"] == {}
+
+
+@pytest.mark.asyncio
+async def test_inline_build_persists_consumed_model_turn_and_milestone(monkeypatch, graph_mocks):
+    async def build_candidate(_run, checkpoint, _limits, _key):
+        checkpoint["attempts"] = 1
+        return {"ok": True, "inspection": {}}
+
+    monkeypatch.setattr(design, "build_candidate", build_candidate)
+    output = await design.build(state(
+        model_calls=7, search_count=1, build_final=False,
+        requested_part_types=10, built_part_types=2,
+        pending_cad_call={"id": "build-1"},
+        cad_history=[{"role": "user", "content": "Stage two parts."}],
+    ))
+    assert output["phase"] == "validate"
+    assert output["model_calls"] == 7
+    assert output["search_count"] == 1
+    assert output["build_final"] is False
+    assert output["pending_cad_call"]["id"] == "build-1"
+    assert output["built_part_types"] == 2

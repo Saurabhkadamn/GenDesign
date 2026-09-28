@@ -232,6 +232,23 @@ def deterministic_analysis_needed(request: str) -> bool:
     return any(term in text for term in ("calculate and report", "compute and report", "stress validation"))
 
 
+def requested_part_type_count(request: str) -> int | None:
+    match = re.search(r"\bcomponents\s*\(\s*(\d+)\s+(?:distinct\s+)?part\s+types?\b",
+                      request, flags=re.IGNORECASE)
+    return int(match.group(1)) if match else None
+
+
+def model_step_token_budget(config: dict, node: str) -> int:
+    """Bound one Vercel step, while allowing a design to span many tool turns."""
+    caps = {"coordinator-session": 8192, "cad-session": 20000,
+            "review-session": 8192, "analysis": 24000, "triage": 8192}
+    try:
+        configured = int(config.get("max_output_tokens") or 32768)
+    except (TypeError, ValueError):
+        configured = 32768
+    return max(16, min(configured, caps.get(node, 24000)))
+
+
 class Candidate(Contract):
     files: dict[SourcePath, str] = Field(description=(
         "Python source files only. Every key must start with parts/, assemblies/ or calculations/ "
@@ -326,7 +343,8 @@ async def structured_turn(state: AgentState, role: str, node: str, prompt: str,
     web_enabled = web and config.get("provider", "openrouter") == "openrouter"
 
     async def call(call_messages):
-        return await models.turn(config, call_messages, tools, max_tokens=None,
+        return await models.turn(config, call_messages, tools,
+            max_tokens=model_step_token_budget(config, node),
             web_search=web_enabled, max_searches=max(0, 2-state.get("search_count", 0)))
 
     result = await operation(run, f"graph:{node}:{ordinal}", "model", lambda: call(messages))
@@ -464,7 +482,8 @@ async def agent_tool_turn(state: AgentState, *, model_role: str, prompt_role: st
     ]
 
     async def call():
-        return await models.turn(config, messages, tools, max_tokens=None)
+        return await models.turn(config, messages, tools,
+                                 max_tokens=model_step_token_budget(config, node))
 
     result = await operation(run, f"graph:{node}:{ordinal}", "model", call)
     call_value = result["calls"][0] if result.get("calls") else None
@@ -1311,13 +1330,31 @@ async def cad_session(state: AgentState) -> dict:
                 "message": "The independent review requested a source change. Edit the candidate before rebuilding.",
             })])
             return {**usage, "phase": "cad_session", "cad_history": history}
+        required_part_types = requested_part_type_count(state["original_request"])
+        built_part_types = sum(component.get("kind") != "assembly"
+                               for component in snapshot["manifest"]["components"])
+        final_build = value["final"]
+        if required_part_types is not None and built_part_types < required_part_types:
+            final_build = False
+            if value["final"]:
+                await repo.event(state["run_id"],
+                    f"CAD staged {built_part_types} of {required_part_types} requested part types; checking this as an intermediate build.",
+                    kind="validation", stage="cad")
+        if not final_build and state.get("last_milestone_hash") == digest(snapshot):
+            history = bounded_history([*history, tool_message(call, {
+                "ok": False, "category": "unchanged_milestone",
+                "message": "This exact intermediate candidate already built. Add the remaining parts or instances before building again.",
+            })])
+            return {**usage, "phase": "cad_session", "cad_history": history}
         # Execute the build transition in the same graph step as the explicit
         # CAD build action.  Hosted LangGraph interrupts after each node; in
         # practice that boundary could lose the phase update and schedule
         # another CAD turn without ever entering the build node.
         return await build({**state, **usage, "phase": "build",
             "pending_cad_call": call, "cad_history": history,
-            "cad_edits_since_build": 0, "last_read_path": None})
+            "cad_edits_since_build": 0, "last_read_path": None,
+            "build_final": final_build, "requested_part_types": required_part_types or 0,
+            "built_part_types": built_part_types})
     history = bounded_history([*history, tool_message(call, {
         "ok": False, "category": "unsupported_action", "message": f"Unsupported CAD action: {name}",
     })])
@@ -1408,6 +1445,7 @@ async def build(state: AgentState) -> dict:
     cp = checkpoint_view(state, snapshot)
     cp["sandbox"] = cp.get("sandbox") or sandbox_name(run["id"], "cad")
     cp["validator"] = sandbox_name(run["id"], "validator")
+    cp["buildFinal"] = state.get("build_final", True)
     async def execute_build():
         result = await build_candidate(run, cp, limits, f"graph:build:{state.get('attempts', 0)}")
         return {"result": result, "checkpoint": cp}
@@ -1421,9 +1459,22 @@ async def build(state: AgentState) -> dict:
         history = bounded_history([*state.get("cad_history", []), tool_message(pending, {
             "ok": False, "category": "unchanged_failed_candidate", "message": str(exc),
         })])
-        return {"phase": "cad_session", "cad_history": history, "pending_cad_call": {}}
+        return {"phase": "cad_session", "cad_history": history, "pending_cad_call": {},
+            "model_calls": state.get("model_calls", 0),
+            "search_count": state.get("search_count", 0)}
     cp = output["checkpoint"]
-    return {**sync_checkpoint(cp), "phase": "validate", "build_result": output["result"]}
+    # CAD invokes build inside its own graph node. Return the tool-turn state
+    # explicitly; otherwise LangGraph drops the newly consumed model ordinal
+    # and pending call while persisting only the build result.
+    return {**sync_checkpoint(cp), "phase": "validate", "build_result": output["result"],
+        "model_calls": state.get("model_calls", 0),
+        "search_count": state.get("search_count", 0),
+        "pending_cad_call": state.get("pending_cad_call") or {},
+        "cad_history": state.get("cad_history") or [],
+        "cad_edits_since_build": state.get("cad_edits_since_build", 0),
+        "build_final": state.get("build_final", True),
+        "requested_part_types": state.get("requested_part_types", 0),
+        "built_part_types": state.get("built_part_types", 0)}
 
 
 async def validate(state: AgentState) -> dict:
@@ -1437,10 +1488,17 @@ async def validate(state: AgentState) -> dict:
                 "The normalized build error repeated after a source change. Re-plan the affected operation instead of retrying the same construction."}])
         return {"phase": "cad_session", "cad_history": history, "pending_cad_call": {},
             "review": {}, "final_message": error.get("guidance", "Repair the failed CAD operation.")}
+    intermediate = not state.get("build_final", True)
     history = bounded_history([*state.get("cad_history", []), tool_message(pending, {
-        "ok": True, "message": "The candidate built and passed universal CAD integrity checks.",
+        "ok": True, "message": ("The staged assembly built and passed CAD integrity checks. Continue adding "
+            "the remaining requested parts and instances." if intermediate else
+            "The candidate built and passed universal CAD integrity checks."),
         "inspectionAvailable": bool(result.get("inspection")),
     })])
+    if intermediate:
+        return {"phase": "cad_session", "cad_history": history,
+            "pending_cad_call": {}, "review": {},
+            "last_milestone_hash": state.get("candidate_hash", "")}
     # A successful build and independent validator are sufficient for a
     # user-editable draft.  The product's human reviewer owns the final
     # design decision; do not spend another model call on an automated CAD

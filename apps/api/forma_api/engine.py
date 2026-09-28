@@ -249,7 +249,9 @@ async def build_candidate(run, cp, limits, key):
             artifacts.append({**artifact, "storagePath": storage_path})
         cp["validated"] = {"identity": expected, "report": report, "artifacts": artifacts}
         cp.pop("lastFailedCandidate", None)
-        await repo.event(run["id"], f"Attempt {cp['attempts']} passed CAD integrity checks. Draft ready for human review; {sum(r['status']=='passed' for r in report.get('requirements', []))} automated requirement checks passed.",
+        readiness = ("Draft ready for human review" if cp.get("buildFinal", True)
+                     else "Intermediate assembly milestone built; continue adding requested parts")
+        await repo.event(run["id"], f"Attempt {cp['attempts']} passed CAD integrity checks. {readiness}; {sum(r['status']=='passed' for r in report.get('requirements', []))} automated requirement checks passed.",
             kind="validation", stage="validation", attempt=cp["attempts"], elapsed_ms=(time.time_ns()-started)/1e6)
         return report
     finally:
