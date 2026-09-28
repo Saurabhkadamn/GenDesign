@@ -218,7 +218,7 @@ class Snapshot(Contract):
 
 
 class Limits(Contract):
-    maxModelCalls: int = Field(default=24, ge=1, le=60)
+    maxModelCalls: int = Field(default=24, ge=1, le=120)
     maxRepairs: int = Field(default=2, ge=0, le=3)
     commandTimeoutSeconds: int = Field(default=180, ge=30, le=300)
     maxArtifactBytes: int = Field(default=41943040, ge=1024, le=41943040)

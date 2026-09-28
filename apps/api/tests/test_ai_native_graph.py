@@ -3,6 +3,7 @@ import json
 import pytest
 
 from forma_api.graphs import design
+from forma_api.contracts import Limits
 
 
 def state(**updates):
@@ -456,9 +457,10 @@ async def test_cad_session_forces_build_after_three_edits(monkeypatch, graph_moc
 
 def test_model_step_budget_bounds_each_tool_turn_not_the_whole_design():
     config = {"max_output_tokens": 64000}
-    assert design.model_step_token_budget(config, "cad-session") == 20000
+    assert design.model_step_token_budget(config, "cad-session") == 64000
     assert design.model_step_token_budget(config, "coordinator-session") == 8192
     assert design.model_step_token_budget({"max_output_tokens": 4096}, "cad-session") == 4096
+    assert Limits(maxModelCalls=96).maxModelCalls == 96
 
 
 @pytest.mark.asyncio
