@@ -285,6 +285,42 @@ async def test_engineering_contract_failure_continues_to_cad_as_unverified(monke
 
 
 @pytest.mark.asyncio
+async def test_coordinator_engineering_handoff_goes_to_cad_without_another_model_call(
+        monkeypatch, graph_mocks):
+    async def analysis(*_args, **_kwargs):
+        return design.Analysis(
+            summary="Axis and fit calculated.",
+            selected_material="Assembly components use different materials.",
+            manufacturing_method="Machined mount, purchased bushings and fasteners.",
+            recommendations=["Preserve the compound-angle axis."],
+        ), {"model_calls": 3, "search_count": 0}
+
+    monkeypatch.setattr(design, "structured_turn", analysis)
+    request = "Design the suspension assembly."
+    result = await design.engineering_analysis(state(
+        original_request=request,
+        engineering_from_coordinator=True,
+        coordinator_pending_call={"id": "engineering-call"},
+        coordinator_history=[{"role": "user", "content": request}],
+    ))
+    assert result["phase"] == "cad_session"
+    assert result["coordinator_task"] == request
+    assert result["engineering_summary"] == "Axis and fit calculated."
+    assert result["model_calls"] == 3
+    assert result["coordinator_pending_call"] == {}
+
+
+def test_engineering_analysis_accepts_component_specific_material_choices():
+    value = design.Analysis.model_validate({
+        "summary": "Assembly material choices.",
+        "selected_material": "Control arm: aluminum. " * 30,
+        "manufacturing_method": "Mount: machined. Bushing: purchased. " * 25,
+    })
+    assert "Control arm" in value.selected_material
+    assert "Bushing" in value.manufacturing_method
+
+
+@pytest.mark.asyncio
 async def test_reviewer_returns_measured_defect_to_cad(monkeypatch, graph_mocks):
     graph_mocks["candidate"] = {
         "manifest": {"schemaVersion": 1, "units": "mm", "components": [], "instances": [],

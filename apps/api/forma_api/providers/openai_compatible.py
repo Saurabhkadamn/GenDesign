@@ -73,11 +73,26 @@ def _output_tokens(requested: int | None = None, configured: int | None = None) 
     return min(limit, max(16, int(requested))) if requested is not None else limit
 
 
+def _request_timeout() -> httpx.Timeout:
+    try:
+        read_seconds = int(os.getenv("OPENAI_COMPATIBLE_REQUEST_TIMEOUT_SECONDS", "240"))
+    except ValueError:
+        read_seconds = 240
+    return httpx.Timeout(read=max(30, min(read_seconds, 900)),
+                         connect=20, write=30, pool=20)
+
+
 def _stream_enabled(config: dict) -> bool:
     value = config.get("stream")
     if isinstance(value, bool):
         return value
     host = urlsplit(base_url(config)).hostname
+    # Baseten DeepSeek's high-reasoning turns can exceed the non-streaming read
+    # timeout. Its SSE tool calls were verified against the live endpoint. A
+    # per-model stream=False remains available for diagnosis; the older global
+    # provider setting must not silently disable streaming for this model.
+    if host == BASETEN_BASE_HOST and config.get("model_id") == BASETEN_DEEPSEEK_MODEL:
+        return True
     default = "true" if host == NVIDIA_BASE_HOST else "false"
     return os.getenv("OPENAI_COMPATIBLE_STREAM", default).lower() == "true"
 
@@ -169,13 +184,14 @@ async def _chat(*, api_key: str, url: str, model_id: str, messages: list[dict], 
         payload.update(extra_body)
     headers = {"Authorization": f"Bearer {api_key}",
                "Accept": "text/event-stream" if stream else "application/json"}
+    timeout = _request_timeout()
     if not stream:
         response = await db.client().post(f"{url}/chat/completions", headers=headers,
-                                          json=payload, timeout=240)
+                                          json=payload, timeout=timeout)
         return {"status": response.status_code, "body": response.text}
     events = []
     async with db.client().stream("POST", f"{url}/chat/completions", headers=headers,
-                                  json=payload, timeout=240) as response:
+                                  json=payload, timeout=timeout) as response:
         if not response.is_success:
             return {"status": response.status_code,
                     "body": (await response.aread()).decode("utf-8", errors="replace")}

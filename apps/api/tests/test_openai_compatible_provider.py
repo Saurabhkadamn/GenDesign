@@ -123,9 +123,51 @@ async def test_baseten_deepseek_uses_high_reasoning_with_tools(monkeypatch):
     assert result["calls"][0]["name"] == "connection_check"
 
 
+@pytest.mark.asyncio
+async def test_baseten_deepseek_streams_reasoning_and_tool_calls_by_default(monkeypatch):
+    monkeypatch.setenv("OPENAI_COMPATIBLE_STREAM", "false")
+    class StreamingClient:
+        def __init__(self):
+            self.payload = None
+
+        def stream(self, method, url, *, headers, json, timeout):
+            self.payload = json
+            return _StreamResponse([
+                {"choices": [{"delta": {"role": "assistant", "reasoning_content": "checking"}}]},
+                {"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "call-1",
+                    "type": "function", "function": {"name": "connection_check",
+                    "arguments": '{"value":"ready"}'}}]}}]},
+                {"choices": [], "usage": {"prompt_tokens": 12, "completion_tokens": 7}},
+            ])
+
+    client = StreamingClient()
+    monkeypatch.setattr(openai_compatible.db, "client", lambda: client)
+    result = await openai_compatible.turn({
+        "provider": "openai_compatible", "base_url": "https://inference.baseten.co/v1",
+        "model_id": "deepseek-ai/DeepSeek-V4.1-Flash", "api_key": "secret",
+    }, [{"role": "user", "content": "Call the check."}], [{"type": "function", "function": {
+        "name": "connection_check", "parameters": {"type": "object"}}}], max_tokens=2048)
+    assert client.payload["stream"] is True
+    assert client.payload["reasoning_effort"] == "high"
+    assert result["calls"][0]["input"] == {"value": "ready"}
+    assert result["outputTokens"] == 7
+    assert openai_compatible._stream_enabled({
+        "base_url": "https://inference.baseten.co/v1",
+        "model_id": "deepseek-ai/DeepSeek-V4.1-Flash",
+        "stream": False,
+    }) is False
+
+
 def test_openai_compatible_base_url_rejects_embedded_credentials():
     with pytest.raises(openai_compatible.ModelFailure):
         openai_compatible.base_url({"base_url": "https://user:pass@example.com/v1"})
+
+
+def test_openai_compatible_timeout_honors_bounded_provider_setting(monkeypatch):
+    monkeypatch.setenv("OPENAI_COMPATIBLE_REQUEST_TIMEOUT_SECONDS", "270")
+    assert openai_compatible._request_timeout().read == 270
+    monkeypatch.setenv("OPENAI_COMPATIBLE_REQUEST_TIMEOUT_SECONDS", "invalid")
+    assert openai_compatible._request_timeout().read == 240
 
 
 def test_recover_json_tool_list_from_text_only_provider_response():

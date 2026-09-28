@@ -143,8 +143,8 @@ class Analysis(Contract):
     summary: str = Field(min_length=1, max_length=8000)
     assumptions: list[str] = Field(default_factory=list, max_length=30)
     recommendations: list[str] = Field(default_factory=list, max_length=30)
-    selected_material: str = Field(default="", max_length=200)
-    manufacturing_method: str = Field(default="", max_length=200)
+    selected_material: str = Field(default="", max_length=3000)
+    manufacturing_method: str = Field(default="", max_length=3000)
     design_parameters: list[str] = Field(default_factory=list, max_length=40)
     open_items: list[str] = Field(default_factory=list, max_length=30)
     calculation_source: str | None = Field(default=None, max_length=100_000)
@@ -766,15 +766,16 @@ async def engineering_analysis(state: AgentState) -> dict:
     }
     prompt = """Perform the engineering analysis needed before geometry. Use the engineering packet below as the
 source of truth and do not call a value missing when it is present in the original request, explicit requirements,
-or clarification. The request deliberately asks the engineer to choose a material and manufacturing method: make
-those design choices, state them in selected_material and manufacturing_method, and give concrete thickness,
-fillet, reinforcement, bolt and load-path recommendations. Distinguish an engineering choice from a truly blocking
-unknown in open_items. The CAD agent's request is the immediate task. State equations, loads, units, assumptions, recommended design parameters, safety-factor
-target and limitations. When numerical validation is useful, provide a calculations/analysis.py module that writes
-    calculation.py module exposing calculate() that returns the CalculationResult contract used by Forma. The runtime
-    writes calculation.json after executing it twice in isolated processes. Return calculation_source as ordinary Python source with real newline characters; do not return literal
-backslash-n escape sequences in place of line breaks. Set requires_user_input only when a missing user choice prevents
-useful geometry; visible engineering assumptions and limitations do not require an approval pause. Do not claim FEA or certification.
+or clarification. The CAD agent's request is the immediate task. For a single part or assembly, make only the
+material and manufacturing choices the brief permits. Use selected_material and manufacturing_method for concise
+summaries; put component-specific choices, dimensions, clearances, load paths and caveats in recommendations and
+design_parameters. Distinguish a design choice from a truly blocking unknown in open_items. State equations,
+loads, units, assumptions, recommended parameters and limitations that apply to this request. When numerical
+validation is useful, provide calculation_source as ordinary Python source exposing calculate() that returns
+Forma's CalculationResult contract. The runtime executes it twice in isolated processes and records
+calculation.json. Use real newline characters, not literal backslash-n escape sequences. Set requires_user_input
+only when a missing user choice prevents useful geometry; visible assumptions and limitations do not require an
+approval pause. Do not claim FEA, certification or physical performance from geometric checks alone.
 
 Engineering packet:
 """ + json.dumps(packet, ensure_ascii=False)
@@ -898,9 +899,13 @@ Engineering packet:
     output["engineering_candidate_hash"] = digest(current_snapshot)
     if state.get("engineering_from_coordinator") and not value.requires_user_input:
         call = state.get("coordinator_pending_call") or {"id": "engineering"}
-        output["phase"] = "coordinator_session"
+        # The engineer has already resolved the delegated task. CAD receives
+        # the original design request and engineering findings directly; a
+        # second coordinator model call adds latency without a new decision.
+        output["phase"] = "cad_session"
         output["engineering_from_coordinator"] = False
         output["coordinator_pending_call"] = {}
+        output["coordinator_task"] = state.get("clarified_request") or state["original_request"]
         output["coordinator_history"] = bounded_history([
             *state.get("coordinator_history", []), tool_message(call, {
                 "ok": True, "summary": output["engineering_summary"],
@@ -924,8 +929,9 @@ async def approval(state: AgentState) -> dict:
         raise Pause("Approve or reject the engineering proposal before CAD begins.")
     if state.get("engineering_from_coordinator"):
         call = state.get("coordinator_pending_call") or {"id": "engineering"}
-        return {"approved": True, "phase": "coordinator_session",
+        return {"approved": True, "phase": "cad_session",
             "engineering_from_coordinator": False, "coordinator_pending_call": {},
+            "coordinator_task": state.get("clarified_request") or state["original_request"],
             "coordinator_history": bounded_history([*state.get("coordinator_history", []),
                 tool_message(call, {"ok": True, "approved": True,
                     "summary": state.get("engineering_summary", "")})])}
@@ -1612,7 +1618,7 @@ async def publish(state: AgentState) -> dict:
         "validation": cp.get("validated", {}).get("report"),
         "message": "The CAD draft was built and published for review.",
     })])
-    return {**sync_checkpoint(cp), "phase": "coordinator_session",
+    return {**sync_checkpoint(cp), "phase": "final",
         "coordinator_pending_call": {}, "coordinator_history": history,
         "published_revision_id": result["revisionId"], "final_message": message}
 
@@ -1671,6 +1677,6 @@ def build_graph(checkpointer):
         "review_session": "review_session", "cad_session": "cad_session",
         "publish": "publish", "final": "final",
     })
-    graph.add_edge("publish", "coordinator_session")
+    graph.add_edge("publish", "final")
     graph.add_edge("final", END)
     return graph.compile(checkpointer=checkpointer, interrupt_after="*", name="forma-design")
