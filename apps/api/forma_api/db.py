@@ -1,4 +1,5 @@
 """Small asynchronous Supabase REST adapter with no raw errors in public responses."""
+import asyncio
 from typing import Any
 from urllib.parse import quote
 
@@ -8,6 +9,10 @@ from fastapi import HTTPException
 from .config import settings
 
 _client: httpx.AsyncClient | None = None
+_STORAGE_UPLOAD_RETRY_DELAYS = (0.25, 0.75)
+_STORAGE_UPLOAD_RETRYABLE_STATUSES = frozenset({
+    408, 425, 500, 502, 503, 504, 520, 521, 522, 523, 524, 525, 526,
+})
 
 
 def client() -> httpx.AsyncClient:
@@ -87,12 +92,50 @@ async def auth(path: str, *, method="GET", token=None, body=None, admin=False):
 
 
 async def storage(path: str, method="GET", *, content=None, content_type=None, body=None):
-    response = await client().request(method, f"{settings().supabase_url}/storage/v1/{path}", json=body,
-                                      content=content, headers={**headers(), "x-upsert": "true",
-                                                               **({"Content-Type": content_type} if content_type else {})})
-    if not response.is_success:
-        raise HTTPException(503, "Private file storage is temporarily unavailable.")
-    return response.json() if response.content else {}
+    cfg = settings()
+    url = f"{cfg.supabase_url}/storage/v1/{path}"
+    request_headers = {**headers(), "x-upsert": "true",
+                       **({"Content-Type": content_type} if content_type else {})}
+    # CAD artifact uploads use a stable candidate path and x-upsert, so retrying
+    # the identical bytes is idempotent even if the first response was lost.
+    retry_upload = (
+        method.upper() == "POST" and content is not None
+        and path.startswith("object/cad-private/")
+    )
+    attempts = 1 + len(_STORAGE_UPLOAD_RETRY_DELAYS) if retry_upload else 1
+
+    for attempt in range(attempts):
+        try:
+            response = await client().request(method, url, json=body, content=content,
+                                              headers=request_headers)
+        except httpx.TransportError:
+            if not retry_upload:
+                raise
+            if attempt < attempts - 1:
+                await asyncio.sleep(_STORAGE_UPLOAD_RETRY_DELAYS[attempt])
+                continue
+            raise HTTPException(
+                503, f"Private file storage upload failed after {attempts} attempts (network error)."
+            ) from None
+
+        if response.is_success:
+            return response.json() if response.content else {}
+
+        retryable = retry_upload and response.status_code in _STORAGE_UPLOAD_RETRYABLE_STATUSES
+        if retryable and attempt < attempts - 1:
+            await asyncio.sleep(_STORAGE_UPLOAD_RETRY_DELAYS[attempt])
+            continue
+
+        if retryable:
+            message = (f"Private file storage upload failed after {attempts} attempts "
+                       f"(upstream HTTP {response.status_code}).")
+        elif retry_upload and 400 <= response.status_code < 500:
+            message = f"Private file storage rejected the upload (upstream HTTP {response.status_code})."
+        else:
+            message = "Private file storage is temporarily unavailable."
+        raise HTTPException(503, message)
+
+    raise HTTPException(503, "Private file storage upload failed after bounded retries.")
 
 
 def object_path(path: str) -> str:
