@@ -6,8 +6,10 @@ import json
 import os
 import re
 import tarfile
+from contextlib import asynccontextmanager
 from typing import Protocol
 
+import httpx
 
 from .config import settings
 
@@ -69,6 +71,32 @@ def filename(value):
 
 
 class VercelExecutor:
+    @asynccontextmanager
+    async def sdk_session(self, *, read_timeout: float = 120):
+        """Give Sandbox SDK requests enough idle-read time for quiet CAD commands.
+
+        The Vercel SDK streams process output through HTTPX. Its default 60-second
+        read timeout is shorter than valid CAD builds, even when the command's own
+        execution deadline is longer. Scope the override to Sandbox SDK calls and
+        keep connection, write, and pool timeouts bounded.
+        """
+        from vercel.api import session
+
+        def client_factory():
+            return httpx.AsyncClient(
+                timeout=httpx.Timeout(
+                    30.0,
+                    connect=30.0,
+                    read=read_timeout,
+                    write=30.0,
+                    pool=30.0,
+                ),
+                follow_redirects=False,
+            )
+
+        async with session(httpx_client_factory=client_factory):
+            yield
+
     async def box(self, name):
         from vercel import sandbox
         try:
@@ -82,8 +110,9 @@ class VercelExecutor:
         return box
 
     async def is_running(self, name):
-        await self.box(name)
-        return True
+        async with self.sdk_session():
+            await self.box(name)
+            return True
 
     async def command(self, box, args, timeout=30):
         result = await box.run_process("/opt/forma/.venv/bin/python", ["-I", "/opt/forma/control.py", *args],
@@ -95,56 +124,64 @@ class VercelExecutor:
         snapshot = os.getenv("CAD_RUNTIME_SNAPSHOT_ID")
         if not snapshot:
             raise ExecutionFailure("Hosted CAD runtime is not configured")
-        box, _created = await sandbox.get_or_create_sandbox(name=name, resume=False, source=sandbox.SnapshotSource(snapshot_id=snapshot),
-            execution_time_limit=lifetime, persistent=False, network_policy=sandbox.NetworkPolicy.deny_all(), ports=[],
-            resources=sandbox.SandboxResources(vcpus=2))
-        # The SDK's filesystem transport starts in this fixed directory, even for
-        # snapshots created by an earlier runtime whose home directory differs.
-        await box.run_process("mkdir", ["-p", "/vercel/sandbox"], cwd="/", sudo=True, check=True)
-        return box.name
+        async with self.sdk_session(read_timeout=120):
+            box, _created = await sandbox.get_or_create_sandbox(name=name, resume=False, source=sandbox.SnapshotSource(snapshot_id=snapshot),
+                execution_time_limit=lifetime, persistent=False, network_policy=sandbox.NetworkPolicy.deny_all(), ports=[],
+                resources=sandbox.SandboxResources(vcpus=2))
+            # The SDK's filesystem transport starts in this fixed directory, even for
+            # snapshots created by an earlier runtime whose home directory differs.
+            await box.run_process("mkdir", ["-p", "/vercel/sandbox"], cwd="/", sudo=True, check=True)
+            return box.name
 
     async def stage(self, name, files):
         validate_files(files)
-        box = await self.box(name)
-        await self.command(box, ["prepare"])
         archive = io.BytesIO()
         with tarfile.open(fileobj=archive, mode="w") as tar:
             for path, data in files.items():
                 entry = tarfile.TarInfo(path)
                 entry.size, entry.mode, entry.uid, entry.gid = len(data), 0o444, 0, 0
                 tar.addfile(entry, io.BytesIO(data))
-        # The archive is constructed here from validated regular files. No caller tar is accepted.
-        await box.fs.write_bytes("/tmp/forma-stage.tar", archive.getvalue())
-        await box.run_process("tar", ["--extract", "--file=/tmp/forma-stage.tar", "--directory=/job/workspace", "--no-same-owner"], cwd="/", sudo=True, check=True)
-        await box.run_process("rm", ["-f", "/tmp/forma-stage.tar"], cwd="/", sudo=True, check=True)
+        async with self.sdk_session(read_timeout=360):
+            box = await self.box(name)
+            await self.command(box, ["prepare"])
+            # The archive is constructed here from validated regular files. No caller tar is accepted.
+            await box.fs.write_bytes("/tmp/forma-stage.tar", archive.getvalue())
+            await box.run_process("tar", ["--extract", "--file=/tmp/forma-stage.tar", "--directory=/job/workspace", "--no-same-owner"], cwd="/", sudo=True, check=True)
+            await box.run_process("rm", ["-f", "/tmp/forma-stage.tar"], cwd="/", sudo=True, check=True)
 
     async def execute(self, name, operation, timeout, path=""):
-        return await self.command(await self.box(name), ["execute", "--operation", operation, "--timeout", str(timeout), "--path", path], timeout + 15)
+        read_timeout = min(max(float(timeout) + 60.0, 60.0), 360.0)
+        async with self.sdk_session(read_timeout=read_timeout):
+            return await self.command(await self.box(name), ["execute", "--operation", operation, "--timeout", str(timeout), "--path", path], timeout + 15)
 
     async def inspect(self, name):
-        return await self.command(await self.box(name), ["inspect"])
+        async with self.sdk_session(read_timeout=120):
+            return await self.command(await self.box(name), ["inspect"])
 
     async def read(self, name, value):
-        box = await self.box(name)
-        path = f"/job/output/{filename(value)}"
-        probe = await box.run_process("/opt/forma/.venv/bin/python", ["-I", "-c",
-            "import os,stat,sys; s=os.lstat(sys.argv[1]); assert stat.S_ISREG(s.st_mode) and 0<s.st_size<=41943040; print(s.st_size)", path], cwd="/", sudo=True, check=True, capture_output=True)
-        content = await box.fs.read_bytes(path)
-        if len(content) != int(probe.stdout) or len(content) > MAX_FILE:
-            raise ExecutionFailure("Output changed after execution")
-        return content
+        async with self.sdk_session(read_timeout=360):
+            box = await self.box(name)
+            path = f"/job/output/{filename(value)}"
+            probe = await box.run_process("/opt/forma/.venv/bin/python", ["-I", "-c",
+                "import os,stat,sys; s=os.lstat(sys.argv[1]); assert stat.S_ISREG(s.st_mode) and 0<s.st_size<=41943040; print(s.st_size)", path], cwd="/", sudo=True, check=True, capture_output=True)
+            content = await box.fs.read_bytes(path)
+            if len(content) != int(probe.stdout) or len(content) > MAX_FILE:
+                raise ExecutionFailure("Output changed after execution")
+            return content
 
     async def cancel(self, name):
-        await self.command(await self.box(name), ["cancel"])
+        async with self.sdk_session(read_timeout=120):
+            await self.command(await self.box(name), ["cancel"])
 
     async def destroy(self, name):
         from vercel import sandbox
-        try:
-            box = await sandbox.get_sandbox(name=name)
-            await box.destroy()
-        except sandbox.SandboxApiError as exc:
-            if exc.status_code != 404:
-                raise
+        async with self.sdk_session(read_timeout=120):
+            try:
+                box = await sandbox.get_sandbox(name=name)
+                await box.destroy()
+            except sandbox.SandboxApiError as exc:
+                if exc.status_code != 404:
+                    raise
 
 
 def executor() -> Executor:
