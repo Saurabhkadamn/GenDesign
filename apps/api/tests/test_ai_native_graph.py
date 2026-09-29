@@ -355,7 +355,7 @@ async def test_reviewer_returns_measured_defect_to_cad(monkeypatch, graph_mocks)
 
 
 @pytest.mark.asyncio
-async def test_second_reviewer_repair_publishes_findings_for_user_edit(monkeypatch, graph_mocks):
+async def test_two_reviewer_repair_cycles_publish_remaining_findings(monkeypatch, graph_mocks):
     graph_mocks["candidate"] = {
         "manifest": {"schemaVersion": 1, "units": "mm", "components": [], "instances": [],
             "rootComponentId": None, "references": [], "joints": [],
@@ -376,10 +376,94 @@ async def test_second_reviewer_repair_publishes_findings_for_user_edit(monkeypat
 
     monkeypatch.setattr(design.models, "turn", turn)
     result = await design.review_session(state(
-        validation={"report": {"inspection": {}}}, review_repairs=1))
+        validation={"report": {"inspection": {}}}, review_repairs=2))
     assert result["phase"] == "publish"
     assert result["review"]["action"] == "publish"
     assert "remaining findings" in result["review"]["summary"]
+
+
+@pytest.mark.asyncio
+async def test_repeated_review_finding_stops_repair_loop(monkeypatch, graph_mocks):
+    graph_mocks["candidate"] = {
+        "manifest": {"schemaVersion": 1, "units": "mm", "components": [], "instances": [],
+            "rootComponentId": None, "references": [], "joints": [],
+            "configurations": [], "featureOperations": []}, "files": {},
+    }
+    review = {"summary": "The same overlap remains.", "action": "repair", "findings": [{
+        "id": "gear_overlap", "statement": "Output gear intersects housing", "status": "observed_mismatch",
+        "severity": "error", "evidence": ["10 mm3 overlap"], "explanation": "Measured overlap.",
+        "repair_instruction": "Increase the housing cavity.",
+    }]}
+
+    async def turn(*_args, **_kwargs):
+        return {"message": {"role": "assistant", "content": "", "tool_calls": [{
+            "id": "review-repeat", "type": "function", "function": {
+                "name": "submit_review", "arguments": json.dumps(review)}}]},
+            "calls": [{"id": "review-repeat", "name": "submit_review", "input": review}],
+            "inputTokens": 10, "outputTokens": 20, "webSearchRequests": 0}
+
+    monkeypatch.setattr(design.models, "turn", turn)
+    state_value = state(validation={"report": {"inspection": {}}}, review_repairs=1,
+        review_fingerprint=design.review_fingerprint(review), candidate_hash="new-candidate")
+    result = await design.review_session(state_value)
+    assert result["phase"] == "publish"
+    assert result["review"]["action"] == "publish"
+    assert "same actionable finding remained" in result["review"]["summary"]
+
+
+@pytest.mark.asyncio
+async def test_review_repair_context_separates_passes_from_targets(graph_mocks):
+    review = {"summary": "One issue.", "action": "repair", "findings": [
+        {"id": "hole", "status": "observed_match", "statement": "Hole count correct"},
+        {"id": "cavity", "status": "observed_mismatch", "statement": "Gear cavity missing",
+            "evidence": ["The imported solids overlap by 10 mm3."],
+            "repair_instruction": "Increase the housing cavity clearance."},
+        {"id": "fatigue", "status": "requires_engineering", "statement": "Fatigue"},
+    ]}
+    result = await design.record_review_result(state(), review,
+        {"manifest": {}, "files": {}}, {"report": {}}, [])
+    repair_plan = json.loads(result["cad_history"][-1]["content"])
+    assert [item["id"] for item in repair_plan["alreadyPassing"]] == ["hole"]
+    assert [item["id"] for item in repair_plan["repairTargets"]] == ["cavity"]
+    assert [item["id"] for item in repair_plan["unverifiedOrNonActionable"]] == ["fatigue"]
+
+
+def test_review_finding_without_evidence_cannot_trigger_cad_repair():
+    finding = {"id": "possible_gap", "status": "observed_mismatch",
+        "statement": "A support may be missing", "evidence": [], "repair_instruction": "Add support."}
+    assert not design.is_review_repair_target(finding)
+
+
+@pytest.mark.asyncio
+async def test_reviewer_allows_second_repair_for_a_different_finding(graph_mocks):
+    review = {"summary": "A separate issue remains.", "action": "repair", "findings": [{
+        "id": "missing_boss", "statement": "PCB boss is absent", "status": "not_observed",
+        "severity": "warning", "evidence": ["No boss feature in source"],
+        "explanation": "The PCB mounting boss is missing.", "repair_instruction": "Add the PCB boss.",
+    }]}
+    result = await design.record_review_result(
+        state(review_repairs=1, review_fingerprint="different-prior-finding"), review,
+        {"manifest": {}, "files": {}}, {"report": {}}, [])
+    assert result["phase"] == "cad_session"
+    assert result["review_repairs"] == 2
+
+
+@pytest.mark.asyncio
+async def test_reviewer_model_outage_does_not_block_publish(monkeypatch, graph_mocks):
+    graph_mocks["candidate"] = {
+        "manifest": {"schemaVersion": 1, "units": "mm", "components": [], "instances": [],
+            "rootComponentId": None, "references": [], "joints": [],
+            "configurations": [], "featureOperations": []}, "files": {},
+    }
+
+    async def outage(*_args, **_kwargs):
+        raise design.Pause("The review model is rate-limited.")
+
+    monkeypatch.setattr(design, "agent_tool_turn", outage)
+    result = await design.review_session(state(validation={"report": {"inspection": {}}}))
+    assert result["phase"] == "publish"
+    assert result["review"]["findings"][0]["id"] == "review_unavailable"
+    assert "still published" in result["review"]["summary"]
 
 
 @pytest.mark.asyncio

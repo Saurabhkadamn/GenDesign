@@ -42,6 +42,7 @@ class AgentState(TypedDict, total=False):
     review_history: list[dict[str, Any]]
     review_reads: int
     review_inspected: bool
+    review_actions: int
     review_repairs: int
     review: dict[str, Any]
     review_fingerprint: str
