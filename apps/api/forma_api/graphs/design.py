@@ -605,7 +605,7 @@ async def coordinator(state: AgentState) -> dict:
         "cad_edits_since_build": 0,
         "cad_history": [{"role": "user", "content": state["original_request"]}],
         "review_history": [], "review": {},
-        "review_repairs": 0,
+        "review_repairs": 0, "review_actions": 0,
         "started_ns": time.time_ns()}
 
 
@@ -1124,6 +1124,103 @@ CAD_SESSION_TOOL_NAMES = {
     "inspect_geometry", "request_engineering", "ask_user",
 }
 MAX_CAD_EDITS_WITHOUT_BUILD = 3
+MAX_REVIEW_REPAIR_CYCLES = 2
+MAX_REVIEW_ACTIONS = 5
+
+
+def is_review_repair_target(finding: dict) -> bool:
+    return (finding.get("status") in {"observed_mismatch", "not_observed"}
+        and bool(finding.get("evidence")) and bool(str(finding.get("repair_instruction", "")).strip()))
+
+
+def review_fingerprint(review: dict) -> str:
+    """Stable identity for actionable review defects, ignoring prose/evidence drift."""
+    actionable = []
+    for finding in review.get("findings", []):
+        if not is_review_repair_target(finding):
+            continue
+        normalized_statement = re.sub(r"[^a-z0-9]+", " ",
+            str(finding.get("statement", "")).lower()).strip()
+        actionable.append({
+            "id": str(finding.get("id", "")).lower(),
+            "status": finding.get("status"),
+            "statement": normalized_statement,
+        })
+    return digest(sorted(actionable, key=lambda item: (item["id"], item["statement"])))
+
+
+def review_repair_context(review: dict) -> dict:
+    """Give CAD a short defect list and explicit invariants, not an open-ended review."""
+    findings = review.get("findings", [])
+    return {
+        "message": ("Repair only the actionable items listed in repairTargets. Preserve every item in "
+            "alreadyPassing unchanged. Do not guess at or repair unverified engineering/physical claims. "
+            "After the focused edits, rebuild the candidate."),
+        "summary": review.get("summary", "Independent review found issues to address."),
+        "alreadyPassing": [item for item in findings if item.get("status") == "observed_match"],
+        "repairTargets": [item for item in findings if is_review_repair_target(item)],
+        "unverifiedOrNonActionable": [item for item in findings
+            if item.get("status") != "observed_match" and not is_review_repair_target(item)],
+    }
+
+
+def unavailable_review(reason: str) -> dict:
+    return {"summary": ("Independent design review did not complete: " + reason[:700] +
+            " The successfully built and independently validated draft is still published; review the automated "
+            "evidence and geometry yourself."),
+        "action": "publish", "findings": [{
+            "id": "review_unavailable",
+            "statement": "The independent model review did not complete.",
+            "status": "not_checked", "severity": "warning", "evidence": [],
+            "explanation": "No model-based requirement review is available for this candidate. The independent "
+                "CAD build validator still ran; this review failure did not alter or invalidate the artifacts.",
+            "repair_instruction": "Review the candidate manually or request a focused edit.",
+        }]}
+
+
+async def record_review_result(state: AgentState, review: dict, snapshot: dict,
+                               validation: dict, history: list[dict], usage: dict | None = None) -> dict:
+    """Route a review to one focused repair, or publish the built draft with findings."""
+    usage = usage or {}
+    actionable = [finding for finding in review.get("findings", []) if is_review_repair_target(finding)]
+    repairs_done = int(state.get("review_repairs", 0))
+    fingerprint = review_fingerprint(review)
+    prior_fingerprint = state.get("review_fingerprint", "")
+    same_defect_repeated = bool(actionable and repairs_done and fingerprint == prior_fingerprint)
+
+    # A model may request repair for a finding that is only unverified, or may
+    # return no concrete defect. Keep those limitations visible, but do not send
+    # speculative geometry changes to CAD.
+    if review.get("action") == "repair" and not actionable:
+        review["action"] = "publish"
+        review["summary"] += (" No evidence-backed, geometry-actionable mismatch was available for CAD to fix; "
+            "the remaining findings are included for your review.")
+    if review.get("action") == "repair" and same_defect_repeated:
+        review["action"] = "publish"
+        review["summary"] += (" The same actionable finding remained after a focused repair, so further "
+            "automatic retries stopped. The built draft and remaining finding are published for your review.")
+    if review.get("action") == "repair" and repairs_done >= MAX_REVIEW_REPAIR_CYCLES:
+        review["action"] = "publish"
+        review["summary"] += (f" The maximum of {MAX_REVIEW_REPAIR_CYCLES} focused review repair cycles is "
+            "complete; remaining findings are published with the draft for user-directed editing.")
+
+    validation = deepcopy(validation)
+    validation.setdefault("report", {})["review"] = review
+    await repo.event(state["run_id"],
+        f"Independent CAD review completed with {len(review.get('findings', []))} findings.",
+        kind="validation", stage="review")
+    common = {**usage, "review": review, "review_fingerprint": fingerprint,
+        "reviewed_candidate_hash": digest(snapshot), "review_history": history,
+        "validation": validation, "review_reads": 0, "review_inspected": False,
+        "review_actions": 0}
+    if review.get("action") == "repair":
+        repair_context = review_repair_context(review)
+        cad_history = bounded_history([*state.get("cad_history", []), {
+            "role": "user", "content": json.dumps(repair_context, ensure_ascii=False),
+        }])
+        return {**common, "phase": "cad_session", "cad_history": cad_history,
+            "review_repairs": repairs_done + 1}
+    return {**common, "phase": "publish"}
 
 
 async def cad_session(state: AgentState) -> dict:
@@ -1165,6 +1262,8 @@ async def cad_session(state: AgentState) -> dict:
         "selectedIds": state.get("selected_ids", []),
         "engineeringSummary": state.get("engineering_summary", ""),
         "engineeringRemarks": state.get("engineering_remarks", []),
+        "reviewRepairPlan": (review_repair_context(state.get("review") or {})
+            if (state.get("review") or {}).get("action") == "repair" else None),
         "workspace": {
             "manifest": snapshot["manifest"],
             "files": sorted(snapshot["files"]),
@@ -1335,7 +1434,7 @@ async def cad_session(state: AgentState) -> dict:
             "cad_edits_since_build": edits_since_build + 1,
             "last_read_path": None,
             "cad_history": bounded_history([*history, tool_message(call, result)]),
-            "validation": {}, "review": {}, "build_result": {}}
+            "validation": {}, "build_result": {}}
     if name == "request_engineering":
         candidate_digest = digest(snapshot)
         request_count = state.get("engineering_request_count", 0) + 1
@@ -1549,7 +1648,7 @@ async def validate(state: AgentState) -> dict:
             history = bounded_history([*history, {"role": "user", "content":
                 "The normalized build error repeated after a source change. Re-plan the affected operation instead of retrying the same construction."}])
         return {"phase": "cad_session", "cad_history": history, "pending_cad_call": {},
-            "review": {}, "final_message": error.get("guidance", "Repair the failed CAD operation.")}
+            "final_message": error.get("guidance", "Repair the failed CAD operation.")}
     intermediate = not state.get("build_final", True)
     history = bounded_history([*state.get("cad_history", []), tool_message(pending, {
         "ok": True, "message": ("The staged assembly built and passed CAD integrity checks. Continue adding "
@@ -1559,14 +1658,15 @@ async def validate(state: AgentState) -> dict:
     })])
     if intermediate:
         return {"phase": "cad_session", "cad_history": history,
-            "pending_cad_call": {}, "review": {},
+            "pending_cad_call": {},
             "last_milestone_hash": state.get("candidate_hash", "")}
-    # A successful build and independent validator are sufficient for a
-    # user-editable draft.  The product's human reviewer owns the final
-    # design decision; do not spend another model call on an automated CAD
-    # review gate before publishing the already validated artifacts.
-    return {"phase": "publish", "cad_history": history,
-        "pending_cad_call": {}, "review": {}}
+    # Every final build gets a focused evidence review before draft publication.
+    # This is a bounded quality pass, not a release gate: after at most two
+    # focused repairs, publish the last buildable draft with its findings.
+    return {"phase": "review_session", "cad_history": history,
+        "pending_cad_call": {}, "review_history": [], "review_reads": 0,
+        "review_inspected": False, "review_actions": 0, "review": state.get("review") or {},
+        "review_repairs": state.get("review_repairs", 0)}
 
 
 async def repair(state: AgentState) -> dict:
@@ -1618,20 +1718,7 @@ async def review_session(state: AgentState) -> dict:
     validation = state.get("validation") or {}
     preflight = deterministic_review_preflight(snapshot, validation)
     if preflight:
-        validation = deepcopy(validation)
-        validation.setdefault("report", {})["review"] = preflight
-        fingerprint = digest({"action": preflight["action"], "findings": preflight["findings"]})
-        await repo.event(state["run_id"], "Independent CAD preflight found an incomplete assembly instance inventory.",
-            kind="validation", stage="review")
-        repair_context = {"message": "Independent review found an actionable evidence gap. Modify the manifest before rebuilding.",
-            "summary": preflight["summary"], "findings": preflight["findings"]}
-        return {"phase": "cad_session", "review": preflight,
-            "review_fingerprint": fingerprint, "reviewed_candidate_hash": digest(snapshot),
-            "review_history": [], "cad_history": bounded_history([*state.get("cad_history", []),
-                {"role": "user", "content": json.dumps(repair_context, ensure_ascii=False)}]),
-            "validation": validation}
-    history = state.get("review_history") or [{"role": "user", "content":
-        "Independently review this built CAD candidate against the original request. Use tools for evidence, then submit the review."}]
+        return await record_review_result(state, preflight, snapshot, validation, [])
     context = {
         "originalRequest": state["original_request"],
         "clarifiedRequest": state.get("clarified_request", ""),
@@ -1640,7 +1727,17 @@ async def review_session(state: AgentState) -> dict:
         "manifest": snapshot["manifest"],
         "sourceFiles": sorted(snapshot["files"]),
         "buildReport": validation.get("report", validation),
+        "previousReview": state.get("review", {}),
+        "reviewInstructions": ("List requirements that are demonstrated as passing and preserve them. Identify only "
+            "specific missing/wrong geometry with evidence as repair targets. Mark unsupported measurements, "
+            "engineering performance, and physical checks unverified; do not ask CAD to guess or repair those."),
     }
+    history = state.get("review_history") or [{"role": "user", "content":
+        "Independently review this built CAD candidate against the original request. Use tools for evidence, then call submit_review."}]
+    if state.get("review_actions", 0) >= MAX_REVIEW_ACTIONS:
+        return await record_review_result(state,
+            unavailable_review(f"the reviewer used its {MAX_REVIEW_ACTIONS}-action evidence budget"),
+            snapshot, validation, history)
     allowed_review_tools = set()
     if state.get("review_reads", 0) < 3:
         allowed_review_tools.add("read_file")
@@ -1649,14 +1746,17 @@ async def review_session(state: AgentState) -> dict:
     tools = [item for item in model_tools("cad")
              if item["function"]["name"] in allowed_review_tools]
     tools.append(submission_tool("submit_review", "Submit evidence-backed findings for this candidate.", ReviewResult))
-    call, history, usage = await agent_tool_turn(
-        state, model_role="cad", prompt_role="reviewer", node="review-session",
-        context=context, history=history, tools=tools,
-    )
+    try:
+        call, history, usage = await agent_tool_turn(
+            state, model_role="cad", prompt_role="reviewer", node="review-session",
+            context=context, history=history, tools=tools,
+        )
+    except (Pause, ModelFailure) as exc:
+        return await record_review_result(state, unavailable_review(str(exc)), snapshot, validation, history)
     if not call:
         return {**usage, "phase": "review_session", "review_history": bounded_history([
             *history, {"role": "user", "content": "Use read_file or inspect_geometry, then call submit_review."}
-        ])}
+        ]), "review_actions": state.get("review_actions", 0) + 1}
     name = call["name"]
     if name == "read_file":
         try:
@@ -1670,46 +1770,25 @@ async def review_session(state: AgentState) -> dict:
         if reads >= 3:
             result["reviewInstruction"] = "Source-read budget reached; submit the review using gathered evidence."
         return {**usage, "phase": "review_session", "review_reads": reads,
-            "review_history": bounded_history([*history, tool_message(call, result)])}
+            "review_history": bounded_history([*history, tool_message(call, result)]),
+            "review_actions": state.get("review_actions", 0) + 1}
     if name == "inspect_geometry":
         return {**usage, "phase": "review_session", "review_inspected": True,
             "review_history": bounded_history([
-                *history, tool_message(call, validation.get("report", validation))])}
+                *history, tool_message(call, validation.get("report", validation))]),
+            "review_actions": state.get("review_actions", 0) + 1}
     if name != "submit_review":
         return {**usage, "phase": "review_session", "review_history": bounded_history([
-            *history, tool_message(call, {"ok": False, "message": "Reviewer tools are read-only."})])}
+            *history, tool_message(call, {"ok": False, "message": "Reviewer tools are read-only."})]),
+            "review_actions": state.get("review_actions", 0) + 1}
     try:
         review = ReviewResult.model_validate(call["input"]).model_dump()
     except ValidationError as exc:
         return {**usage, "phase": "review_session", "review_history": bounded_history([
             *history, tool_message(call, {"ok": False, "category": "review_contract",
-                "message": str(exc)[:5000]})])}
-    if review["action"] == "repair" and state.get("review_repairs", 0) >= 1:
-        review["action"] = "publish"
-        review["summary"] += (" The bounded reviewer repair cycle is complete; remaining findings are published "
-            "with this draft for user-directed editing.")
-    validation = deepcopy(validation)
-    validation.setdefault("report", {})["review"] = review
-    fingerprint = digest({"action": review["action"], "findings": review["findings"]})
-    await repo.event(state["run_id"],
-        f"Independent CAD review completed with {len(review['findings'])} findings.",
-        kind="validation", stage="review")
-    if review["action"] == "repair":
-        review_repairs = state.get("review_repairs", 0) + 1
-        repair_context = {
-            "message": "Independent review found actionable geometry defects. Modify the source before rebuilding.",
-            "summary": review["summary"], "findings": review["findings"],
-        }
-        cad_history = bounded_history([*state.get("cad_history", []), {
-            "role": "user", "content": json.dumps(repair_context, ensure_ascii=False),
-        }])
-        return {**usage, "phase": "cad_session", "review": review,
-            "review_fingerprint": fingerprint, "reviewed_candidate_hash": digest(snapshot),
-            "review_history": history, "cad_history": cad_history, "validation": validation,
-            "review_repairs": review_repairs}
-    return {**usage, "phase": "publish", "review": review,
-        "review_fingerprint": fingerprint, "reviewed_candidate_hash": digest(snapshot),
-        "review_history": history, "validation": validation}
+                "message": str(exc)[:5000]})]),
+            "review_actions": state.get("review_actions", 0) + 1}
+    return await record_review_result(state, review, snapshot, validation, history, usage)
 
 
 async def publish(state: AgentState) -> dict:
@@ -1723,7 +1802,7 @@ async def publish(state: AgentState) -> dict:
     settings_value = await app_settings()
     async def publish_candidate():
         return await execute_tool(run, cp, {"id": "publish", "name": "publish_revision",
-            "input": {"summary": state.get("candidate_summary") or "Verified CAD design"}},
+            "input": {"summary": state.get("candidate_summary") or "CAD draft for human review"}},
             settings_value, worker())
     result = await operation(run, "graph:publish", "publish_revision", publish_candidate, idempotent=True)
     await destroy_sandboxes(cp)
@@ -1792,7 +1871,7 @@ def build_graph(checkpointer):
         {"cad_session": "cad_session", "coordinator_session": "coordinator_session", "final": "final"})
     graph.add_edge("build", "validate")
     graph.add_conditional_edges("validate", phase_route,
-        {"cad_session": "cad_session", "review_session": "review_session", "publish": "publish", "final": "final"})
+        {"cad_session": "cad_session", "review_session": "review_session", "final": "final"})
     graph.add_conditional_edges("review_session", phase_route, {
         "review_session": "review_session", "cad_session": "cad_session",
         "publish": "publish", "final": "final",
