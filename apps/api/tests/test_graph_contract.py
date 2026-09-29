@@ -14,9 +14,10 @@ def test_graph_phase_routes_are_explicit(phase):
     assert phase_route({"phase": phase}) == phase
 
 
-def test_successful_validation_has_a_publish_edge():
+def test_successful_validation_routes_through_independent_review():
     edges = build_graph(None).get_graph().edges
-    assert any(edge.source == "validate" and edge.target == "publish" for edge in edges)
+    assert any(edge.source == "validate" and edge.target == "review_session" for edge in edges)
+    assert not any(edge.source == "validate" and edge.target == "publish" for edge in edges)
 
 
 def test_resume_contract_requires_an_answer_message():
