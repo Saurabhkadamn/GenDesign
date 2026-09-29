@@ -1,3 +1,4 @@
+import asyncio
 import json
 
 import pytest
@@ -156,6 +157,30 @@ async def test_baseten_deepseek_streams_reasoning_and_tool_calls_by_default(monk
         "model_id": "deepseek-ai/DeepSeek-V4.1-Flash",
         "stream": False,
     }) is False
+
+
+@pytest.mark.asyncio
+async def test_streaming_provider_has_a_total_wall_clock_deadline(monkeypatch):
+    class SlowStreamResponse(_StreamResponse):
+        async def aiter_lines(self):
+            while True:
+                # Keep each read active so an HTTPX inactivity timeout alone
+                # would never stop this response.
+                await asyncio.sleep(0.01)
+                yield 'data: {"choices":[{"delta":{"content":"thinking"}}]}'
+
+    class SlowStreamingClient:
+        def stream(self, method, url, *, headers, json, timeout):
+            return SlowStreamResponse([])
+
+    monkeypatch.setattr(openai_compatible.db, "client", lambda: SlowStreamingClient())
+    monkeypatch.setattr(openai_compatible, "_request_deadline_seconds", lambda: 0.04)
+    with pytest.raises(openai_compatible.ModelFailure) as error:
+        await openai_compatible.turn({
+            "provider": "openai_compatible", "base_url": "https://inference.baseten.co/v1",
+            "model_id": "deepseek-ai/DeepSeek-V4.1-Flash", "api_key": "secret", "stream": True,
+        }, [{"role": "user", "content": "Call the check."}], [], max_tokens=2048)
+    assert error.value.category == "timeout"
 
 
 def test_openai_compatible_base_url_rejects_embedded_credentials():

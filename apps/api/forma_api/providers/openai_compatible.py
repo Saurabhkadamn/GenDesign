@@ -4,6 +4,7 @@ The graph only depends on the normalized result returned by ``turn``.  This
 adapter deliberately does not send OpenRouter-only fields such as ``provider``
 or ``openrouter:web_search``.
 """
+import asyncio
 import json
 import os
 from urllib.parse import urlsplit
@@ -80,6 +81,23 @@ def _request_timeout() -> httpx.Timeout:
         read_seconds = 240
     return httpx.Timeout(read=max(30, min(read_seconds, 900)),
                          connect=20, write=30, pool=20)
+
+
+def _request_deadline_seconds() -> float:
+    """Bound total provider wall time, including a continuously active SSE stream.
+
+    HTTPX's read timeout is an inactivity timeout: each received chunk resets it.
+    A model that keeps streaming can therefore outlive the Vercel Workflow step.
+    Keep room after this network deadline for parsing and checkpoint persistence.
+    """
+    try:
+        seconds = float(os.getenv("OPENAI_COMPATIBLE_REQUEST_TIMEOUT_SECONDS", "240"))
+    except (TypeError, ValueError):
+        seconds = 240.0
+    seconds = min(900.0, max(1.0, seconds))
+    if os.getenv("VERCEL") == "1":
+        seconds = min(seconds, 240.0)
+    return seconds
 
 
 def _stream_enabled(config: dict) -> bool:
@@ -185,33 +203,37 @@ async def _chat(*, api_key: str, url: str, model_id: str, messages: list[dict], 
     headers = {"Authorization": f"Bearer {api_key}",
                "Accept": "text/event-stream" if stream else "application/json"}
     timeout = _request_timeout()
-    if not stream:
-        response = await db.client().post(f"{url}/chat/completions", headers=headers,
-                                          json=payload, timeout=timeout)
-        return {"status": response.status_code, "body": response.text}
-    events = []
-    async with db.client().stream("POST", f"{url}/chat/completions", headers=headers,
-                                  json=payload, timeout=timeout) as response:
-        if not response.is_success:
-            return {"status": response.status_code,
-                    "body": (await response.aread()).decode("utf-8", errors="replace")}
-        async for line in response.aiter_lines():
-            if not line.startswith("data:"):
-                continue
-            data = line[5:].strip()
-            if not data or data == "[DONE]":
-                continue
-            try:
-                events.append(json.loads(data))
-            except ValueError:
-                continue
-    for event in events:
-        # Some hosted gateways encode provider failures as an SSE data event
-        # while keeping the HTTP status at 200, followed by ``[DONE]``.
-        if isinstance(event.get("error"), dict):
-            error = event["error"]
-            return {"status": int(error.get("code", 500)), "body": json.dumps({"error": error})}
-    return {"status": 200, "body": json.dumps(_merge_stream(events))}
+    # HTTPX's read timeout only limits the pause between chunks. Enforce a
+    # separate wall-clock deadline so a provider that streams indefinitely
+    # cannot hold the Vercel Workflow step open until the platform retries it.
+    async with asyncio.timeout(_request_deadline_seconds()):
+        if not stream:
+            response = await db.client().post(f"{url}/chat/completions", headers=headers,
+                                              json=payload, timeout=timeout)
+            return {"status": response.status_code, "body": response.text}
+        events = []
+        async with db.client().stream("POST", f"{url}/chat/completions", headers=headers,
+                                      json=payload, timeout=timeout) as response:
+            if not response.is_success:
+                return {"status": response.status_code,
+                        "body": (await response.aread()).decode("utf-8", errors="replace")}
+            async for line in response.aiter_lines():
+                if not line.startswith("data:"):
+                    continue
+                data = line[5:].strip()
+                if not data or data == "[DONE]":
+                    continue
+                try:
+                    events.append(json.loads(data))
+                except ValueError:
+                    continue
+        for event in events:
+            # Some hosted gateways encode provider failures as an SSE data event
+            # while keeping the HTTP status at 200, followed by ``[DONE]``.
+            if isinstance(event.get("error"), dict):
+                error = event["error"]
+                return {"status": int(error.get("code", 500)), "body": json.dumps({"error": error})}
+        return {"status": 200, "body": json.dumps(_merge_stream(events))}
 
 
 def _merge_stream(events: list[dict]) -> dict:
