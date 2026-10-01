@@ -1,0 +1,17 @@
+Design Task: Scissor-Type Window Regulator Mechanism
+
+Build the mechanism that raises/lowers a car door window glass. The glass carrier must travel a controlled, interference-free vertical path across its full stroke, driven by a motor pinion meshing with a sector gear.
+
+Components: base/mounting plate fixed inside the door; sector gear pivoting on base, driven by motor pinion; main scissor arm pivoting on base with geared end meshing with sector gear; cross arm pivoting at the X-joint; glass carrier sliding on two guide rails; two rails fixed to base; one pivot pin per joint; motor pinion.
+
+Requirements:
+- Sector gear/pinion center distance equals the exact sum of pitch radii. State the radii and distance.
+- X-joint pin concentric across both arms within 0.1 mm.
+- Carrier captured on BOTH rails across 350 mm vertical travel. No free-floating carrier.
+- Export at least five distinct assembled STEP positions from fully down to fully up. Check interference at every exported position and across the intervening stroke. Sampling alone must not be called proof of continuous clearance.
+- Report carrier height at equal sector-angle increments and speed variation. Flag nonuniform travel/binding/jerking.
+- Base and arms stamped sheet steel, thickness 1.5-2 mm, no undercuts, inside bend radius at least material thickness.
+- Explicit mate graph for every pivot, and all sliding/gear relationships.
+- Overall swept envelope 400 x 300 x 60 mm. State axis orientation; first check whether any orientation accommodates 350 mm travel and the complete linkage. Do not silently relax envelope, stroke, gear topology, or replace meshing teeth with decorative disks.
+
+Deliver separate positions, actual measured interference evidence, travel-linearity report, mate graph and explicit stamped-construction DFM flags. If constraints are infeasible, explain the exact conflict and produce only clearly labelled review geometry; never claim a compliant mechanism. Choose reasonable visible assumptions for unspecified design details; no strength certification or invented load case is requested.

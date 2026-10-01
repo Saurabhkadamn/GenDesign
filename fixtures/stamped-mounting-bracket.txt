@@ -1,0 +1,15 @@
+Design Task: Stamped Mounting Bracket (Progressive Die)
+
+Build an L-bracket for mounting a chassis component, made by sheet-metal stamping, not CNC.
+
+Material: 1.5 mm mild steel sheet. One main bracket plus two spot-welded reinforcement gussets. Four M8 mounting holes on an explicitly stated pattern; state chosen clearance diameter.
+
+DFM requirements:
+- Inside bend radius >= 1.5 mm (1x thickness). Flag tighter bends.
+- Every flange after a bend >= 4.5 mm (3x thickness). Flag shorter flanges.
+- Distance from every hole edge to bend line >= 3.75 mm (2.5x thickness). State bend-line datum and evaluate conservatively to bend tangent too.
+- No internal corner sharper than 90 degrees without relief notch.
+- Every spot weld reachable by a straight electrode approach; show weld coordinates and approach directions for both opposing electrodes, check physical gun/electrode accessibility with explicitly stated assumed tool dimensions, and flag inaccessible welds.
+- Proper K-factor/bend deduction for flat blank dimensions. State K, bend angle, inside radius, thickness, bend allowance, outside setback, bend deduction, and developed length. Report naive folded-leg sum alongside the corrected value.
+
+Deliver formed bracket assembly with two separate gussets; separate flat-pattern blank STEP for the main bracket (and gusset blanks), bend math and an explicit DFM flag list. State plainly if that list is empty. Choose practical visible dimensions and standard manufacturing assumptions where unspecified. Distinguish geometric DFM checks from die tryout, springback calibration and weld-process qualification. Build and export the actual geometry, not just an explanatory answer.

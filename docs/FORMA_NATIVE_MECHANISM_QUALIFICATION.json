@@ -1,0 +1,31 @@
+{
+  "fixture": "OndselSolver testapp/fourbar.asmt",
+  "passed": true,
+  "movingParts": 3,
+  "revoluteJoints": 4,
+  "frameCount": 102,
+  "timeRangeSeconds": [
+    0.0,
+    1.0000000000000007
+  ],
+  "samplesPastRequestedEnd": 0,
+  "inputStateFrames": 1,
+  "solvedFrames": 101,
+  "maxClosedLoopPositionResidualMm": 6.349155080731421e-09,
+  "maxAxisCrossProductNorm": 8.824332152945491e-17,
+  "maxDriverAngleErrorRad": 3.9968028886505635e-15,
+  "checks": 408,
+  "limitations": [
+    "One planar closed-loop mechanism, not a general mechanism qualification.",
+    "Upstream includes an input-state frame before solved frames; adapter must identify it explicitly.",
+    "Positions measured from returned poses and local markers independently of solver success flags."
+  ],
+  "sourceCommit": "4be80eef02a3486cda0d78f3ccbb308d207a9639",
+  "rawEvidenceSha256": "8dff1917654665ffc77de1edade859fd57e75e3d6b035d5a4d5696e5695e855d",
+  "build": {
+    "compiler": "GCC 16.2.0, MinGW 14 UCRT",
+    "optimization": "-O2",
+    "assertionsEnabled": true,
+    "platform": "Windows x86_64"
+  }
+}

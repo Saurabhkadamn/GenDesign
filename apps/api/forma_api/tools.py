@@ -10,7 +10,11 @@ class Empty(Contract):
 
 
 class ReadFile(Contract):
-    path: str
+    # Empty paths were previously accepted by the model contract and only
+    # rejected later by ``safe_path``. That let providers spend a full model
+    # turn repeating ``read_file({path: ""})`` before the bounded retry guard
+    # could stop the run.
+    path: str = Field(min_length=1, max_length=180, pattern=r"^(?:parts|assemblies|calculations)/(?:[a-zA-Z0-9_-]+/)*[a-zA-Z0-9_-]+\.py$")
 
 
 class Search(Contract):

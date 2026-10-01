@@ -13,7 +13,7 @@ from langsmith import traceable
 
 from .. import db
 from ..config import settings
-from ..security import decrypt_secret
+from ..security import decrypt_secret_set
 
 _catalog: tuple[float, list] = (0, [])
 NEMOTRON = "nvidia/nemotron-3-ultra-550b-a55b:free"
@@ -22,7 +22,7 @@ DEFAULT_MAX_COMPLETION_TOKENS = 24576
 # hosted Workflow invocation hard limit (currently 300 seconds).  The model
 # may still use its advertised completion-token maximum; this is only the
 # transport deadline for a single provider request.
-DEFAULT_REQUEST_TIMEOUT_SECONDS = 180
+DEFAULT_REQUEST_TIMEOUT_SECONDS = 240
 # A few OpenRouter endpoints advertise tool support but reject the strict
 # ``required`` selector at routing time.  Let them choose a tool call while
 # still sending the full tool schema; connection tests and the graph validate
@@ -41,7 +41,16 @@ def _recover_text_tool_call(content, tools):
     try:
         value = json.loads(content)
     except (TypeError, ValueError, json.JSONDecodeError):
-        return None
+        # Some compatible endpoints return a complete inner tool list but
+        # omit only the final bracket of the outer list: [[{...}]. Repair
+        # that one framing character, then keep the normal allowlist and
+        # Pydantic tool validation before any action can run.
+        if not re.match(r"^\s*\[\s*\[", content) or not content.rstrip().endswith("]"):
+            return None
+        try:
+            value = json.loads(content + "]")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return None
     if isinstance(value, list) and len(value) == 1 and isinstance(value[0], list):
         value = value[0]
     if not isinstance(value, list) or not value or not isinstance(value[0], dict):
@@ -58,9 +67,10 @@ def _recover_text_tool_call(content, tools):
 
 
 class ModelFailure(Exception):
-    def __init__(self, category: str, message: str, diagnostic: str = ""):
+    def __init__(self, category: str, message: str, diagnostic: str = "", status_code: int | None = None):
         self.category = category
         self.diagnostic = diagnostic
+        self.status_code = status_code
         super().__init__(message)
 
 
@@ -78,8 +88,9 @@ async def configuration(role: str, testing=False):
     row = select_config(await db.rest("model_configs", params={"role": f"in.({role},coordinator)"}), role, testing)
     if not row:
         raise ModelFailure("configuration", f"No usable {role} connection. Test and activate the default or this specialist in Settings, then Continue.")
+    keys = decrypt_secret_set(row["encrypted_key"], row["role"])
     return {"provider": row.get("provider", "openrouter"), "base_url": row.get("base_url"), **row,
-            "api_key": decrypt_secret(row["encrypted_key"], row["role"])}
+            "api_key": keys[0], "api_key_fallbacks": keys[1:]}
 
 
 async def catalog(refresh=False):
@@ -277,6 +288,14 @@ async def turn(config: dict, messages: list[dict], tools: list[dict], *, max_tok
                                      allow_fallback=allow_fallback)
     return await _turn_openrouter(config, messages, tools, max_tokens=max_tokens,
                                   web_search=web_search, max_searches=max_searches)
+
+
+def retry_config(config: dict) -> dict:
+    """Choose a provider-specific model for an explicit retry."""
+    if config.get("provider", "openrouter") == "openai_compatible":
+        from .openai_compatible import retry_config as compatible_retry_config
+        return compatible_retry_config(config)
+    return config
 
 
 async def test_connection(role: str):

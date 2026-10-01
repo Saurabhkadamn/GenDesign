@@ -11,6 +11,7 @@ pytest-cache-files-*/
 .workflow-data/
 coverage/
 test-results/
+tmp/
 playwright-report/
 apps/web/src/app/.well-known/
 .tools/

@@ -1,5 +1,6 @@
 """Vercel sandbox execution contracts. Generated code never runs in the API."""
 import asyncio
+import ast
 import hashlib
 import io
 import json
@@ -30,6 +31,20 @@ def normalize_python_source(source: str) -> str:
     """
     if "\n" not in source and source.count("\\n") >= 2:
         return source.replace("\\r\\n", "\n").replace("\\n", "\n").replace("\\t", "\t")
+    # Some compatible model endpoints serialize code line breaks as HTML
+    # breaks inside a valid tool argument. Only adopt this transformation if
+    # the original is invalid Python and the transformed module parses.
+    if "\n" not in source and len(re.findall(r"<br\s*/?>", source, re.IGNORECASE)) >= 2:
+        try:
+            ast.parse(source)
+        except SyntaxError:
+            candidate = re.sub(r"<br\s*/?>", "\n", source, flags=re.IGNORECASE)
+            try:
+                ast.parse(candidate)
+            except SyntaxError:
+                pass
+            else:
+                return candidate
     return source
 
 
@@ -65,7 +80,7 @@ def validate_files(files):
 
 
 def filename(value):
-    if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*\.(step|glb|json)", value):
+    if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*\.(step|glb|json|csv)", value):
         raise ExecutionFailure("Invalid artifact filename")
     return value
 
@@ -196,6 +211,14 @@ def build_error(receipt, stage):
     category, guidance = "geometry", "Inspect the failing operation and repair the candidate before rebuilding."
     if receipt.get("timedOut"):
         category, guidance = "timeout", "Simplify the operation. The environment was discarded."
+    elif "Assembly placements in manifest do not match the root STEP geometry" in diagnostic:
+        category, guidance = "assembly_root_mismatch", (
+            "The root STEP does not contain the parts at the manifest instance frames. "
+            "For multiple physical components, create an assemblies/ Python module whose build() "
+            "returns a CadQuery Assembly, add each part with its manifest instance ID and matching "
+            "location, declare the part dependencies, and make that assembly the rootComponentId. "
+            "Changing instance metadata alone cannot repair a single-part root STEP."
+        )
     elif "Cannot find a solid" in diagnostic:
         category, guidance = "fillet_without_solid", "Create the solid first; apply the corner fillet to vertical solid edges before drilling holes."
     elif "not callable" in diagnostic or "Expected" in diagnostic and "found" in diagnostic:

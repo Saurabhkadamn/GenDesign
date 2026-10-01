@@ -160,7 +160,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "step" | "glb" | "plot";
+            kind: "step" | "glb" | "plot" | "bom" | "assembly";
             /** Bytes */
             bytes: number;
             /** Storage Path */
@@ -258,6 +258,14 @@ export interface components {
             color: string;
             /** @default null */
             material: components["schemas"]["MaterialSpec"] | null;
+            /** @default null */
+            partMetadata: components["schemas"]["PartMetadata"] | null;
+            /**
+             * Bombehavior
+             * @default normal
+             * @enum {string}
+             */
+            bomBehavior: "normal" | "purchased" | "phantom" | "reference";
         };
         /** ConfigurationFrame */
         ConfigurationFrame: {
@@ -330,6 +338,11 @@ export interface components {
             /** Name */
             name: string;
             frame: components["schemas"]["Frame"];
+            /**
+             * Bomexclude
+             * @default false
+             */
+            bomExclude: boolean;
         };
         /**
          * JointSpec
@@ -367,6 +380,16 @@ export interface components {
              * @default
              */
             description: string;
+            /**
+             * Occurrencea
+             * @default null
+             */
+            occurrenceA: string | null;
+            /**
+             * Occurrenceb
+             * @default null
+             */
+            occurrenceB: string | null;
         };
         /** Manifest */
         Manifest: {
@@ -399,6 +422,8 @@ export interface components {
             configurations: components["schemas"]["ConfigurationSpec"][];
             /** Featureoperations */
             featureOperations: components["schemas"]["FeatureOperation"][];
+            /** @default null */
+            nativeAssembly: components["schemas"]["NativeAssemblySpec"] | null;
         };
         /**
          * MaterialSpec
@@ -420,14 +445,23 @@ export interface components {
              * @enum {string}
              */
             role: "coordinator" | "cad" | "engineering";
-            /** Provider */
-            provider?: string;
-            /** Base Url */
-            base_url?: string | null;
+            /**
+             * Provider
+             * @default openrouter
+             */
+            provider: string;
+            /**
+             * Base Url
+             * @default null
+             */
+            base_url: string | null;
             /** Model Id */
             model_id: string;
-            /** Max Output Tokens */
-            max_output_tokens?: number | null;
+            /**
+             * Max Output Tokens
+             * @default null
+             */
+            max_output_tokens: number | null;
             /** Key Hint */
             key_hint: string;
             /** Active */
@@ -454,6 +488,69 @@ export interface components {
             syntheticNemotronTesting: boolean;
             /** Models */
             models: components["schemas"]["ModelOption"][];
+        };
+        /**
+         * MotionDriver
+         * @description Numeric linear driver: radians for revolute, millimetres for slider.
+         */
+        MotionDriver: {
+            /** Jointid */
+            jointId: string;
+            /** Start */
+            start: number;
+            /** End */
+            end: number;
+            /**
+             * Durationseconds
+             * @default 1
+             */
+            durationSeconds: number;
+            /**
+             * Steps
+             * @default 60
+             */
+            steps: number;
+        };
+        /** NativeAssemblySpec */
+        NativeAssemblySpec: {
+            /**
+             * Solver
+             * @default ondsel
+             * @constant
+             */
+            solver: "ondsel";
+            /** Groundedinstances */
+            groundedInstances: string[];
+            /**
+             * Alloweddof
+             * @default 0
+             */
+            allowedDof: number;
+            /** @default null */
+            motion: components["schemas"]["MotionDriver"] | null;
+        };
+        /** PartMetadata */
+        PartMetadata: {
+            /**
+             * Partnumber
+             * @default
+             */
+            partNumber: string;
+            /**
+             * Revision
+             * @default
+             */
+            revision: string;
+            /**
+             * Variant
+             * @default
+             */
+            variant: string;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
         };
         /** Profile */
         Profile: {
@@ -491,7 +588,7 @@ export interface components {
         /** Quantity */
         Quantity: {
             /** Value */
-            value: number;
+            value: number | boolean | string;
             /** Unit */
             unit: string;
         };
@@ -640,6 +737,8 @@ export interface components {
              * @default
              */
             description: string;
+            /** @default null */
+            frame: components["schemas"]["Frame"] | null;
         };
         /** SessionView */
         SessionView: {
@@ -676,6 +775,18 @@ export interface components {
             };
             /** Review */
             review?: {
+                [key: string]: unknown;
+            };
+            /** Bom */
+            bom?: {
+                [key: string]: unknown;
+            };
+            /** Nativeassembly */
+            nativeAssembly?: {
+                [key: string]: unknown;
+            };
+            /** Assemblyplacement */
+            assemblyPlacement?: {
                 [key: string]: unknown;
             };
         };

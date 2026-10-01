@@ -1,0 +1,140 @@
+{
+  "schemaVersion": 1,
+  "qualifiedOn": "2026-10-01",
+  "runtimeVersion": "forma-2d813e6a363b4808",
+  "sourceHash": "b6ea1833b7ac2751e7a509e0fd7f97888a73272afe7d3deb638203516eaa771a",
+  "linuxRuntimeTests": {
+    "passed": 45,
+    "skipped": 0
+  },
+  "localApiTests": {
+    "passed": 171
+  },
+  "databaseTests": {
+    "passed": 10
+  },
+  "cases": {
+    "sixty-parts-2mm": {
+      "status": "passed",
+      "identity": {
+        "candidate": "3624bb1a42183f1068837daef5cdf83bdf2b4a62ef18e065b9bd4639cf8006c6",
+        "requirements": "0b74658e06b1d5187d80f518a002e2083340a8806e5016ea25d925f85a6c4298",
+        "runtime": "forma-2d813e6a363b4808"
+      },
+      "solidChecks": 60,
+      "bomQuantity": 60,
+      "downloadedStepVolumeErrorMm3": 3.728928277269006e-11,
+      "buildReceipt": {
+        "exitCode": 0,
+        "timedOut": false,
+        "clean": true,
+        "elapsedMs": 9511.274239999999
+      },
+      "validationReceipt": {
+        "exitCode": 0,
+        "timedOut": false,
+        "clean": true,
+        "elapsedMs": 12707.328706999995
+      },
+      "nativeAssembly": {
+        "engine": "OndselSolver",
+        "commit": "4be80eef02a3486cda0d78f3ccbb308d207a9639",
+        "degreesOfFreedom": 0,
+        "maxPositionResidualMm": 0.0,
+        "maxAngularResidualRad": 0.0,
+        "solvedFrames": 1,
+        "checkedJointFrames": 59
+      },
+      "artifactSha256": {
+        "plate.step": "1f9c36fbb5ef1b0bdb9f6a6468e5ac33ed9e165de0feb9e4c0517d4edbac1575",
+        "plate.glb": "37c50b951716ba5a372a5f1fef822d138c3e5930abc3e8195a24cb57875638d8",
+        "assembly.step": "fd03e74ce99f2478cfcf63dfb4335755efe345a473dd1b1f64aae72f0a112881",
+        "assembly.glb": "7e00951a78eb2ea2ae79a6aba649b87bf6bf52637687553f8c4c0137d03ce13b",
+        "assembly.json": "de3f6013f5a87ff46d7a35c2166af52371dc3f44e7f8061f52cc2bac43500b29",
+        "preview.glb": "ad1b07f8d5f94e15e1ac39c3299f22ff1ec80abdabd8b989ffbbe27a7869eab0",
+        "bom.json": "49ba4a7d200a75007e42b1ff1c622ff954b1ea9b2e5ef8e9bee54583e6d04d77",
+        "bom-flat.csv": "a41505fc97ef96200f7ebdd10559b34e1c44ae6b58055f05191abcac53b67e7e",
+        "bom-structured.csv": "01ebbf2c6f8c977739ba4941823e313ae0fa838d0947c0b4363a7b654d518682"
+      }
+    },
+    "sixty-parts-4mm": {
+      "status": "passed",
+      "identity": {
+        "candidate": "413ca02795af6a2317168c0661962a8d691812be9e33ecacc8c0b4be1bf96108",
+        "requirements": "0b74658e06b1d5187d80f518a002e2083340a8806e5016ea25d925f85a6c4298",
+        "runtime": "forma-2d813e6a363b4808"
+      },
+      "solidChecks": 60,
+      "bomQuantity": 60,
+      "downloadedStepVolumeErrorMm3": 7.457856554538012e-11,
+      "buildReceipt": {
+        "exitCode": 0,
+        "timedOut": false,
+        "clean": true,
+        "elapsedMs": 9053.098126999997
+      },
+      "validationReceipt": {
+        "exitCode": 0,
+        "timedOut": false,
+        "clean": true,
+        "elapsedMs": 12557.847107999996
+      },
+      "nativeAssembly": {
+        "engine": "OndselSolver",
+        "commit": "4be80eef02a3486cda0d78f3ccbb308d207a9639",
+        "degreesOfFreedom": 0,
+        "maxPositionResidualMm": 0.0,
+        "maxAngularResidualRad": 0.0,
+        "solvedFrames": 1,
+        "checkedJointFrames": 59
+      },
+      "artifactSha256": {
+        "plate.step": "f6481c51bb77d2c86e5dd2c58a40ca5e30e655def8c6ebc4cfe480a4818ea6a4",
+        "plate.glb": "ff31a52ef6504a2f9c848cb90c55216679848f3007b33d53db15f11bed8d4f3b",
+        "assembly.step": "41fe1cabd2646354185faa58ef56c78022088bcf4c09f8cfc68f13b86c8f5cb4",
+        "assembly.glb": "6b45edbd37b305536aac009b6b7a78c9a217d91828934dcaffbed1b4fbcdb4fc",
+        "assembly.json": "7502eaa78f09439c15062bc90c2fa9ddf4a50f45932077cae20faa404680f354",
+        "preview.glb": "c4fcb2f1475bb5922567904cf1a9ed186abac136164d1f2dad8307e7f3bdea67",
+        "bom.json": "f7080a58611bd0275f809479e1d6037785a75cdd8bdae46ef7e75b86fa0237bf",
+        "bom-flat.csv": "a41505fc97ef96200f7ebdd10559b34e1c44ae6b58055f05191abcac53b67e7e",
+        "bom-structured.csv": "01ebbf2c6f8c977739ba4941823e313ae0fa838d0947c0b4363a7b654d518682"
+      }
+    },
+    "contradictory-grounded": {
+      "status": "passed",
+      "identity": {
+        "candidate": "6ca9d07263c142d53b0ccf34f143f0503e2859e69b4bb3037629755d516757db",
+        "requirements": "0b74658e06b1d5187d80f518a002e2083340a8806e5016ea25d925f85a6c4298",
+        "runtime": "forma-2d813e6a363b4808"
+      },
+      "expectedRejection": true,
+      "buildReceipt": {
+        "exitCode": 1,
+        "timedOut": false,
+        "clean": true,
+        "elapsedMs": 4232.445063
+      }
+    }
+  },
+  "bomUi": {
+    "passed": true,
+    "api": "mocked UI fixture",
+    "flatQuantity": 60,
+    "structuredQuantity": 60,
+    "artifactLinks": 6,
+    "consoleErrors": 0
+  },
+  "releaseGates": {
+    "applicationPublication": "pending",
+    "authenticatedDownloads": "pending",
+    "preview": "pending",
+    "production": "pending",
+    "sourcePush": "pending"
+  },
+  "limitations": [
+    "Representative repeated-part fixture; no large industrial assembly performance qualification.",
+    "Sampled mechanisms do not establish collision-free motion, strength or contact dynamics.",
+    "Draft BOM with occurrence counts in ea; no procurement release or material cut list.",
+    "CAD runtime qualification and UI mocks do not prove application workflow publication."
+  ]
+}
