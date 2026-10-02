@@ -125,16 +125,53 @@
     "consoleErrors": 0
   },
   "releaseGates": {
-    "applicationPublication": "pending",
-    "authenticatedDownloads": "pending",
-    "preview": "pending",
+    "applicationPublication": "passed",
+    "authenticatedDownloads": "passed",
+    "preview": "passed",
     "production": "pending",
-    "sourcePush": "pending"
+    "sourcePush": "passed"
   },
   "limitations": [
     "Representative repeated-part fixture; no large industrial assembly performance qualification.",
     "Sampled mechanisms do not establish collision-free motion, strength or contact dynamics.",
     "Draft BOM with occurrence counts in ea; no procurement release or material cut list.",
     "CAD runtime qualification and UI mocks do not prove application workflow publication."
-  ]
+  ],
+  "applicationPreview": {
+    "deploymentId": "dpl_DvP6Y6LU3h7U6MYRwkcFkc1Vbijg",
+    "sourceCommit": "f859e923abd42136ee2f17ae0235dbb2e93b4d2d",
+    "authentication": "passed",
+    "nativePipeline": "passed",
+    "wrongWorkerPublicationRejected": true,
+    "anonymousAccessRejected": true,
+    "otherOwnerAccessRejected": true,
+    "modelDrivenThicknessEdit": "passed",
+    "modelCalls": 14,
+    "chatIndependentGeometry": {
+      "passed": true,
+      "solidChecks": 60,
+      "plateDimensionsMm": [
+        8,
+        8,
+        3
+      ],
+      "holeDiameterMm": 2,
+      "downloadedStepVolumeErrorMm3": 3.637978807091713e-12,
+      "occurrenceCentersMatch": true
+    },
+    "artifactSha256": {
+      "plate.step": "a84060a4ee346859a4f9a2d8d2730e3abc378ccfc139f5d7a2fa88beaeab4336",
+      "plate.glb": "836cfd595ec1f4bafb083dab5acdb4e98c050a85de99e96c81662fa9857acdc1",
+      "assembly.step": "d1f582421ff3b9b61a69ccea0213c2579c83e27f843f3c57b92b6148ca9f25b8",
+      "assembly.glb": "0281e80108509dacbda4c8e8eb81d1933fbaf63b3248a86bfb0bd25fc70020d6",
+      "assembly.json": "bd7c9976c6d7fb24f942d55235e2ce6b154767978d37dad3f267e36ed0428644",
+      "preview.glb": "36a008c7a542559435fbd2364b744a8ce32b11fd0758f14d56a76ffe12484667",
+      "bom.json": "80f3ed5609245f8b3928f893f578adbd2cda31854e066d92aa7e60f7e1c3399c",
+      "bom-flat.csv": "a41505fc97ef96200f7ebdd10559b34e1c44ae6b58055f05191abcac53b67e7e",
+      "bom-structured.csv": "01ebbf2c6f8c977739ba4941823e313ae0fa838d0947c0b4363a7b654d518682"
+    },
+    "constraintFramesAndJointEndpointsPreserved": true,
+    "aiReview": "Provider HTTP 500 was reported visibly; draft remained available. Independent geometry and constraint checks passed.",
+    "hostedBrowser": "3D assembly and BOM inspected; no console errors."
+  }
 }

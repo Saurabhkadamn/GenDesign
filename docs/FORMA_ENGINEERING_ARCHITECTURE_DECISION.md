@@ -1,10 +1,12 @@
 # Forma engineering architecture: local evidence and proposed plan
 
-Reviewed on 2026-10-01. This is a recommendation based on the current source and local experiments, not an implemented architecture or a claim of CATIA/SOLIDWORKS equivalence.
+Initial review on 2026-10-01. The local experiments and initial recommendation below preserve the baseline evidence, including its failures.
+
+Implementation update: a pinned native Ondsel adapter, independent DOF/residual checks, occurrence-level STEP gate and deterministic BOM are now implemented and qualified locally and on hosted Linux. The actual preview application passed private publication/downloads and a model-driven 60-part thickness edit. See [current decision](FORMA_NATIVE_ASSEMBLY_BOM_DECISION.md), [acceptance evidence](FORMA_HOSTED_ASSEMBLY_ACCEPTANCE.json) and [release progress](FORMA_ASSEMBLY_BOM_RELEASE_PROGRESS.md) for the production release boundary. This remains a limited adapter, not CATIA/SOLIDWORKS equivalence.
 
 ## Decision
 
-**Keep CadQuery/OpenCascade and Python. Strengthen the engineering document, assembly integration and independent validation before expanding the feature list.** Evaluate OndselSolver behind a separate adapter for mechanisms; it is not yet a selected or integrated production dependency.
+**Keep CadQuery/OpenCascade and Python. Strengthen the engineering document, assembly integration and independent validation before expanding the feature list.** The initial recommendation was to evaluate OndselSolver behind a separate adapter; the implementation update above records the qualified selection.
 
 The local tests demonstrate useful native geometry and static assembly capabilities. They also reproduce cases where solver success and valid STEP geometry do not establish a correct engineering assembly. Changing the orchestration language would not fix those cases.
 

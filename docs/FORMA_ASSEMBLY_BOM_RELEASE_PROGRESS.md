@@ -2,7 +2,7 @@
 
 Goal: qualify native assembly technology, integrate assembly and deterministic BOM end to end, strengthen engineering reliability, verify local and hosted workflows, push reviewed source and publish the verified release. The goal remains active until every release gate below passes.
 
-## Authoritative checkpoint — 2026-10-01 17:45 UTC
+## Authoritative checkpoint — 2026-10-02 06:30 UTC
 
 - Worktree: `C:\Users\SAURABH\.codex\worktrees\native-assembly-bom\v1`; branch `codex/native-assembly-bom`, base `3cdebe0`. Preserve the original `D:\v1` checkout, its authorized Forma patch and unrelated projects. Conflicts were reconciled; no unmerged entries remain.
 - Pinned native engine: OndselSolver `4be80eef02a3486cda0d78f3ccbb308d207a9639`, via typed C++ process adapter. CadQuery/OCP performs geometry; XDE preserves placed occurrence identities; Forma derives BOMs from accepted physical inventory. See `FORMA_NATIVE_ASSEMBLY_BOM_DECISION.md` and `FORMA_ENGINEERING_ARCHITECTURE_DECISION.md`.
@@ -16,15 +16,19 @@ Goal: qualify native assembly technology, integrate assembly and deterministic B
 - Real hosted supervisor acceptance passed **60 occurrences at 2 mm and 4 mm thickness**, fresh independent validation, all placement checks, draft BOM quantity 60 and all artifact reads. A contradictory grounded fixture failed before acceptance. Downloaded STEP files also passed a local analytic volume oracle. Evidence: `FORMA_HOSTED_ASSEMBLY_ACCEPTANCE.json`; private originals in `D:\v1\test-results\native-supervisor-acceptance`.
 - BOM browser fixture passed both layouts, quantity 60, six artifact links and no console errors; screenshot inspected. API ownership was mocked for this UI check. It does not establish authenticated application downloads.
 - Only confirmed local server: `http://127.0.0.1:3107`, production Next server, session `86119` (inspect before reusing). Browser session `forma-assembly-release`. Completed jobs must not be polled/restarted as live jobs.
-- No queued/running hosted application runs at the last read-only check. No source push, preview or production cutover yet.
+- Source committed and pushed at `f859e92`; draft PR [#19](https://github.com/Saurabhkadamn/GenDesign/pull/19). Remote main remains `3cdebe0` after fetching on 2 October. Original production is unchanged.
+- Preview `dpl_DvP6Y6LU3h7U6MYRwkcFkc1Vbijg` is ready and uses the qualified runtime. URL: `https://forma-5pewwi15t-negens-projects.vercel.app`. Preview project runtime settings were updated together before source push; do not duplicate its completed deployment.
+- Actual application pipeline passed at 2 mm and 4 mm: native build, fresh STEP validation, private uploads, wrong-worker lease rejection, revision publication and all nine authenticated artifact downloads. Anonymous access returned 401; a separate existing account received 404 for the project and its artifact.
+- Deployed chat/workflow edit 4→3 mm succeeded in 14 model calls, preserving the 60 occurrence frames, 59 joints and grounding. Regenerated artifacts were downloaded. Independent local reopening checked 8×8×3 mm plate dimensions, central Ø2 hole, all 60 analytic centers and assembly volume (error `3.64e-12 mm³`). The AI review returned provider HTTP 500 and was visibly marked incomplete; it is not counted as a successful AI review. Deterministic and independent geometry/constraint checks passed.
+- The real hosted UI rendered the 60-part preview and draft BOM; screenshots inspected, no browser errors. Private evidence and resumable IDs: `D:\v1\test-results\native-application-preview`. Verification harness: `scripts/verify_application_release.py`.
+- No queued/running hosted application runs at the last read-only check. The existing local server still listens on port 3107. All qualification and preview acceptance jobs are complete.
 
 ## Remaining release gates
 
-1. Finish source/diff/secret review, stage only Forma files, commit and push this branch.
-2. Deploy the existing Vercel project `forma-cad` preview with the qualified snapshot/runtime pair. Preserve existing Supabase project `bisbakbhybkhcjztqnag`, model connections and credentials.
-3. Exercise authenticated application publication, candidate identity and lease fences, private BOM/assembly/STEP downloads, ownership rejection, then actual model workflow edit/pause/resume. Runtime supervisor and mocked UI evidence are separate gates.
-4. Deploy using production environment without stable alias cutover; verify the complete workflow and artifacts, then promote and verify the stable application. Save old/new runtime settings and deployment IDs privately for rollback.
-5. Audit all requirements, mark the goal complete only after the full end state passes, and stop the follow-up automation. If the 2026-10-02 21:57 UTC deadline expires, preserve incomplete work and evidence and end the scheduled follow-up.
+1. Commit/push the preview evidence and reusable application-verification harness. Existing application/runtime implementation is already pushed and qualified.
+2. Deploy the existing Vercel project `forma-cad` using production environment and the qualified snapshot/runtime pair, without stable alias cutover. Preserve Supabase project `bisbakbhybkhcjztqnag`, model connections and credentials.
+3. Verify production authentication, native publication/downloads, ownership and actual model workflow; exercise checkpoint pause/resume if a bounded stop occurs. Promote only after the full path passes. Save old/new runtime settings and deployment IDs privately for rollback.
+4. Integrate reviewed source into main after verification, preserving unrelated changes; verify the resulting deployment. Audit all requirements, mark the goal complete only after the full end state passes, and stop the follow-up automation. If the 2026-10-02 21:57 UTC deadline expires, preserve incomplete work and evidence and end the scheduled follow-up.
 
 ## Boundaries
 

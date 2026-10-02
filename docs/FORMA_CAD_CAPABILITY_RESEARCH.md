@@ -2,6 +2,8 @@
 
 Research date: 30 September 2026. Scope: mechanical design, production documentation, organizational adoption, and reusable backend technology. This is a research and planning document; no product implementation or CAD dependency changes were made.
 
+Implementation update, 1 October 2026: the comparison below describes the original baseline. Forma has since integrated a qualified native adapter for five joint types, bounded numeric motion, independent grounding/residual/DOF checks, per-occurrence STEP validation and deterministic draft BOM exports/UI. Hosted 60-part builds, an edit, private application publication/downloads and the chat workflow passed. See [current acceptance evidence](FORMA_HOSTED_ASSEMBLY_ACCEPTANCE.json) and [release progress](FORMA_ASSEMBLY_BOM_RELEASE_PROGRESS.md); production promotion remains a separate gate. Drawings, advanced surfacing workflows, simulation, industrial scale and enterprise release/PLM gaps remain.
+
 ## 1. Executive assessment
 
 Forma has a useful foundation for an AI-assisted mechanical design platform: Python-authored parametric geometry, CadQuery/OCCT boundary representation (B-rep), isolated execution, independent STEP inspection, component definitions and instances, and saved source revisions. It is currently an early CAD generation workspace, rather than a complete professional CAD authoring and release system.
