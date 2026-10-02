@@ -659,7 +659,7 @@ async def coordinator_session(state: AgentState) -> dict:
         raise Pause("The coordinator reached its tool-action limit. Continue with a focused follow-up.")
     snapshot = await run_service.load_candidate(state["run_id"])
     context = {
-        "latestRequest": state["original_request"],
+        "latestRequest": state.get("clarified_request") or state["original_request"],
         "project": state.get("project_context", {}),
         "selectedIds": state.get("selected_ids", []),
         "currentWorkspace": {"manifest": snapshot["manifest"],
@@ -715,7 +715,7 @@ async def coordinator_session(state: AgentState) -> dict:
         return {**update, "phase": "coordinator_question", "question": value["question"],
             "coordinator_pending_call": call}
     elif name == "delegate":
-        requirements = merge_requirements(state["original_request"], value.get("requirements") or [])
+        requirements = merge_requirements(state.get("clarified_request") or state["original_request"], value.get("requirements") or [])
         if value["role"] == "engineering":
             await repo.event(state["run_id"], "Coordinator requested engineering analysis.", stage="engineering")
             return {**update, "phase": "engineering_analysis", "engineering_request": value["task"],
@@ -725,7 +725,7 @@ async def coordinator_session(state: AgentState) -> dict:
         history_request = {
             "originalBrief": next((m["content"] for m in state.get("project_context", {}).get("previousMessages", [])
                 if m.get("role") == "user"), state["original_request"]),
-            "latestRequest": state["original_request"],
+            "latestRequest": state.get("clarified_request") or state["original_request"],
             "delegatedTask": task,
             "selectedIds": state.get("selected_ids", []),
             "priorDecisions": state.get("project_context", {}).get("previousMessages", [])[-8:],
@@ -762,7 +762,7 @@ async def coordinator_question(state: AgentState) -> dict:
     call = state.get("coordinator_pending_call") or {"id": "user-answer"}
     history = bounded_history([*state.get("coordinator_history", []), tool_message(call, {
         "answered": True, "message": message,
-    })])
+    }), {"role": "user", "content": message}])
     return {"phase": "coordinator_session", "question": "", "coordinator_pending_call": {},
         "coordinator_history": history,
         "clarified_request": (state.get("clarified_request") or state["original_request"]) +
@@ -1731,7 +1731,7 @@ async def cad_question(state: AgentState) -> dict:
     call = state.get("pending_cad_call") or {"id": "user-answer"}
     history = bounded_history([*state.get("cad_history", []), tool_message(call, {
         "answered": True, "message": message,
-    })])
+    }), {"role": "user", "content": message}])
     clarified = state.get("clarified_request") or state["original_request"]
     return {"phase": "cad_session", "question": "", "pending_cad_call": {},
         "cad_history": history, "clarified_request": clarified + "\n\nUser clarification: " + message}

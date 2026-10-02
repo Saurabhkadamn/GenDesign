@@ -87,7 +87,7 @@ async def main(args):
             state["projectId"], state["ownerId"] = project["id"], project["owner_id"]
             save()
         if args.action == "pipeline":
-            for thickness in [2, 4]:
+            for thickness in [args.thickness_only] if args.thickness_only else [2, 4]:
                 key = f"sixty-parts-{thickness}mm"
                 if state["cases"].get(key, {}).get("status") == "passed": continue
                 if key in state["cases"]: raise ValueError("Incomplete pipeline case exists; inspect its run/receipts before retrying")
@@ -164,10 +164,29 @@ async def main(args):
             if state.get("chatRunId"): raise ValueError("Chat already submitted; inspect status instead of duplicating")
             key = state.setdefault("chatIdempotencyKey", str(uuid4()))
             save()
+            message = ("Change only the reusable plate thickness from 4 mm to 3 mm. Preserve all 60 occurrences, the 59 fixed joints, grounding, reference frames and part identity. Build and independently validate, then publish the draft with regenerated STEP, preview, native assembly evidence and BOM. This is a geometric qualification fixture, no strength or manufacturing approval is requested.")
+            if args.ask_thickness:
+                message = ("I want to change only the reusable plate thickness, but I have not provided the new thickness yet. Ask me for the new numeric thickness in millimeters and pause this conversation. Preserve the existing revision and do not edit, build or publish before I answer. Then preserve all 60 occurrences, 59 fixed joints, grounding, reference frames and part identity when implementing my answer. This is a geometry qualification fixture; no strength or manufacturing approval is requested.")
+                state["requestedPause"] = True
+                save()
             result = await call("POST", f"/api/projects/{state['projectId']}/chat", json={
                 "baseRevisionId": state["revisionId"], "selectedIds": [], "idempotencyKey": key,
-                "message": "Change only the reusable plate thickness from 4 mm to 3 mm. Preserve all 60 occurrences, the 59 fixed joints, grounding, reference frames and part identity. Build and independently validate, then publish the draft with regenerated STEP, preview, native assembly evidence and BOM. This is a geometric qualification fixture, no strength or manufacturing approval is requested."})
+                "message": message})
             state["chatRunId"] = result["runId"]
+        elif args.action == "resume":
+            if state.get("resumeAttempted") and not (args.repeat_answer and state.get("resumeSubmitted")):
+                raise ValueError("Resume was already attempted; inspect the saved run before repeating")
+            run = await call("GET", "/api/runs/" + state["chatRunId"])
+            if run["status"] != "waiting_input": raise ValueError("The qualification run is not waiting for its missing dimension")
+            workspace = await call("GET", "/api/projects/" + state["projectId"])
+            assert workspace["project"]["current_revision_id"] == state["revisionId"]
+            if state.get("resumeSubmitted"):
+                state.setdefault("previousResumes", []).append({"submitted": True, "status": run["status"], "observedAt": run["updated_at"]})
+            state["pauseObserved"], state["resumeAttempted"] = True, True
+            save()
+            await call("POST", f"/api/runs/{state['chatRunId']}/resume", json={"kind": "answer",
+                "message": "Use 3 mm as the new reusable plate thickness. Preserve all 60 occurrences, 59 fixed joints, grounding and reference frames. Build and independently validate and publish the draft. No strength or manufacturing approval is requested."})
+            state["resumeSubmitted"] = True
         elif args.action == "status":
             run = await call("GET", "/api/runs/" + state["chatRunId"])
             state["chatStatus"] = run["status"]
@@ -235,7 +254,10 @@ async def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("action", choices=["pipeline", "chat", "status"])
+    parser.add_argument("action", choices=["pipeline", "chat", "status", "resume"])
+    parser.add_argument("--ask-thickness", action="store_true")
+    parser.add_argument("--thickness-only", type=int, choices=[2, 4])
+    parser.add_argument("--repeat-answer", action="store_true")
     for name in ["env-file", "runtime", "cli-auth-file", "credentials", "report-dir"]:
         parser.add_argument("--" + name, type=Path, required=True)
     parser.add_argument("--base-url", required=True)

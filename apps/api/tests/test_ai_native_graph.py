@@ -934,3 +934,55 @@ async def test_pending_contract_correction_resumes_without_replaying_primary(mon
     assert usage["model_calls"] == 2
     assert len(calls) == 1  # Only the correction call; the primary call is not replayed.
     assert diagnostic in calls[0][-1]["content"]
+
+
+@pytest.mark.asyncio
+async def test_resumed_coordinator_answer_reaches_context_and_cad_delegation(monkeypatch, graph_mocks):
+    original = "Ask me for the new plate thickness before editing."
+    answer = "Use 3 mm and preserve all 60 occurrences."
+    monkeypatch.setattr(design, "interrupt", lambda _payload: {"message": answer})
+    initial = state(original_request=original, question="New thickness?",
+        coordinator_pending_call={"id": "question", "name": "ask_user"},
+        coordinator_history=[{"role": "user", "content": original},
+            {"role": "assistant", "tool_calls": [{"id": "question", "type": "function",
+                "function": {"name": "ask_user", "arguments": '{"question":"New thickness?"}'}}]}])
+    resumed = await design.coordinator_question(initial)
+    assert resumed["coordinator_history"][-1] == {"role": "user", "content": answer}
+
+    async def turn(_config, messages, _tools, **_kwargs):
+        context = json.loads(messages[1]["content"].split(": ", 1)[1])
+        assert answer in context["latestRequest"]
+        assert messages[-1] == {"role": "user", "content": answer}
+        arguments = {"role": "cad", "task": "Set thickness to 3 mm."}
+        return {"message": {"role": "assistant", "content": "", "tool_calls": [{
+            "id": "delegate", "type": "function", "function": {"name": "delegate", "arguments": json.dumps(arguments)}}]},
+            "calls": [{"id": "delegate", "name": "delegate", "input": arguments}],
+            "inputTokens": 10, "outputTokens": 20, "webSearchRequests": 0}
+
+    monkeypatch.setattr(design.models, "turn", turn)
+    result = await design.coordinator_session({**initial, **resumed})
+    assert result["phase"] == "cad_session"
+    task = json.loads(result["cad_history"][0]["content"])
+    assert answer in task["latestRequest"]
+    assert initial["original_request"] == original
+
+
+@pytest.mark.asyncio
+async def test_resumed_cad_answer_is_presented_as_user_input(monkeypatch, graph_mocks):
+    original = "Ask me for the thickness."
+    answer = "The thickness is 3 mm."
+    monkeypatch.setattr(design, "interrupt", lambda _payload: {"message": answer})
+    initial = state(original_request=original, pending_cad_call={"id": "question", "name": "ask_user"},
+        cad_history=[{"role": "user", "content": original},
+            {"role": "assistant", "tool_calls": [{"id": "question", "type": "function",
+                "function": {"name": "ask_user", "arguments": '{"question":"Thickness?"}'}}]}])
+    resumed = await design.cad_question(initial)
+    assert resumed["cad_history"][-1] == {"role": "user", "content": answer}
+
+    async def tool_turn(_state, **kwargs):
+        assert answer in kwargs["context"]["request"]
+        assert kwargs["history"][-1] == {"role": "user", "content": answer}
+        return None, kwargs["history"], {"model_calls": 1, "search_count": 0}
+
+    monkeypatch.setattr(design, "agent_tool_turn", tool_turn)
+    await design.cad_session({**initial, **resumed})
