@@ -187,6 +187,19 @@ async def main(args):
             await call("POST", f"/api/runs/{state['chatRunId']}/resume", json={"kind": "answer",
                 "message": "Use 3 mm as the new reusable plate thickness. Preserve all 60 occurrences, 59 fixed joints, grounding and reference frames. Build and independently validate and publish the draft. No strength or manufacturing approval is requested."})
             state["resumeSubmitted"] = True
+        elif args.action == "continue":
+            run = await call("GET", "/api/runs/" + state["chatRunId"])
+            if run["status"] != "paused":
+                raise ValueError("Inspect the preserved run before continuing a bounded stop")
+            receipt = {"pausedAt": run["updated_at"], "attempted": True}
+            previous = state.setdefault("continuations", [])
+            if any(item["pausedAt"] == receipt["pausedAt"] for item in previous):
+                raise ValueError("Continue was already attempted for this checkpoint; inspect its receipt")
+            previous.append(receipt)
+            save()
+            await call("POST", f"/api/runs/{state['chatRunId']}/resume", json={"kind": "continue"})
+            receipt["submitted"] = True
+            save()
         elif args.action == "status":
             run = await call("GET", "/api/runs/" + state["chatRunId"])
             state["chatStatus"] = run["status"]
@@ -254,7 +267,7 @@ async def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("action", choices=["pipeline", "chat", "status", "resume"])
+    parser.add_argument("action", choices=["pipeline", "chat", "status", "resume", "continue"])
     parser.add_argument("--ask-thickness", action="store_true")
     parser.add_argument("--thickness-only", type=int, choices=[2, 4])
     parser.add_argument("--repeat-answer", action="store_true")

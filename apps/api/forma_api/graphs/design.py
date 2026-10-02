@@ -1668,7 +1668,12 @@ async def cad_session(state: AgentState) -> dict:
                 "message": "Create at least one component and choose a root component before building.",
             })])
             return {**usage, "phase": "cad_session", "cad_history": history}
-        if state.get("build_result", {}).get("ok") and not state.get("cad_edits_since_build", 0):
+        # An unchanged intermediate candidate may be ready for final review.
+        # The build path still checks candidate/requirements/runtime identity
+        # before reusing its evidence, and inventory checks can keep it partial.
+        finalizing_milestone = value["final"] and not state.get("build_final", True)
+        if (state.get("build_result", {}).get("ok")
+                and not state.get("cad_edits_since_build", 0) and not finalizing_milestone):
             history = bounded_history([*history, tool_message(call, {
                 "ok": False, "category": "unchanged_successful_candidate",
                 "message": "This candidate already built. Stage the next component before building again.",

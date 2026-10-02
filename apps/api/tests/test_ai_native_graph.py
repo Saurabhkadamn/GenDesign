@@ -597,6 +597,45 @@ async def test_successful_intermediate_build_returns_to_cad():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("previous_final,requested_final,finalizes", [
+    (False, True, True), (True, True, False), (False, False, False),
+])
+async def test_unchanged_successful_milestone_can_enter_final_review(
+        monkeypatch, graph_mocks, previous_final, requested_final, finalizes):
+    graph_mocks["candidate"] = {"manifest": {
+        "components": [{"id": "plate", "kind": "solid"}],
+        "rootComponentId": "plate"}, "files": {"parts/plate.py": "saved source"}}
+
+    async def turn(*_args, **_kwargs):
+        arguments = {"final": requested_final}
+        return {"message": {"role": "assistant", "content": "", "tool_calls": [{
+            "id": "final-build", "type": "function", "function": {
+                "name": "build", "arguments": json.dumps(arguments)}}]},
+            "calls": [{"id": "final-build", "name": "build", "input": arguments}],
+            "inputTokens": 10, "outputTokens": 20, "webSearchRequests": 0}
+
+    build_states = []
+
+    async def checked_build(build_state):
+        build_states.append(build_state)
+        return {"phase": "validate", "build_final": build_state["build_final"],
+                "build_result": {"ok": True, "inspection": {}}}
+
+    monkeypatch.setattr(design.models, "turn", turn)
+    monkeypatch.setattr(design, "build", checked_build)
+    inputs = state(build_result={"ok": True}, build_final=previous_final,
+                   cad_edits_since_build=0)
+    result = await design.cad_session(inputs)
+    if finalizes:
+        assert len(build_states) == 1 and build_states[0]["build_final"] is True
+        assert (await design.validate({**inputs, **result}))["phase"] == "review_session"
+    else:
+        assert build_states == [] and result["phase"] == "cad_session"
+        feedback = json.loads(result["cad_history"][-1]["content"])
+        assert feedback["category"] == "unchanged_successful_candidate"
+
+
+@pytest.mark.asyncio
 async def test_inline_build_persists_consumed_model_turn_and_milestone(monkeypatch, graph_mocks):
     async def build_candidate(_run, checkpoint, _limits, _key):
         checkpoint["attempts"] = 1
