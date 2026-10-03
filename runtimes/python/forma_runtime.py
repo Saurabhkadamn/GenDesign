@@ -129,7 +129,9 @@ def properties(shape: cq.Shape, kind: str) -> dict[str, Any]:
 def mesh_of(shape: cq.Shape, color: str) -> trimesh.Trimesh:
     import trimesh
 
-    vertices, faces = shape.tessellate(0.1, 0.15)
+    # OCCT attaches triangulations to the shape and uses their deflection in
+    # later bounding boxes. Keep preview meshing off the inspection B-rep.
+    vertices, faces = shape.copy().tessellate(0.1, 0.15)
     if len(faces) > 1_000_000:
         raise ValueError("Preview exceeds one million triangles")
     rgba = [int(color[i : i + 2], 16) for i in (1, 3, 5)] + [255]

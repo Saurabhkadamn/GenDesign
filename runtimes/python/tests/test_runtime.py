@@ -6,7 +6,7 @@ import cadquery as cq
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parents[1]))
-from forma_runtime import build, validate, properties, calculate, module_at
+from forma_runtime import build, validate, properties, calculate, module_at, mesh_of
 
 
 def fixture(tmp_path, kind="solid", source=None):
@@ -63,6 +63,39 @@ def test_open_surface_is_valid_only_when_declared():
     assert properties(surface, "surface")["faces"] == 1
     with pytest.raises(ValueError, match="closed solid"):
         properties(surface, "solid")
+
+
+def test_preview_meshing_preserves_exact_inspection_shape():
+    from geometry_inspection import component_facts
+    from requirements_check import check_requirements
+
+    shape = cq.Workplane("XY").box(8, 8, 3).faces(">Z").workplane().hole(2).val()
+    before = component_facts(shape, {})["boundsMm"]
+    mesh = mesh_of(shape, "#aabbcc")
+    assert len(mesh.faces) > 0
+    assert component_facts(shape, {})["boundsMm"] == pytest.approx(before, abs=1e-8)
+    check = check_requirements({"plate": shape}, {"rootComponentId": "plate"}, [{
+        "id": "size", "description": "Exact plate size after preview generation",
+        "kind": "dimensions", "dimensions": [8, 8, 3], "tolerance": 1e-6}])[0]
+    assert check["status"] == "passed", check
+
+
+def test_step_inspection_and_requirement_sizes_agree_after_preview(tmp_path):
+    source = "import cadquery as cq\ndef build(p,d): return cq.Workplane('XY').box(8,8,3).faces('>Z').workplane().hole(2)\n"
+    workspace, output, manifest = fixture(tmp_path, source=source)
+    build(workspace, output)
+    (output / "manifest.json").write_text(json.dumps(manifest))
+    (output / "requirements.json").write_text(json.dumps([{
+        "id": "size", "description": "8 x 8 x 3 mm",
+        "kind": "dimensions", "dimensions": [8, 8, 3], "tolerance": 1e-6}]))
+    verified = tmp_path / "verified"
+    verified.mkdir()
+    validate(output, verified)
+    report = json.loads((verified / "report.json").read_text())
+    assert report["components"]["plate"]["dimensions"] == pytest.approx([8, 8, 3], abs=1e-6)
+    assert report["inspection"]["components"]["plate"]["boundsMm"] == pytest.approx(
+        report["components"]["plate"]["bounds"], abs=1e-6)
+    assert report["requirements"][0]["status"] == "passed", report["requirements"]
 
 
 def test_assembly_constraint_solver():

@@ -145,6 +145,36 @@ async def test_followup_cad_delegation_preserves_original_brief_and_selection(mo
 
 
 @pytest.mark.asyncio
+async def test_old_checkpoint_refreshes_accepted_dimensions_once(monkeypatch, graph_mocks):
+    refreshed = []
+    owned_context = {"revision": {"id": "r1", "componentMeasurements": {
+        "plate": {"dimensions": [8, 8, 4], "solids": 1, "valid": True}}}}
+
+    async def context(project, owner, run, revision, selected):
+        assert project.endswith("2") and owner.endswith("3") and revision == "r1"
+        refreshed.append(run)
+        return owned_context
+
+    async def turn(_config, messages, _tools, **_kwargs):
+        assert "componentMeasurements" in messages[1]["content"]
+        assert "[8, 8, 4]" in messages[1]["content"]
+        return {"message": {"role": "assistant", "content": "", "tool_calls": [{
+            "id": "inspect", "type": "function", "function": {
+                "name": "inspect_project", "arguments": "{}"}}]},
+            "calls": [{"id": "inspect", "name": "inspect_project", "input": {}}],
+            "inputTokens": 1, "outputTokens": 1, "webSearchRequests": 0}
+
+    monkeypatch.setattr(design.repo, "agent_context", context)
+    monkeypatch.setattr(design.models, "turn", turn)
+    initial = state(base_revision_id="r1", project_context={"revision": {"id": "r1"}})
+    result = await design.coordinator_session(initial)
+    assert result["project_context"] == owned_context
+    assert json.loads(result["coordinator_history"][-1]["content"]) == owned_context
+    await design.coordinator_session({**initial, **result})
+    assert len(refreshed) == 1
+
+
+@pytest.mark.asyncio
 async def test_cad_session_rejects_malformed_source_before_persisting(monkeypatch, graph_mocks):
     manifest = {
         "schemaVersion": 1, "units": "mm",

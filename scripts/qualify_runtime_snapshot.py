@@ -77,6 +77,10 @@ async def main(args):
             state["completed"].append(stage)
             save()
         try:
+            # A previously qualified base can retain its build tree. Reset
+            # only this factory's directory in the new isolated VM.
+            await command("fresh-build-directory", "/usr/bin/python3", ["-c",
+                "from pathlib import Path; import shutil; p=Path('/tmp/forma-build'); assert p.resolve()==p; shutil.rmtree(p) if p.exists() else None"])
             await command("directories", "mkdir", ["-p", "/vercel/sandbox", "/tmp/forma-build/json",
                 "/qualification/runtimes/python/tests", "/qualification/fixtures", "/opt/forma/native"])
             if "upload" not in state["completed"]:

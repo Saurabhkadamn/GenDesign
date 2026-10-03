@@ -232,5 +232,41 @@
         }
       }
     }
+  },
+  "measurementRefinement": {
+    "qualifiedOn": "2026-10-03",
+    "runtimeVersion": "forma-b62c5048f2ceea82",
+    "sourceHash": "6c5a1926ef8dd687fb9bddbffe3d0916725e7ddd820f167c92589d9693ae47d3",
+    "linuxRuntimeTests": {
+      "passed": 47,
+      "skipped": 0,
+      "durationSeconds": 11.22
+    },
+    "localRuntimeTests": {
+      "passed": 47,
+      "skipped": 0,
+      "durationSeconds": 30.7
+    },
+    "localApiTests": {
+      "passed": 180,
+      "durationSeconds": 5.88
+    },
+    "regressions": [
+      "Preview tessellation must not alter inspection B-rep bounds",
+      "STEP, inspection and dimension requirements agree after preview generation",
+      "Old durable checkpoints refresh accepted component measurements once"
+    ],
+    "priorPreviewStop": {
+      "reportedModelCalls": 20,
+      "status": "paused",
+      "completeWorkflow": false,
+      "findings": [
+        "Mesh deflection inflated inspection/requirement bounds",
+        "Unrelated prompt example footprint was copied into the thickness requirement"
+      ]
+    },
+    "previewWorkflow": "pending",
+    "productionWorkflow": "pending",
+    "builderStopped": true
   }
 }

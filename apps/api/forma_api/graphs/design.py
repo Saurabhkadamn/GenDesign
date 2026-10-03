@@ -658,9 +658,16 @@ async def coordinator_session(state: AgentState) -> dict:
     if actions >= 12:
         raise Pause("The coordinator reached its tool-action limit. Continue with a focused follow-up.")
     snapshot = await run_service.load_candidate(state["run_id"])
+    project_context = state.get("project_context", {})
+    prior_revision = project_context.get("revision") or {}
+    if state.get("base_revision_id") and "componentMeasurements" not in prior_revision:
+        # Older durable checkpoints predate accepted STEP measurements in
+        # project memory. Refresh owned evidence once before an edit resumes.
+        project_context = await repo.agent_context(state["project_id"], state["owner_id"],
+            state["run_id"], state["base_revision_id"], state.get("selected_ids") or [])
     context = {
         "latestRequest": state.get("clarified_request") or state["original_request"],
-        "project": state.get("project_context", {}),
+        "project": project_context,
         "selectedIds": state.get("selected_ids", []),
         "currentWorkspace": {"manifest": snapshot["manifest"],
             "files": sorted(snapshot["files"]), "candidateHash": digest(snapshot)},
@@ -685,6 +692,7 @@ async def coordinator_session(state: AgentState) -> dict:
             return {"phase": "final"}
         raise
     update = {**usage, "phase": "coordinator_session", "coordinator_history": history,
+              "project_context": project_context,
               "coordinator_actions": actions + 1}
     if not call:
         return {**update, "coordinator_history": bounded_history([*history, {
@@ -698,7 +706,7 @@ async def coordinator_session(state: AgentState) -> dict:
         })])}
     name = call["name"]
     if name == "inspect_project":
-        result = state.get("project_context", {})
+        result = project_context
     elif name == "read_file":
         content = snapshot["files"].get(value["path"])
         result = {"ok": content is not None, "path": value["path"],
@@ -710,7 +718,7 @@ async def coordinator_session(state: AgentState) -> dict:
             for index, line in enumerate(source.splitlines())
             if value["query"].lower() in line.lower()][:80]}
     elif name == "inspect_geometry":
-        result = state.get("validation") or (state.get("project_context", {}).get("revision") or {})
+        result = state.get("validation") or (project_context.get("revision") or {})
     elif name == "ask_user":
         return {**update, "phase": "coordinator_question", "question": value["question"],
             "coordinator_pending_call": call}

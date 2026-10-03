@@ -210,6 +210,7 @@ async def main(args):
                 revision = next(r for r in workspace["revisions"] if r["run_id"] == run["id"])
                 expected = Snapshot.model_validate(fixture(3)).model_dump(mode="json")["manifest"]
                 manifest = revision["manifest"]
+                assert manifest["rootComponentId"] == expected["rootComponentId"]
                 assert manifest["nativeAssembly"] == expected["nativeAssembly"]
                 assert sorted(manifest["joints"], key=lambda j: j["id"]) == sorted(expected["joints"], key=lambda j: j["id"])
                 for name, fields in [("instances", ["definitionId", "parentId", "frame", "bomExclude"]),
@@ -224,6 +225,13 @@ async def main(args):
                 assert revision["validation"]["bom"]["flat"][0]["quantity"] == 60
                 assert revision["validation"]["assemblyPlacement"]["solidChecks"] == 60
                 assert revision["validation"]["identity"]["runtime"] == runtime["runtimeVersion"]
+                dimensions = revision["validation"]["components"]["plate"]["dimensions"]
+                assert max(abs(a-b) for a,b in zip(dimensions, [8,8,3])) < 1e-6
+                bounds = revision["validation"]["inspection"]["components"]["plate"]["boundsMm"]
+                assert abs(bounds[5] - bounds[2] - 3) < 1e-6
+                assert not any(check["status"] == "failed"
+                    for check in revision["validation"].get("requirements", []))
+                state["chatMeasurementConsistency"] = "passed"
                 downloaded = {}
                 for artifact in workspace["artifacts"]:
                     if artifact["revision_id"] != revision["id"]: continue
