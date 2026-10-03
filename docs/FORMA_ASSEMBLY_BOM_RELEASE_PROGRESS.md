@@ -2,6 +2,16 @@
 
 Goal: qualify native assembly technology, integrate assembly and deterministic BOM end to end, strengthen engineering reliability, verify local and hosted workflows, push reviewed source and publish the verified release. The goal remains active until every release gate below passes.
 
+## Resumed by user — 2026-10-03 18:03 UTC
+
+The user explicitly requested completion of the remaining release work. The old follow-up automation remains deleted; this continuation runs in the chat. Local manifest-preservation fix `699fa33` has been reviewed and pushed for preview qualification. The worktree is authoritative; remote main remains `3cdebe0` and PR #19 is draft/mergeable. Original production still resolves to `dpl_E7ESYfMkaDXaDFTtU73LDv6E6tPP`. No hosted runs are queued/running. Both historical qualification stops are preserved. Test the new fix from the intact, already-owned 4 mm revision, then recover the existing production checkpoint through the qualified candidate. The pinned native image is unchanged and must not be rebuilt unnecessarily.
+
+Local TLS verification required Windows' trusted certificate store; a temporary trusted CA bundle was saved under ignored test-results, and Node CLI uses `--use-system-ca`. Certificate verification remains enabled. Current saved coordinator model remains OpenRouter `cohere/north-mini-code:free`; preserve it.
+
+Preview `dpl_G39MtKL8c36iWYMpueuD7rcHQjJb` is ready at source `699fa33`. A fresh model workflow from the intact owned 4 mm revision asked for thickness and received 3 mm. It paused on an invalid provider tool action without executing it; root/native settings, all 60 instances and 59 joints remain intact. A deliberate Continue was submitted for that confirmed checkpoint. Final publication remains a release gate.
+
+The release audit identified available production dependency security patches. Next.js/eslint-config-next are now 16.3.8, Undici is constrained to 7.29.1, and DOMPurify is locked to 3.4.16. TypeScript, ESLint, all 10 database tests and the production web build passed. The production-only audit is zero; the full audit retains 12 development advisories. Exact package/license/integrity changes are recorded in `FORMA_RELEASE_DEPENDENCY_DELTA.json`. The CAD image and API source are unchanged by this patch. The earlier port 3107 server has stopped; no local web process is being reused.
+
 ## Deadline checkpoint — 2026-10-03 05:56 UTC
 
 The scheduled follow-up ended after its **2026-10-02 21:57 UTC** deadline. Account availability interrupted the active turn; the next clock read was already after the deadline. No production promotion or main merge was performed. The goal is **incomplete**; the goal service reports `usageLimited`. The follow-up automation has been deleted. Preserve the saved work and evidence for a later user-authorized continuation.

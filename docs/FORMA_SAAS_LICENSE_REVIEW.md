@@ -4,6 +4,8 @@ Review date: 1 October 2026. Scope: the Forma application in `D:/v1`, its declar
 
 Implementation update, 2 October 2026: Forma now installs the locked CAD dependencies and pinned OndselSolver adapter/shared libraries in a qualified Linux snapshot. Actual installed versions and binary/source hashes are attested; the image contains solver corresponding source and LGPL/MIT notices, and all 45 runtime tests passed with network access denied. The former copy-only snapshot reproducibility gap described below is resolved for this qualified image. This does not complete an artifact-level SBOM, frontend notice review, cloud/model contract review or legal clearance. See [native assembly decision](FORMA_NATIVE_ASSEMBLY_BOM_DECISION.md) and [release evidence](FORMA_HOSTED_ASSEMBLY_ACCEPTANCE.json).
 
+Release dependency update, 3 October 2026: Next.js and its matching lint/compiler packages are patched to 16.3.8, Undici to 7.29.1 and DOMPurify to 3.4.16. Their declared licenses remain MIT and, for DOMPurify, MPL-2.0 OR Apache-2.0. The exact lockfile delta, integrity hashes and production audit results are recorded in [FORMA_RELEASE_DEPENDENCY_DELTA.json](FORMA_RELEASE_DEPENDENCY_DELTA.json), which supplements the historical inventory below. The production dependency audit reports zero known advisories; the complete dependency audit retains 12 development advisories. Neither result is general security or license clearance.
+
 ## Decision
 
 **The reviewed software stack appears compatible with a paid, proprietary, hosted Forma SaaS.** CadQuery and the other open-source components do not impose a general prohibition on commercial use. Forma can charge for its own application and engineering workflow while complying with the underlying licenses.
