@@ -13,7 +13,7 @@ from .contracts import AppSettings, CalculationResult, Snapshot, TERMINAL
 from .execution import ExecutionFailure, SandboxExpired, build_error, digest, executor, identity
 from .prompts import VERSION as PROMPT_VERSION, system_prompt
 from .requirements import design_work_requested, merge_requirements
-from .tools import model_tools, parse_tool, updated_manifest
+from .tools import model_tools, parameter_patch, parse_tool, updated_manifest
 
 
 class Pause(Exception):
@@ -346,7 +346,10 @@ async def execute_tool(run, cp, call, app_settings, worker):
         return {"content": snapshot["files"].get(value["path"])}
     if name == "search_files":
         return {"matches": [{"path": p, "line": i+1, "text": line[:300]} for p, code in snapshot["files"].items() for i, line in enumerate(code.splitlines()) if value["query"] in line][:100]}
-    if name == "apply_changes":
+    if name in {"apply_changes", "update_parameters"}:
+        if name == "update_parameters":
+            parsed = parameter_patch(snapshot["manifest"], parsed)
+            value = parsed.model_dump()
         if cp["role"] == "engineering" and (value["manifest"] is not None or any(not p.startswith("calculations/") for p in value["files"])):
             raise ValueError("Engineering can edit only calculations/ files and cannot modify the manifest.")
         if cp["role"] == "cad" and any(p.startswith("calculations/") for p in value["files"]):

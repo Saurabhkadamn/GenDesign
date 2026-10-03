@@ -20,7 +20,7 @@ from ..prompts import VERSION as PROMPT_VERSION, system_prompt
 from ..providers.openrouter import ModelFailure
 from ..requirements import design_work_requested, merge_requirements
 from ..services import runs as run_service
-from ..tools import model_tools, parse_tool, portable_schema, updated_manifest
+from ..tools import model_tools, parameter_patch, parse_tool, portable_schema, updated_manifest
 from .state import AgentState
 
 _worker: ContextVar[str] = ContextVar("forma_graph_worker", default="graph")
@@ -1185,7 +1185,7 @@ def normalize_instance_hierarchy(manifest: dict) -> tuple[dict, bool]:
 
 
 CAD_SESSION_TOOL_NAMES = {
-    "read_file", "search_files", "apply_changes", "build",
+    "read_file", "search_files", "apply_changes", "update_parameters", "build",
     "inspect_geometry", "request_engineering", "ask_user",
 }
 MAX_CAD_EDITS_WITHOUT_BUILD = 3
@@ -1461,12 +1461,17 @@ async def cad_session(state: AgentState) -> dict:
             tool_input["manifest"])
     try:
         parsed = parse_tool("cad", call["name"], tool_input)
+        if call["name"] == "update_parameters":
+            parsed = parameter_patch(snapshot["manifest"], parsed)
         value = parsed.model_dump()
     except (ValidationError, ValueError) as exc:
         invalid_attempts = state.get("cad_invalid_tool_attempts", 0) + 1
         feedback = {
             "ok": False, "category": "tool_contract", "message": str(exc)[:3000],
-            "repairGuidance": ("Use an exact non-empty file path from workspace.files. "
+            "repairGuidance": ("Use an existing component ID and parameter name from workspace.manifest; "
+                "read its source before changing a value. Use apply_changes for new parameters."
+                if call["name"] == "update_parameters" else
+                "Use an exact non-empty file path from workspace.files. "
                 "If workspace.files is empty, create the requested source with apply_changes immediately.")
         }
         next_history = bounded_history([*history, tool_message(call, feedback)])
@@ -1548,7 +1553,7 @@ async def cad_session(state: AgentState) -> dict:
         }
         return {**usage, "phase": "cad_session", "cad_history": bounded_history([
             *history, tool_message(call, result)])}
-    if name == "apply_changes":
+    if name in {"apply_changes", "update_parameters"}:
         invalid_paths = [path for path in value["files"]
                          if not (path.startswith("parts/") or path.startswith("assemblies/"))]
         if invalid_paths:
@@ -1614,7 +1619,8 @@ async def cad_session(state: AgentState) -> dict:
                 "cad_history": next_history}
         candidate_hash = digest(candidate)
         await run_service.save_candidate(state["run_id"], candidate, candidate_hash)
-        await repo.event(state["run_id"], "CAD updated a focused part of the code workspace.", stage="cad")
+        await repo.event(state["run_id"], ("CAD updated named component parameters." if name == "update_parameters"
+            else "CAD updated a focused part of the code workspace."), stage="cad")
         result = {"ok": True, "candidateHash": candidate_hash,
             "changedFiles": sorted(value["files"]), "deletedFiles": value.get("deletePaths", []),
             "autoRegisteredComponents": auto_registered,

@@ -268,6 +268,19 @@
     "previewWorkflow": "pending",
     "productionWorkflow": "pending",
     "builderStopped": true,
+    "parameterDeltaRefinement": {
+      "date": "2026-10-04 IST",
+      "localApiTests": {"passed": 187, "durationSeconds": 9.27},
+      "focusedContractAndGraphTests": {"passed": 65},
+      "runtimeSourceUnchanged": true,
+      "previewWorkflow": "pending",
+      "productionWorkflow": "pending",
+      "priorPreviewStop": {"modelCalls": 8, "status": "paused", "reason": "Timeout followed by a malformed tool action on one explicit recovery"},
+      "priorProductionStop": {"modelCalls": 8, "status": "paused", "reason": "Malformed CAD tool action after confirmed checkpoint recovery"},
+      "invalidActionsExecuted": false,
+      "originalPublishedRevisionsPreserved": true,
+      "scope": "Existing named parameter deltas use the atomic edit path, preserve source and assembly state, and require fresh validation before publication. Hosted qualification remains pending."
+    },
     "refinedPreview": {
       "deploymentId": "dpl_CcYsxHxTzpmcuAZYwbi6tXrYwRcj",
       "sourceCommit": "1f47976fe4dc48a53116de61184a2b09d3cc27b1",

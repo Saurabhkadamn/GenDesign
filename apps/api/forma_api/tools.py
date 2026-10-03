@@ -1,8 +1,9 @@
+from copy import deepcopy
 from typing import Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
-from .contracts import Contract, Manifest, Requirement, Role, SourcePath, safe_path
+from .contracts import Contract, Manifest, Parameter, Requirement, Role, SafeId, SourcePath, safe_path
 
 
 class Empty(Contract):
@@ -42,6 +43,41 @@ def updated_manifest(previous: dict, change: ApplyChanges) -> dict:
     return {**previous, **change.manifest.model_dump(include=change.manifest.model_fields_set)}
 
 
+class ParameterChange(Contract):
+    componentId: SafeId
+    parameter: str = Field(min_length=1, max_length=200)
+    value: Parameter = Field(description=(
+        "New value in the existing parameter's units and data type. Use numeric millimeters "
+        "for CAD dimensions, not a string containing units."
+    ))
+
+
+class UpdateParameters(Contract):
+    changes: list[ParameterChange] = Field(min_length=1, max_length=100)
+
+    @model_validator(mode="after")
+    def unique_targets(self):
+        targets = [(change.componentId, change.parameter) for change in self.changes]
+        if len(set(targets)) != len(targets):
+            raise ValueError("A parameter target cannot appear twice in one update.")
+        return self
+
+
+def parameter_patch(previous: dict, update: UpdateParameters) -> ApplyChanges:
+    """Translate a small parameter delta into the existing atomic edit path."""
+    components = deepcopy(previous["components"])
+    definitions = {component["id"]: component for component in components}
+    for change in update.changes:
+        component = definitions.get(change.componentId)
+        if component is None:
+            raise ValueError("The parameter update names an unknown component.")
+        parameters = component.get("parameters", {})
+        if change.parameter not in parameters:
+            raise ValueError("The parameter update names an unknown existing parameter. Use apply_changes to introduce new source parameters.")
+        parameters[change.parameter] = change.value
+    return ApplyChanges(files={}, manifest=Manifest.model_validate({"components": components}))
+
+
 class Build(Contract):
     final: bool = Field(default=True, description=(
         "False for an intermediate assembly milestone; true only when all requested "
@@ -79,6 +115,7 @@ SPECS = {
     "read_file": (ReadFile, "Read a private workspace source file before editing it."),
     "search_files": (Search, "Search private workspace files by literal text."),
     "apply_changes": (ApplyChanges, "Atomically stage related files and optional manifest changes. Omitted top-level manifest fields are preserved; provided fields and arrays replace their values. Include complete entries in provided arrays. Does not execute code."),
+    "update_parameters": (UpdateParameters, "Atomically change existing named component parameters without rewriting source or assembly relationships. Read the component source first. New parameters require apply_changes. Rebuild and validate before publication."),
     "build": (Build, "Build and validate the current CAD workspace. Use final=false for an intermediate assembly milestone, or final=true only when the requested design is represented."),
     "inspect_geometry": (Empty, "Inspect the current candidate's build report and optional requirement evidence."),
     "inspect_project": (Empty, "Inspect the current project, previous conversation, selected parts, revision, and verification evidence."),
@@ -92,7 +129,7 @@ SPECS = {
 }
 ROLE_TOOLS = {
     "coordinator": ("inspect_project", "read_file", "search_files", "delegate", "inspect_geometry", "publish_revision", "restore_revision", "ask_user", "finish"),
-    "cad": ("read_file", "search_files", "apply_changes", "build", "inspect_geometry", "request_engineering", "ask_user", "finish"),
+    "cad": ("read_file", "search_files", "apply_changes", "update_parameters", "build", "inspect_geometry", "request_engineering", "ask_user", "finish"),
     "engineering": ("read_file", "search_files", "apply_changes", "calculate", "inspect_geometry", "ask_user", "finish"),
 }
 

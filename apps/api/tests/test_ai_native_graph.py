@@ -1,4 +1,5 @@
 import json
+from copy import deepcopy
 
 import pytest
 
@@ -64,6 +65,39 @@ def graph_mocks(monkeypatch):
     monkeypatch.setattr(design.run_service, "load_candidate", load_candidate)
     monkeypatch.setattr(design.run_service, "save_candidate", save_candidate)
     return saved
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("parameter", ["thickness", "unknown"])
+async def test_cad_parameter_tool_preserves_source_and_clears_only_stale_evidence(monkeypatch, graph_mocks, parameter):
+    original = design.Snapshot.model_validate({"manifest": {
+        "components": [{"id": "plate", "name": "Plate", "source": "parts/plate.py",
+            "kind": "solid", "parameters": {"thickness": 4}}], "rootComponentId": "plate"},
+        "files": {"parts/plate.py": "def build(p,d): return p['thickness']"}}).model_dump()
+    graph_mocks["candidate"] = deepcopy(original)
+    arguments = {"changes": [{"componentId": "plate", "parameter": parameter, "value": 3}]}
+
+    async def turn(_config, _messages, tools, **_kwargs):
+        assert "update_parameters" in {tool["function"]["name"] for tool in tools}
+        return {"message": {"role": "assistant", "content": "", "tool_calls": [{
+            "id": "parameter-edit", "type": "function", "function": {
+                "name": "update_parameters", "arguments": json.dumps(arguments)}}]},
+            "calls": [{"id": "parameter-edit", "name": "update_parameters", "input": arguments}],
+            "inputTokens": 10, "outputTokens": 20, "webSearchRequests": 0}
+
+    monkeypatch.setattr(design.models, "turn", turn)
+    result = await design.cad_session(state(validation={"old": True}, build_result={"ok": True}))
+    assert graph_mocks["candidate"]["files"] == original["files"]
+    if parameter == "unknown":
+        assert graph_mocks["candidate"] == original
+        assert "validation" not in result and "build_result" not in result
+        assert "unknown existing parameter" in result["cad_history"][-1]["content"]
+    else:
+        expected = deepcopy(original)
+        expected["manifest"]["components"][0]["parameters"]["thickness"] = 3
+        assert graph_mocks["candidate"] == expected
+        assert result["validation"] == {} and result["build_result"] == {}
+        assert result["cad_edits_since_build"] == 1
 
 
 @pytest.mark.asyncio
