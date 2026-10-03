@@ -2,6 +2,24 @@
 
 Goal: qualify native assembly technology, integrate assembly and deterministic BOM end to end, strengthen engineering reliability, verify local and hosted workflows, push reviewed source and publish the verified release. The goal remains active until every release gate below passes.
 
+## Current continuation � 2026-10-04 IST
+
+Authoritative checkout: `C:\Users\SAURABH\.codex\worktrees\native-assembly-bom\v1`, branch `codex/native-assembly-bom`, pushed implementation `1f47976fe4dc48a53116de61184a2b09d3cc27b1`. Draft PR #19 is mergeable and Vercel checks pass. Original public deployment remains `dpl_E7ESYfMkaDXaDFTtU73LDv6E6tPP`; no promotion or main merge yet. The expired automation remains deleted; the user authorized this continuation directly.
+
+Current qualified image: `snap_iKa7XXTQI3tq44gHu5TiEvUGsIj5` / `forma-b62c5048f2ceea82`, source hash `6c5a1926ef8dd687fb9bddbffe3d0916725e7ddd820f167c92589d9693ae47d3`. All **180 API**, **47 local runtime** and **47 Linux runtime** tests passed; runtime tests have zero skips and the Linux builder is stopped. Preview uses the qualified pair. Production candidate was built with the same pair; persistent production project settings and stable alias remain unchanged.
+
+Refined preview `dpl_CcYsxHxTzpmcuAZYwbi6tXrYwRcj` and production candidate `dpl_4FkPuuQsWnTjDTgdoHS1YujwXDCt` are ready, both from `1f47976`. Both passed the real 2/4 mm 60-occurrence native build, fresh independent validation, nine private artifacts, wrong-worker publication rejection, authenticated downloads and independent downloaded STEP/BOM oracle. Both reject anonymous and separate-account access. Production 4 mm initially stopped during artifact upload after transport retries; its base revision remained intact. The same confirmed paused run was recovered once after checking both former sandboxes had expired and no run was active. Previous receipts are retained. All nine downloads subsequently passed.
+
+The authenticated refined production browser displayed all 60 occurrences, eight generated-file buttons and both draft BOM layouts with quantity 60; no page errors. Screenshot inspected. This is fixture UI evidence, not yet evidence of the AI 3 mm publication.
+
+The refined preview asked for the missing thickness and paused at one model call without editing. Its saved 3 mm answer was then submitted once. Current model workflow is running. It preserves root/native settings, 60 occurrences and 59 joints in its saved candidate so far; final review/publication and the final geometry oracle remain gates. Existing production chat `a4a07c44-432b-4909-b143-40e5c4fd77f6` still needs recovery through the refined candidate from its intact original 4 mm revision. Do not seed another fixture into that chat's project or replay an uncertain resume.
+
+Remaining: complete the preview AI edit and all final measurements/downloads; recover and verify the production AI edit; check the resulting browser workflow; persist the production runtime pair and promote the verified production candidate; push sanitized final evidence, merge exact reviewed source and verify main's resulting production deployment. Preserve immutable original-deployment rollback and private evidence. No CATIA/SOLIDWORKS parity or manufacturing approval is claimed.
+
+## Historical checkpoints
+
+The entries below record prior states and failures. They are retained as history; the current continuation above determines which jobs and deployments to resume.
+
 ## Resumed by user — 2026-10-03 18:03 UTC
 
 ### New measurement qualification — 2026-10-03 18:36 UTC

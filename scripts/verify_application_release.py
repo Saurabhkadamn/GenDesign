@@ -87,18 +87,52 @@ async def main(args):
             state["projectId"], state["ownerId"] = project["id"], project["owner_id"]
             save()
         if args.action == "pipeline":
-            for thickness in [args.thickness_only] if args.thickness_only else [2, 4]:
+            if args.resume_case and args.thickness_only:
+                raise ValueError("Select either an explicit recovery or a new fixture")
+            for thickness in [args.resume_case or args.thickness_only] if (args.resume_case or args.thickness_only) else [2, 4]:
                 key = f"sixty-parts-{thickness}mm"
                 if state["cases"].get(key, {}).get("status") == "passed": continue
-                if key in state["cases"]: raise ValueError("Incomplete pipeline case exists; inspect its run/receipts before retrying")
                 worker = "release-qualification-" + uuid4().hex
-                case = state["cases"][key] = {"status": "preparing", "idempotencyKey": str(uuid4()), "worker": worker}
-                save()
-                run_id = await db.rpc("submit_run_v3", {"p_project": state["projectId"], "p_owner": state["ownerId"],
-                    "p_base": state.get("revisionId"), "p_message": f"Deterministic native 60-part qualification at {thickness} mm; not an AI-generated result.",
-                    "p_selected": [], "p_key": case["idempotencyKey"], "p_environment": args.environment})
-                case["runId"] = run_id
-                save()
+                if args.resume_case:
+                    from forma_api.execution import executor, SandboxExpired
+                    case = state["cases"].get(key)
+                    if not case or case["status"] != "interrupted" or case.get("runFinished"):
+                        raise ValueError("Recovery requires a confirmed interrupted, unpublished fixture")
+                    run_id = case["runId"]
+                    previous_run = await db.one("runs", {"id": "eq." + run_id})
+                    project = await db.one("projects", {"id": "eq." + state["projectId"]})
+                    assert previous_run["status"] == "paused"
+                    assert previous_run["owner_id"] == state["ownerId"]
+                    assert previous_run["execution_environment"] == args.environment
+                    assert previous_run["base_revision_id"] == project["current_revision_id"] == state["revisionId"]
+                    if await db.rest("runs", params={"status": "in.(queued,running)", "select": "id"}):
+                        raise ValueError("Another run is active; do not duplicate running work")
+                    for name in [case["sandbox"], case["validator"]]:
+                        try:
+                            await executor().is_running(name)
+                        except SandboxExpired:
+                            continue
+                        raise ValueError("A previous sandbox remains live; inspect it instead of rebuilding")
+                    receipt = {"pausedAt": previous_run["updated_at"], "attempted": True,
+                               "previousCase": json.loads(json.dumps(case))}
+                    history = state.setdefault("pipelineRecoveries", [])
+                    if any(r["pausedAt"] == receipt["pausedAt"] for r in history):
+                        raise ValueError("Recovery already attempted for this checkpoint; inspect its receipt")
+                    history.append(receipt)
+                    save()
+                    await db.rpc("resume_graph_run_v3", {"p_run": run_id, "p_owner": state["ownerId"], "p_environment": args.environment})
+                    receipt["submitted"] = True
+                    case.update(status="preparing", worker=worker)
+                    save()
+                else:
+                    if key in state["cases"]: raise ValueError("Incomplete pipeline case exists; inspect its run/receipts before retrying")
+                    case = state["cases"][key] = {"status": "preparing", "idempotencyKey": str(uuid4()), "worker": worker}
+                    save()
+                    run_id = await db.rpc("submit_run_v3", {"p_project": state["projectId"], "p_owner": state["ownerId"],
+                        "p_base": state.get("revisionId"), "p_message": f"Deterministic native 60-part qualification at {thickness} mm; not an AI-generated result.",
+                        "p_selected": [], "p_key": case["idempotencyKey"], "p_environment": args.environment})
+                    case["runId"] = run_id
+                    save()
                 if not await db.rpc("claim_run_v3", {"p_run": run_id, "p_worker": worker, "p_environment": args.environment}):
                     raise RuntimeError("Qualification run could not acquire the existing worker lease")
                 run = await db.one("runs", {"id": "eq." + run_id})
@@ -278,6 +312,8 @@ if __name__ == "__main__":
     parser.add_argument("action", choices=["pipeline", "chat", "status", "resume", "continue"])
     parser.add_argument("--ask-thickness", action="store_true")
     parser.add_argument("--thickness-only", type=int, choices=[2, 4])
+    parser.add_argument("--resume-case", type=int, choices=[2, 4],
+                        help="Deliberately recover the same paused fixture after confirming expired sandboxes and an unchanged base")
     parser.add_argument("--repeat-answer", action="store_true")
     for name in ["env-file", "runtime", "cli-auth-file", "credentials", "report-dir"]:
         parser.add_argument("--" + name, type=Path, required=True)

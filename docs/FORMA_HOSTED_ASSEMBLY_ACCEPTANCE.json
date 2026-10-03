@@ -267,6 +267,179 @@
     },
     "previewWorkflow": "pending",
     "productionWorkflow": "pending",
-    "builderStopped": true
+    "builderStopped": true,
+    "refinedPreview": {
+      "deploymentId": "dpl_CcYsxHxTzpmcuAZYwbi6tXrYwRcj",
+      "sourceCommit": "1f47976fe4dc48a53116de61184a2b09d3cc27b1",
+      "runtimeVersion": "forma-b62c5048f2ceea82",
+      "pipeline": "passed",
+      "authentication": "passed",
+      "anonymousAccessRejected": true,
+      "otherOwnerAccessRejected": true,
+      "cases": {
+        "sixty-parts-2mm": {
+          "status": "passed",
+          "identity": {
+            "candidate": "3624bb1a42183f1068837daef5cdf83bdf2b4a62ef18e065b9bd4639cf8006c6",
+            "requirements": "0b74658e06b1d5187d80f518a002e2083340a8806e5016ea25d925f85a6c4298",
+            "runtime": "forma-b62c5048f2ceea82"
+          },
+          "artifactCount": 9,
+          "leaseFence": "passed",
+          "authenticatedDownloads": {
+            "plate.step": "4dfff11c463066b7b7adc0e62dc9cbd1b4ab98cfff5b7cbd5373e120b9920a4c",
+            "plate.glb": "37c50b951716ba5a372a5f1fef822d138c3e5930abc3e8195a24cb57875638d8",
+            "assembly.step": "c8ab431af81858bc5e82f9f3f4761e145b81be048f801ab10b831c54995d6cde",
+            "assembly.glb": "bf18305aec99317222e85763c181655613dc88c0f8d32af5806ed4c1f3a0a33e",
+            "assembly.json": "0951d156a82c9b2a67ca513f43cde52bf7d3a9cc29b02e482876dddc00a6226c",
+            "preview.glb": "ad1b07f8d5f94e15e1ac39c3299f22ff1ec80abdabd8b989ffbbe27a7869eab0",
+            "bom.json": "1577294051c8f7109768d82c1430300772c881b4054fc0f95f0a85e410a31a45",
+            "bom-flat.csv": "a41505fc97ef96200f7ebdd10559b34e1c44ae6b58055f05191abcac53b67e7e",
+            "bom-structured.csv": "01ebbf2c6f8c977739ba4941823e313ae0fa838d0947c0b4363a7b654d518682"
+          },
+          "independentGeometry": {
+            "passed": true,
+            "solidChecks": 60,
+            "plateDimensionsMm": [
+              8,
+              8,
+              2
+            ],
+            "holeDiameterMm": 2,
+            "occurrenceCentersMatch": true,
+            "maxSymmetricDifferenceMm3": 0.0,
+            "downloadedStepVolumeErrorMm3": 3.728928277269006e-11
+          }
+        },
+        "sixty-parts-4mm": {
+          "status": "passed",
+          "identity": {
+            "candidate": "413ca02795af6a2317168c0661962a8d691812be9e33ecacc8c0b4be1bf96108",
+            "requirements": "0b74658e06b1d5187d80f518a002e2083340a8806e5016ea25d925f85a6c4298",
+            "runtime": "forma-b62c5048f2ceea82"
+          },
+          "artifactCount": 9,
+          "leaseFence": "passed",
+          "authenticatedDownloads": {
+            "plate.step": "c4b63754819dbdcb481087016ad24822c02b8b305c31a03171a11def3ad84e24",
+            "plate.glb": "ff31a52ef6504a2f9c848cb90c55216679848f3007b33d53db15f11bed8d4f3b",
+            "assembly.step": "a24fc931b33687c5061e100bb5021e2aa5f42ff8b30289bedbbed4c53dd43123",
+            "assembly.glb": "d8bdb2593733c7f1740b6b00d80120c9f69099ed25db1259e1ed24e79086c0cd",
+            "assembly.json": "692c47c961e9fa3719a3e363b51a8ffaf96420008407b59ee7d0a8fdd95d1311",
+            "preview.glb": "c4fcb2f1475bb5922567904cf1a9ed186abac136164d1f2dad8307e7f3bdea67",
+            "bom.json": "e2fcff3ec12f00f41795b70b4d9fc2d6e199ea53852ab68835ed0417a67d5950",
+            "bom-flat.csv": "a41505fc97ef96200f7ebdd10559b34e1c44ae6b58055f05191abcac53b67e7e",
+            "bom-structured.csv": "01ebbf2c6f8c977739ba4941823e313ae0fa838d0947c0b4363a7b654d518682"
+          },
+          "independentGeometry": {
+            "passed": true,
+            "solidChecks": 60,
+            "plateDimensionsMm": [
+              8,
+              8,
+              4
+            ],
+            "holeDiameterMm": 2,
+            "occurrenceCentersMatch": true,
+            "maxSymmetricDifferenceMm3": 0.0,
+            "downloadedStepVolumeErrorMm3": 7.457856554538012e-11
+          }
+        }
+      }
+    },
+    "refinedProduction": {
+      "deploymentId": "dpl_4FkPuuQsWnTjDTgdoHS1YujwXDCt",
+      "sourceCommit": "1f47976fe4dc48a53116de61184a2b09d3cc27b1",
+      "runtimeVersion": "forma-b62c5048f2ceea82",
+      "pipeline": "passed",
+      "authentication": "passed",
+      "anonymousAccessRejected": true,
+      "otherOwnerAccessRejected": true,
+      "cases": {
+        "sixty-parts-2mm": {
+          "status": "passed",
+          "identity": {
+            "candidate": "3624bb1a42183f1068837daef5cdf83bdf2b4a62ef18e065b9bd4639cf8006c6",
+            "requirements": "0b74658e06b1d5187d80f518a002e2083340a8806e5016ea25d925f85a6c4298",
+            "runtime": "forma-b62c5048f2ceea82"
+          },
+          "artifactCount": 9,
+          "leaseFence": "passed",
+          "authenticatedDownloads": {
+            "plate.step": "63eb561578fd08b9dc11ef7f10bfea021ceabedb8a8a22005494ff2926d8c1cd",
+            "plate.glb": "37c50b951716ba5a372a5f1fef822d138c3e5930abc3e8195a24cb57875638d8",
+            "assembly.step": "cadcaacf859abb6490098f575f82f1ece93cf4400b6c36b749d2fd26be252ed1",
+            "assembly.glb": "bf18305aec99317222e85763c181655613dc88c0f8d32af5806ed4c1f3a0a33e",
+            "assembly.json": "0951d156a82c9b2a67ca513f43cde52bf7d3a9cc29b02e482876dddc00a6226c",
+            "preview.glb": "ad1b07f8d5f94e15e1ac39c3299f22ff1ec80abdabd8b989ffbbe27a7869eab0",
+            "bom.json": "1577294051c8f7109768d82c1430300772c881b4054fc0f95f0a85e410a31a45",
+            "bom-flat.csv": "a41505fc97ef96200f7ebdd10559b34e1c44ae6b58055f05191abcac53b67e7e",
+            "bom-structured.csv": "01ebbf2c6f8c977739ba4941823e313ae0fa838d0947c0b4363a7b654d518682"
+          },
+          "independentGeometry": {
+            "passed": true,
+            "solidChecks": 60,
+            "plateDimensionsMm": [
+              8,
+              8,
+              2
+            ],
+            "holeDiameterMm": 2,
+            "occurrenceCentersMatch": true,
+            "maxSymmetricDifferenceMm3": 0.0,
+            "downloadedStepVolumeErrorMm3": 3.728928277269006e-11
+          }
+        },
+        "sixty-parts-4mm": {
+          "status": "passed",
+          "identity": {
+            "candidate": "413ca02795af6a2317168c0661962a8d691812be9e33ecacc8c0b4be1bf96108",
+            "requirements": "0b74658e06b1d5187d80f518a002e2083340a8806e5016ea25d925f85a6c4298",
+            "runtime": "forma-b62c5048f2ceea82"
+          },
+          "artifactCount": 9,
+          "leaseFence": "passed",
+          "authenticatedDownloads": {
+            "plate.step": "25751a59ac61f0efe3aa153a7f499b153fbf5b24a979f8c9354cb6a2d3770d75",
+            "plate.glb": "ff31a52ef6504a2f9c848cb90c55216679848f3007b33d53db15f11bed8d4f3b",
+            "assembly.step": "a4ebb8b357c6f15a61accae220ef6a72bfce419baf70f678c9188d15f7326de9",
+            "assembly.glb": "d8bdb2593733c7f1740b6b00d80120c9f69099ed25db1259e1ed24e79086c0cd",
+            "assembly.json": "692c47c961e9fa3719a3e363b51a8ffaf96420008407b59ee7d0a8fdd95d1311",
+            "preview.glb": "c4fcb2f1475bb5922567904cf1a9ed186abac136164d1f2dad8307e7f3bdea67",
+            "bom.json": "e2fcff3ec12f00f41795b70b4d9fc2d6e199ea53852ab68835ed0417a67d5950",
+            "bom-flat.csv": "a41505fc97ef96200f7ebdd10559b34e1c44ae6b58055f05191abcac53b67e7e",
+            "bom-structured.csv": "01ebbf2c6f8c977739ba4941823e313ae0fa838d0947c0b4363a7b654d518682"
+          },
+          "independentGeometry": {
+            "passed": true,
+            "solidChecks": 60,
+            "plateDimensionsMm": [
+              8,
+              8,
+              4
+            ],
+            "holeDiameterMm": 2,
+            "occurrenceCentersMatch": true,
+            "maxSymmetricDifferenceMm3": 0.0,
+            "downloadedStepVolumeErrorMm3": 7.457856554538012e-11
+          }
+        }
+      },
+      "uploadRecovery": {
+        "sameRunRecovered": true,
+        "previousStop": "Private artifact upload transport retries exhausted",
+        "previousRevisionPreserved": true,
+        "expiredSandboxesConfirmed": true,
+        "attempts": 1
+      }
+    },
+    "productionFixtureBrowser": {
+      "passed": true,
+      "flatQuantity": 60,
+      "structuredQuantity": 60,
+      "generatedFileButtons": 8,
+      "pageErrors": 0,
+      "scope": "Actual authenticated refined production 4 mm fixture, both BOM layouts and private artifact API downloads"
+    }
   }
 }
