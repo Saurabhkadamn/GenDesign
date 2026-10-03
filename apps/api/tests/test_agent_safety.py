@@ -120,15 +120,22 @@ async def test_explicit_continue_can_retry_an_ambiguous_model_operation(monkeypa
 @pytest.mark.asyncio
 async def test_explicit_continue_authorizes_failed_model_http_retry_only(monkeypatch):
     calls = []
+    updates = []
     async def rest(*args, **kwargs):
         calls.append((args, kwargs))
+        return [{"operation_key": "model:1", "result": {"category": "timeout"}}]
+    async def update(*args, **kwargs):
+        updates.append((args, kwargs))
         return []
     monkeypatch.setattr(engine.db, "rest", rest)
+    monkeypatch.setattr(engine.db, "update", update)
     await engine.authorize_ambiguous_retry("run")
     _, kwargs = calls[0]
     assert kwargs["params"]["kind"] == "in.(model,calculate)"
     assert kwargs["params"]["status"] == "in.(started,ambiguous,failed)"
-    assert kwargs["body"]["result"]["category"] == "user_retry_authorized"
+    assert updates[0][0][1]["result"]["category"] == "user_retry_authorized"
+    assert updates[0][0][1]["result"]["previous_category"] == "timeout"
+    assert updates[0][1]["operation_key"] == "model:1"
 
 
 @pytest.mark.asyncio
@@ -473,3 +480,199 @@ def test_assembly_requirements_bind_unscoped_part_dimensions_by_name():
     ]}
     bound = bind_requirements_to_manifest(requirements, manifest)
     assert [item["componentId"] for item in bound] == ["base_shell", "pcb"]
+
+from forma_api.execution import ExecutionFailure, SandboxExpired, build_error, identity
+
+
+@pytest.mark.asyncio
+async def test_expired_checkpoint_sandbox_gets_new_name_and_is_reused(monkeypatch):
+    from forma_api import maintenance
+
+    run = {"id": str(uuid4())}
+    old = "forma-old-cad-deadbeef"
+    cp = {"sandbox": old, "sandboxReady": True}
+    created, probed, released, ledger = [], [], [], []
+
+    class FakeExecutor:
+        async def is_running(self, name):
+            probed.append(name)
+            if name == old:
+                raise SandboxExpired("stopped")
+
+        async def inspect(self, name):
+            raise AssertionError("a fresh sandbox has no receipt to inspect")
+
+        async def create(self, name):
+            created.append(name)
+            return name
+
+    async def fake_operation(_run, key, kind, callback, *, idempotent=False):
+        ledger.append((key, kind, idempotent))
+        return await callback()
+
+    async def release(name):
+        released.append(name)
+
+    async def ignore(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(engine, "executor", lambda: FakeExecutor())
+    monkeypatch.setattr(engine, "operation", fake_operation)
+    monkeypatch.setattr(engine, "settings", lambda: type("Settings", (), {
+        "executor": "vercel", "resource_budgets_enabled": False})())
+    monkeypatch.setattr(maintenance, "release_sandbox", release)
+    monkeypatch.setattr(engine.tracing, "record", ignore)
+    monkeypatch.setattr(engine.repo, "event", ignore)
+
+    await engine.ensure_sandbox(run, cp, AppSettings().limits)
+    replacement = cp["sandbox"]
+    assert replacement != old
+    assert replacement.startswith(f"forma-{run['id'].replace('-', '')}-cad-")
+    assert cp["sandboxReady"] is True
+    assert released == [old]
+    assert created == [replacement]
+    assert ledger == [(f"sandbox:{replacement}", "sandbox_prepare", True)]
+    await engine.ensure_sandbox(run, cp, AppSettings().limits)
+    assert created == [replacement]
+    assert probed == [old, replacement, replacement]
+
+
+@pytest.mark.asyncio
+async def test_sandbox_probe_error_does_not_trigger_replacement(monkeypatch):
+    cp = {"sandbox": "forma-live", "sandboxReady": True}
+
+    class FakeExecutor:
+        async def is_running(self, name):
+            raise ExecutionFailure("inspection control failed")
+
+        async def create(self, name):
+            raise AssertionError("must not create a replacement")
+
+    monkeypatch.setattr(engine, "executor", lambda: FakeExecutor())
+    with pytest.raises(ExecutionFailure, match="inspection control failed"):
+        await engine.ensure_sandbox({"id": str(uuid4())}, cp, AppSettings().limits)
+    assert cp == {"sandbox": "forma-live", "sandboxReady": True}
+
+
+@pytest.mark.asyncio
+async def test_vercel_probe_checks_session_without_reading_build_receipt(monkeypatch):
+    from types import SimpleNamespace
+    from vercel import sandbox
+    from forma_api.execution import VercelExecutor
+
+    async def get_sandbox(*, name):
+        return SimpleNamespace(current_session=SimpleNamespace(status=sandbox.SandboxStatus.RUNNING))
+
+    async def unexpected_command(*args, **kwargs):
+        raise AssertionError("probe must not invoke control.py inspect")
+
+    monkeypatch.setattr(sandbox, "get_sandbox", get_sandbox)
+    monkeypatch.setattr(VercelExecutor, "command", unexpected_command)
+    assert await VercelExecutor().is_running("forma-fresh") is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status,expired", [(404, True), (503, False)])
+async def test_vercel_missing_sandbox_is_expired_but_provider_outage_is_not(monkeypatch, status, expired):
+    import httpx
+    from vercel import sandbox
+    from forma_api.execution import VercelExecutor
+
+    async def get_sandbox(*, name):
+        response = httpx.Response(status, request=httpx.Request("GET", f"https://example.test/{name}"))
+        raise sandbox.SandboxApiError(response, "provider lookup failed")
+
+    monkeypatch.setattr(sandbox, "get_sandbox", get_sandbox)
+    expected = SandboxExpired if expired else sandbox.SandboxApiError
+    with pytest.raises(expected):
+        await VercelExecutor().box("forma-missing")
+
+
+@pytest.mark.asyncio
+async def test_unverified_assembly_evidence_preserves_focused_review():
+    from forma_api.graphs.design import validate
+
+    result = await validate({
+        "build_result": {
+            "ok": True,
+            "requirements": [{
+                "id": "pivot_axis",
+                "kind": "unverified",
+                "status": "unverified",
+            }],
+        }
+    })
+    assert result["phase"] == "review_session"
+    assert result["review"] == {}
+
+
+@pytest.mark.asyncio
+async def test_failed_build_stops_at_configured_repair_limit(monkeypatch):
+    import forma_api.graphs.design as design
+
+    class Limits:
+        maxRepairs = 3
+
+    class Settings:
+        limits = Limits()
+
+    async def settings():
+        return Settings()
+
+    monkeypatch.setattr(design, "app_settings", settings)
+    result = await design.validate({
+        "repairs": 3,
+        "attempts": 3,
+        "cad_history": [],
+        "build_result": {
+            "ok": False,
+            "error": {"guidance": "Inspect the failing operation and repair the candidate before rebuilding."},
+        },
+    })
+    assert result["phase"] == "final"
+    assert result["terminal_status"] == "failed"
+    assert "bounded CAD repair limit" in result["final_message"]
+
+
+def test_assembly_root_mismatch_has_actionable_repair_guidance():
+    error = build_error({"diagnostic":
+        "ValueError: Assembly placements in manifest do not match the root STEP geometry"}, "validation")
+    assert error["category"] == "assembly_root_mismatch"
+    assert "CadQuery Assembly" in error["guidance"]
+    assert "rootComponentId" in error["guidance"]
+
+
+def test_openrouter_recovers_only_one_missing_outer_tool_list_bracket():
+    from forma_api.providers.openrouter import _recover_text_tool_call
+
+    tools = [{"type": "function", "function": {"name": "build"}}]
+    recovered = _recover_text_tool_call('[[{"name":"build","parameters":{}}]', tools)
+    assert recovered["name"] == "build"
+    assert recovered["input"] == {}
+    multiline = _recover_text_tool_call('[\n[\n{"name":"build","parameters":{}}\n]', tools)
+    assert multiline["name"] == "build"
+    assert _recover_text_tool_call('[[{"name":"build","parameters":{', tools) is None
+
+
+def test_read_file_rejects_empty_and_outside_workspace_paths_at_contract_boundary():
+    from pydantic import ValidationError
+    from forma_api.tools import parse_tool
+
+    with pytest.raises(ValidationError):
+        parse_tool("cad", "read_file", {"path": ""})
+    with pytest.raises(ValidationError):
+        parse_tool("cad", "read_file", {"path": "README.md"})
+
+
+def test_cad_unwraps_provider_item_wrappers_before_hierarchy_validation():
+    from forma_api.graphs.design import normalize_instance_hierarchy
+
+    manifest = {"instances": {"item": [
+        {"id": "base", "definitionId": "base_part", "parentId": None,
+         "name": "Base", "frame": {"position": {"item": [0, 0, 0]},
+                                      "rotation": {"item": [0, 0, 0]}}},
+    ]}}
+    normalized, changed = normalize_instance_hierarchy(manifest)
+    assert changed is False
+    assert normalized["instances"][0]["id"] == "base"
+    assert normalized["instances"][0]["frame"]["position"] == [0, 0, 0]

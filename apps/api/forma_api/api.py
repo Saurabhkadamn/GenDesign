@@ -3,6 +3,7 @@ import asyncio
 import json
 import os
 import re
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
@@ -11,7 +12,7 @@ from pydantic import ValidationError
 from . import db, models, repository as repo
 from .config import settings
 from .contracts import AppSettings, ChatRequest, ResumeRequest, SessionView, TERMINAL, Project, WorkspaceState, Run, ModelConfigView, ModelOptions
-from .security import clear_session, encrypt_secret, require_profile, same_origin, set_session
+from .security import clear_session, encrypt_secret, encrypt_secret_set, require_profile, same_origin, set_session
 from .providers.openai_compatible import base_url as compatible_base_url
 
 router = APIRouter(prefix="/api")
@@ -279,7 +280,29 @@ async def dispatch(path: str, request: Request, response: Response):
                 if isinstance(max_output_tokens, bool) or not isinstance(max_output_tokens, int) or not 16 <= max_output_tokens <= 131072:
                     raise HTTPException(400, "Max output tokens must be an integer between 16 and 131072.")
             old = await db.one("model_configs", {"role": f"eq.{role}"}, required=False)
-            if data.get("apiKey"):
+            api_keys = data.get("apiKeys")
+            if api_keys is not None:
+                if not isinstance(api_keys, list):
+                    raise HTTPException(400, "API keys must be a list.")
+                if any(not isinstance(item, str) for item in api_keys):
+                    raise HTTPException(400, "Each API key must be text.")
+                api_keys = [item.strip() for item in api_keys if item.strip()]
+                if len(api_keys) > 3 or any(not 10 <= len(item) <= 512 for item in api_keys):
+                    raise HTTPException(400, "Enter between one and three API keys, each 10 to 512 characters.")
+                if len(set(api_keys)) != len(api_keys):
+                    raise HTTPException(400, "API keys must be unique and listed in fallback order.")
+                if data.get("apiKey") and api_keys:
+                    raise HTTPException(400, "Send apiKey or apiKeys, not both.")
+                if len(api_keys) > 1 and (provider != "openai_compatible"
+                        or urlsplit(base_url or "").hostname != "generativelanguage.googleapis.com"):
+                    raise HTTPException(400, "Ordered key fallback is currently supported only for Google AI Studio Gemini.")
+                if api_keys:
+                    encrypted, hint = encrypt_secret_set(api_keys, role), "••••" + api_keys[0][-4:]
+                elif old:
+                    encrypted, hint = old["encrypted_key"], old["key_hint"]
+                else:
+                    raise HTTPException(400, "Enter an API key for the first connection.")
+            elif data.get("apiKey"):
                 key = text(data, "apiKey", 10, 512)
                 encrypted, hint = encrypt_secret(key, role), "••••" + key[-4:]
             elif old:

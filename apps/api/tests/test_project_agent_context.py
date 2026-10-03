@@ -26,7 +26,9 @@ async def test_context_keeps_first_brief_latest_turns_and_revision_evidence(monk
         assert table == "revisions"
         return {"id": "r1", "summary": "First draft", "manifest": {"components": []},
             "validation": {"requirements": [{"status": "unverified"}],
-                "allRequirementsVerified": False}}
+                "allRequirementsVerified": False,
+                "components": {"plate": {"dimensions": [8, 8, 4], "solids": 1, "valid": True}},
+                "inspection": {"components": {"plate": {"boundsMm": [-4, -4, -2.001, 4, 4, 2.001]}}}}}
 
     monkeypatch.setattr(projects, "owned_project", owned_project)
     monkeypatch.setattr(projects.db, "rest", rest)
@@ -36,6 +38,9 @@ async def test_context_keeps_first_brief_latest_turns_and_revision_evidence(monk
     assert all(message["content"] != "Change the groove" for message in result["previousMessages"])
     assert result["revision"]["allRequirementsVerified"] is False
     assert result["selectedIds"] == ["outer_race"]
+    # Accepted STEP dimensions must be available when the next turn changes
+    # only thickness; a preview-inflated inspection box is a different fact.
+    assert result["revision"]["componentMeasurements"]["plate"]["dimensions"] == [8, 8, 4]
 
 
 @pytest.mark.asyncio

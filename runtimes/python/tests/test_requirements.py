@@ -47,6 +47,15 @@ def test_unsupported_is_unverified():
     assert check(plate(), [{"id": "material", "description": "Aluminum alloy", "kind": "unverified"}])[0]["status"] == "unverified"
 
 
+def test_maximum_envelope_accepts_smaller_geometry_and_rejects_oversize():
+    shape = cq.Workplane("XY").box(360, 270, 7).val()
+    limit = {"id": "envelope", "description": "Fits within 400 × 300 × 60 mm",
+        "kind": "max_dimensions", "dimensions": [400, 300, 60]}
+    assert check(shape, [limit])[0]["status"] == "passed"
+    limit["dimensions"] = [350, 300, 60]
+    assert check(shape, [limit])[0]["status"] == "failed"
+
+
 def test_y_axis_frame_holes_are_checked_in_the_xz_plane():
     shape = (cq.Workplane("XY").box(40, 6, 30).faces(">Y").workplane()
              .pushPoints([(-10, -8), (-10, 8), (10, -8), (10, 8)]).hole(4).val())

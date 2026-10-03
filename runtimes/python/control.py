@@ -2,6 +2,7 @@
 import argparse
 import ctypes
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -17,6 +18,14 @@ import time
 
 JOB = Path("/job")
 CAD = pwd.getpwnam("cad")
+
+
+def installed_version():
+    root = Path("/opt/forma")
+    spec = importlib.util.spec_from_file_location("forma_runtime_identity", root / "runtime_identity.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.runtime_version(root)
 
 
 def cad_processes():
@@ -86,11 +95,7 @@ def demote():
 
 def execute(operation, timeout, calculation_path):
     identity = json.loads((JOB / "workspace/identity.json").read_text())
-    runtime_files = (
-        "uv.lock", "forma_runtime.py", "requirements_check.py",
-        "geometry_inspection.py", "control.py",
-    )
-    actual_runtime = "forma-" + hashlib.sha256(b"".join((Path("/opt/forma") / name).read_bytes() for name in runtime_files)).hexdigest()[:16]
+    actual_runtime = installed_version()
     if identity.get("runtime") != actual_runtime:
         raise RuntimeError("Installed runtime hash does not match the candidate identity")
     command = ["/opt/forma/.venv/bin/python", "-I", "/opt/forma/forma_runtime.py", operation,
@@ -130,7 +135,7 @@ def main():
     parser.add_argument("--path", default="")
     args = parser.parse_args()
     if args.action == "read":
-        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*\.(step|glb|json)", args.path):
+        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*\.(step|glb|json|csv)", args.path):
             raise ValueError("Invalid output filename")
         path = JOB / "output" / args.path
         info = path.lstat()
@@ -139,8 +144,9 @@ def main():
         sys.stdout.buffer.write(path.read_bytes())
         return
     if args.action == "prepare":
+        version = installed_version()
         prepare()
-        result = {"ready": True}
+        result = {"ready": True, "runtimeVersion": version}
     elif args.action == "cancel":
         result = {"clean": cleanup()}
     elif args.action == "inspect":

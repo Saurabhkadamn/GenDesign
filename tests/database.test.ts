@@ -14,12 +14,13 @@ beforeAll(async () => {
   await db.exec(`create role anon;create role authenticated;create role service_role bypassrls;create schema auth;create schema storage;
   create table auth.users(id uuid primary key);create function auth.uid() returns uuid language sql stable as $$ select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid $$;
   grant usage on schema public,auth,storage to anon,authenticated,service_role;grant execute on function auth.uid() to authenticated;
-  create table storage.buckets(id text primary key,name text,public boolean,file_size_limit bigint);`);
+  create table storage.buckets(id text primary key,name text,public boolean,file_size_limit bigint,allowed_mime_types text[]);`);
   await db.exec(
     readFileSync('supabase/migrations/20260831021659_initial_cad_workspace.sql', 'utf8'),
   );
   await db.exec(readFileSync('supabase/migrations/20260831181720_python_services_runtime.sql', 'utf8'));
   await db.exec(readFileSync('supabase/migrations/20260901010000_cloud_artifact_staging.sql', 'utf8'));
+  await db.exec(readFileSync('supabase/migrations/20261001073730_native_assembly_bom_artifacts.sql', 'utf8'));
   await db.query('insert into auth.users(id) values($1),($2)', [alice, bob]);
   await db.query(
     "insert into public.profiles(id,email,must_change_password) values($1,'alice@example.test',false),($2,'bob@example.test',false)",
@@ -127,6 +128,20 @@ describe.sequential('database invariants', () => {
         randomUUID(),
       ]),
     ).rejects.toThrow('STALE_REVISION');
+  });
+  it('stores BOM and assembly evidence under the existing revision ownership', async () => {
+    for (const [name, kind] of [['bom-flat.csv', 'bom'], ['assembly.json', 'assembly']]) {
+      await db.query('insert into public.artifacts(project_id,revision_id,name,kind,bytes,storage_path) values($1,$2,$3,$4,10,$5)',
+        [project, revisionId, name, kind, `${alice}/${project}/${name}`]);
+    }
+    await db.query("select set_config('request.jwt.claim.sub',$1,false)", [bob]);
+    await db.exec('set role authenticated');
+    expect((await db.query('select * from public.artifacts')).rows).toHaveLength(0);
+    await db.exec('reset role');
+    await db.query("select set_config('request.jwt.claim.sub',$1,false)", [alice]);
+    await db.exec('set role authenticated');
+    expect((await db.query('select * from public.artifacts')).rows).toHaveLength(2);
+    await db.exec('reset role');
   });
   it('enforces compute reservations atomically and does not double count retries', async () => {
     expect(

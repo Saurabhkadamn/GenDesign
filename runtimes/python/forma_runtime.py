@@ -85,6 +85,20 @@ def build(root: Path, output: Path) -> None:
 
     for cid in definitions:
         component(cid)
+    if manifest.get("nativeAssembly"):
+        state = trusted_support("assembly_state")
+        worlds, _solution = state.accepted_state(manifest, output)
+        root_id = manifest["rootComponentId"]
+        assembly = state.canonical_assembly(manifest, {cid: shape_of(value) for cid, value in built.items()}, worlds)
+        assembly.export(str(output / f"{root_id}.step"), exportType="STEP")
+
+
+def trusted_support(name):
+    path = Path(__file__).with_name(name + ".py")
+    spec = importlib.util.spec_from_file_location("forma_" + name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def properties(shape: cq.Shape, kind: str) -> dict[str, Any]:
@@ -97,14 +111,14 @@ def properties(shape: cq.Shape, kind: str) -> dict[str, Any]:
     solids = shape.Solids()
     if kind == "solid" and not solids:
         raise ValueError("Expected a closed solid")
-    if kind == "solid" and any(s.Volume() <= 0 for s in solids):
+    if kind == "solid" and any(s.Volume(tol=1e-9) <= 0 for s in solids):
         raise ValueError("Non-positive solid volume")
     if not shape.Faces():
         raise ValueError("Geometry must contain faces")
     return {
         "bounds": bounds,
         "dimensions": [box.xlen, box.ylen, box.zlen],
-        "volumeMm3": sum(s.Volume() for s in solids),
+        "volumeMm3": sum(s.Volume(tol=1e-9) for s in solids),
         "areaMm2": shape.Area(),
         "solids": len(solids),
         "faces": len(shape.Faces()),
@@ -115,7 +129,9 @@ def properties(shape: cq.Shape, kind: str) -> dict[str, Any]:
 def mesh_of(shape: cq.Shape, color: str) -> trimesh.Trimesh:
     import trimesh
 
-    vertices, faces = shape.tessellate(0.1, 0.15)
+    # OCCT attaches triangulations to the shape and uses their deflection in
+    # later bounding boxes. Keep preview meshing off the inspection B-rep.
+    vertices, faces = shape.copy().tessellate(0.1, 0.15)
     if len(faces) > 1_000_000:
         raise ValueError("Preview exceeds one million triangles")
     rgba = [int(color[i : i + 2], 16) for i in (1, 3, 5)] + [255]
@@ -168,22 +184,29 @@ def validate(root: Path, output: Path) -> None:
             )
     definitions = {c["id"]: c for c in manifest["components"]}
     instances = {i["id"]: i for i in manifest["instances"]}
-    transforms: dict[str, np.ndarray] = {}
-
-    def world_transform(iid: str) -> np.ndarray:
-        if iid not in transforms:
-            instance = instances[iid]
-            frame = instance["frame"]
-            transform = trimesh.transformations.euler_matrix(
-                *np.radians(frame["rotation"]), axes="sxyz"
-            )
-            transform[:3, 3] = frame["position"]
-            transforms[iid] = (
-                world_transform(instance["parentId"]) @ transform
-                if instance["parentId"]
-                else transform
-            )
-        return transforms[iid]
+    state = trusted_support("assembly_state")
+    transforms, solution = state.accepted_state(manifest, output)
+    root_id = manifest.get("rootComponentId")
+    placement = state.verify_step_occurrences(shapes, manifest, transforms,
+        step_path=root / f"{root_id}.step" if root_id else None)
+    report["assemblyPlacement"] = placement
+    if solution is not None:
+        report["nativeAssembly"] = solution["validation"]
+        write_json(output / "assembly.json", {
+            "identity": read_json(root / "identity.json") if (root / "identity.json").exists() else {},
+            **solution})
+        report["artifacts"].append({"name": "assembly.json", "kind": "assembly", "componentId": None,
+                                    "bytes": (output / "assembly.json").stat().st_size})
+        # Inspection consumes the same solved placements as preview and STEP.
+        solved_manifest = json.loads(json.dumps(manifest))
+        for instance in solved_manifest["instances"]:
+            iid = instance["id"]
+            parent = instance.get("parentId")
+            local = np.linalg.inv(transforms[parent]) @ transforms[iid] if parent else transforms[iid]
+            instance["frame"] = {"position": local[:3, 3].tolist(), "rotation":
+                state.Rotation.from_matrix(local[:3, :3]).as_euler("xyz", degrees=True).tolist()}
+    else:
+        solved_manifest = manifest
 
     if instances:
         # Non-leaf assembly nodes are groups. Individual parts retain stable instance IDs.
@@ -196,7 +219,7 @@ def validate(root: Path, output: Path) -> None:
                 mesh_of(shapes[definition["id"]], definition["color"]),
                 node_name=iid,
                 geom_name=iid,
-                transform=world_transform(iid),
+                transform=transforms[iid],
             )
     elif manifest["rootComponentId"]:
         cid = manifest["rootComponentId"]
@@ -224,8 +247,6 @@ def validate(root: Path, output: Path) -> None:
             "bytes": (output / "preview.glb").stat().st_size,
         }
     )
-    if any(a["bytes"] > MAX_BYTES for a in report["artifacts"]):
-        raise ValueError("Artifact exceeds 40 MB limit")
     # This file comes from the coordinator through the trusted staging layer.
     # The validator receives no generated Python and reopens the STEP independently.
     if (root / "requirements.json").exists():
@@ -233,7 +254,7 @@ def validate(root: Path, output: Path) -> None:
         spec = importlib.util.spec_from_file_location("forma_requirements", Path(__file__).with_name("requirements_check.py"))
         checker = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(checker)
-        report["requirements"] = checker.check_requirements(shapes, manifest, read_json(root / "requirements.json"))
+        report["requirements"] = checker.check_requirements(shapes, solved_manifest, read_json(root / "requirements.json"))
         report["allRequirementsVerified"] = bool(report["requirements"]) and all(c["status"] == "passed" for c in report["requirements"])
     # Produce a request-independent evidence inventory.  Reviewer and CAD
     # agents decide which facts matter for the current design; this trusted
@@ -243,9 +264,24 @@ def validate(root: Path, output: Path) -> None:
     inspection_spec = importlib.util.spec_from_file_location("forma_geometry_inspection", inspection_path)
     inspector = importlib.util.module_from_spec(inspection_spec)
     inspection_spec.loader.exec_module(inspector)
-    report["inspection"] = inspector.inspect_project(shapes, manifest)
+    report["inspection"] = inspector.inspect_project(shapes, solved_manifest)
     if (root / "identity.json").exists():
         report["identity"] = read_json(root / "identity.json")
+    # An assembly without an occurrence inventory cannot yield a trustworthy
+    # BOM. The geometry validator above rejects that inconsistency first.
+    if placement["validatedOccurrences"]:
+        bom_module = trusted_support("bom")
+        bom = bom_module.generate_bom(solved_manifest,
+            validated_occurrences=placement["validatedOccurrences"], identity=report.get("identity"))
+        report["bom"] = bom
+        write_json(output / "bom.json", bom)
+        for mode in ("flat", "structured"):
+            (output / f"bom-{mode}.csv").write_text(bom_module.csv_export(bom, mode), encoding="utf-8-sig")
+        for name in ("bom.json", "bom-flat.csv", "bom-structured.csv"):
+            report["artifacts"].append({"name": name, "kind": "bom", "componentId": None,
+                                       "bytes": (output / name).stat().st_size})
+    if any(a["bytes"] > MAX_BYTES for a in report["artifacts"]):
+        raise ValueError("Artifact exceeds 40 MB limit")
     write_json(output / "report.json", report)
 
 

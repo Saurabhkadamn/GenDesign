@@ -145,6 +145,36 @@ async def test_followup_cad_delegation_preserves_original_brief_and_selection(mo
 
 
 @pytest.mark.asyncio
+async def test_old_checkpoint_refreshes_accepted_dimensions_once(monkeypatch, graph_mocks):
+    refreshed = []
+    owned_context = {"revision": {"id": "r1", "componentMeasurements": {
+        "plate": {"dimensions": [8, 8, 4], "solids": 1, "valid": True}}}}
+
+    async def context(project, owner, run, revision, selected):
+        assert project.endswith("2") and owner.endswith("3") and revision == "r1"
+        refreshed.append(run)
+        return owned_context
+
+    async def turn(_config, messages, _tools, **_kwargs):
+        assert "componentMeasurements" in messages[1]["content"]
+        assert "[8, 8, 4]" in messages[1]["content"]
+        return {"message": {"role": "assistant", "content": "", "tool_calls": [{
+            "id": "inspect", "type": "function", "function": {
+                "name": "inspect_project", "arguments": "{}"}}]},
+            "calls": [{"id": "inspect", "name": "inspect_project", "input": {}}],
+            "inputTokens": 1, "outputTokens": 1, "webSearchRequests": 0}
+
+    monkeypatch.setattr(design.repo, "agent_context", context)
+    monkeypatch.setattr(design.models, "turn", turn)
+    initial = state(base_revision_id="r1", project_context={"revision": {"id": "r1"}})
+    result = await design.coordinator_session(initial)
+    assert result["project_context"] == owned_context
+    assert json.loads(result["coordinator_history"][-1]["content"]) == owned_context
+    await design.coordinator_session({**initial, **result})
+    assert len(refreshed) == 1
+
+
+@pytest.mark.asyncio
 async def test_cad_session_rejects_malformed_source_before_persisting(monkeypatch, graph_mocks):
     manifest = {
         "schemaVersion": 1, "units": "mm",
@@ -597,6 +627,45 @@ async def test_successful_intermediate_build_returns_to_cad():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("previous_final,requested_final,finalizes", [
+    (False, True, True), (True, True, False), (False, False, False),
+])
+async def test_unchanged_successful_milestone_can_enter_final_review(
+        monkeypatch, graph_mocks, previous_final, requested_final, finalizes):
+    graph_mocks["candidate"] = {"manifest": {
+        "components": [{"id": "plate", "kind": "solid"}],
+        "rootComponentId": "plate"}, "files": {"parts/plate.py": "saved source"}}
+
+    async def turn(*_args, **_kwargs):
+        arguments = {"final": requested_final}
+        return {"message": {"role": "assistant", "content": "", "tool_calls": [{
+            "id": "final-build", "type": "function", "function": {
+                "name": "build", "arguments": json.dumps(arguments)}}]},
+            "calls": [{"id": "final-build", "name": "build", "input": arguments}],
+            "inputTokens": 10, "outputTokens": 20, "webSearchRequests": 0}
+
+    build_states = []
+
+    async def checked_build(build_state):
+        build_states.append(build_state)
+        return {"phase": "validate", "build_final": build_state["build_final"],
+                "build_result": {"ok": True, "inspection": {}}}
+
+    monkeypatch.setattr(design.models, "turn", turn)
+    monkeypatch.setattr(design, "build", checked_build)
+    inputs = state(build_result={"ok": True}, build_final=previous_final,
+                   cad_edits_since_build=0)
+    result = await design.cad_session(inputs)
+    if finalizes:
+        assert len(build_states) == 1 and build_states[0]["build_final"] is True
+        assert (await design.validate({**inputs, **result}))["phase"] == "review_session"
+    else:
+        assert build_states == [] and result["phase"] == "cad_session"
+        feedback = json.loads(result["cad_history"][-1]["content"])
+        assert feedback["category"] == "unchanged_successful_candidate"
+
+
+@pytest.mark.asyncio
 async def test_inline_build_persists_consumed_model_turn_and_milestone(monkeypatch, graph_mocks):
     async def build_candidate(_run, checkpoint, _limits, _key):
         checkpoint["attempts"] = 1
@@ -615,3 +684,374 @@ async def test_inline_build_persists_consumed_model_turn_and_milestone(monkeypat
     assert output["build_final"] is False
     assert output["pending_cad_call"]["id"] == "build-1"
     assert output["built_part_types"] == 2
+
+def test_numbered_component_inventory_for_incremental_assembly():
+    request = """Design Task: mechanism
+## Components (2 types)
+1. Base plate — fixed structure.
+2. Guide rail — two instances.
+
+## Assembly Requirements
+- Keep both rails aligned.
+"""
+    assert design.requested_component_labels(request) == ["Base plate", "Guide rail"]
+    assert design.requested_component_labels("Create a single 80 x 50 mm plate.") == []
+
+
+@pytest.mark.asyncio
+async def test_first_multi_component_cad_turn_exposes_incremental_milestone(monkeypatch, graph_mocks):
+    request = """Design Task: mechanism
+Components:
+1. Base plate — fixed structure.
+2. Guide rail — two instances.
+Assembly Requirements:
+- Keep both rails aligned.
+"""
+    manifest = {
+        "schemaVersion": 1, "units": "mm",
+        "components": [{"id": "base", "name": "Base plate", "source": "parts/base.py",
+            "kind": "solid", "dependencies": [], "parameters": {}, "color": "#b9c4ad"}],
+        "instances": [], "rootComponentId": "base", "references": [], "joints": [],
+        "configurations": [], "featureOperations": [],
+    }
+    arguments = {"files": [{"path": "parts/base.py",
+        "content": "import cadquery as cq\ndef build(p,d): return cq.Workplane('XY').box(10,10,2)"}],
+        "manifest": manifest, "deletePaths": []}
+    seen = {}
+
+    async def turn(_config, messages, tools, **_kwargs):
+        seen["tools"] = [item["function"]["name"] for item in tools]
+        seen["context"] = json.loads(messages[1]["content"].split(": ", 1)[1])
+        return {"message": {"role": "assistant", "content": "", "tool_calls": [{
+            "id": "base-patch", "type": "function", "function": {
+                "name": "apply_changes", "arguments": json.dumps(arguments)}}]},
+            "calls": [{"id": "base-patch", "name": "apply_changes", "input": arguments}],
+            "inputTokens": 10, "outputTokens": 20, "webSearchRequests": 0}
+
+    monkeypatch.setattr(design.models, "turn", turn)
+    result = await design.cad_session(state(original_request=request,
+        cad_history=[{"role": "user", "content": request}]))
+    assert "apply_changes" in seen["tools"]
+    assert "read_file" in seen["tools"]
+    assert seen["context"]["componentMilestone"]["requestedTypes"] == ["Base plate", "Guide rail"]
+    assert seen["context"]["request"] == request
+    assert result["phase"] == "cad_session"
+    assert len(graph_mocks["candidate"]["manifest"]["components"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_second_part_requires_real_assembly_root_before_rebuild(monkeypatch, graph_mocks):
+    graph_mocks["candidate"] = {"manifest": {
+        "schemaVersion": 1, "units": "mm", "rootComponentId": "base",
+        "components": [{"id": "base", "kind": "solid"}, {"id": "gear", "kind": "solid"}],
+        "instances": [{"id": "base_inst", "definitionId": "base"},
+                      {"id": "gear_inst", "definitionId": "gear"}],
+    }, "files": {"parts/base.py": "pass", "parts/gear.py": "pass"}}
+    seen = {}
+
+    async def turn(_config, messages, tools, **_kwargs):
+        seen["tools"] = [item["function"]["name"] for item in tools]
+        seen["context"] = json.loads(messages[1]["content"].split(": ", 1)[1])
+        return {"message": {"role": "assistant", "content": ""}, "calls": [],
+                "inputTokens": 1, "outputTokens": 1, "webSearchRequests": 0}
+
+    monkeypatch.setattr(design.models, "turn", turn)
+    result = await design.cad_session(state(build_result={"ok": False,
+        "error": {"category": "assembly_root_mismatch"}}))
+    assert result["phase"] == "cad_session"
+    assert seen["tools"] == ["apply_changes"]
+    assert "rootComponentId" in seen["context"]["assemblyRootRepair"]
+
+
+@pytest.mark.asyncio
+async def test_partial_assembly_build_continues_until_all_types_staged(graph_mocks):
+    request = """Design Task: mechanism
+Components:
+1. Base plate — fixed structure.
+2. Guide rail — two instances.
+Assembly Requirements:
+- Keep both rails aligned.
+"""
+    graph_mocks["candidate"] = {"manifest": {"components": [
+        {"id": "base", "kind": "solid"}]}, "files": {}}
+    history = [{"role": "user", "content": request}, {"role": "assistant", "content": "",
+        "tool_calls": [{"id": "build-1", "type": "function", "function": {
+            "name": "build", "arguments": "{}"}}]}]
+    inputs = state(original_request=request, cad_history=history,
+        pending_cad_call={"id": "build-1"}, build_result={"ok": True})
+    partial = await design.validate(inputs)
+    assert partial["phase"] == "cad_session"
+    assert "1 of 2" in partial["cad_history"][-1]["content"]
+    graph_mocks["candidate"]["manifest"]["components"].append(
+        {"id": "rail", "kind": "solid"})
+    complete = await design.validate(inputs)
+    assert complete["phase"] == "review_session"
+
+
+@pytest.mark.asyncio
+async def test_inline_build_keeps_model_call_ordinal_for_next_cad_turn(monkeypatch, graph_mocks):
+    request = """Design Task: mechanism
+Components:
+1. Base plate — fixed structure.
+2. Guide rail — two instances.
+"""
+    graph_mocks["candidate"] = {"manifest": {
+        "schemaVersion": 1, "units": "mm",
+        "components": [{"id": "base", "name": "Base plate", "kind": "solid"}],
+        "instances": [], "rootComponentId": "base", "references": [], "joints": [],
+        "configurations": [], "featureOperations": [],
+    }, "files": {"parts/base.py": "def build(p,d): pass"}}
+    arguments = {}
+
+    async def turn(*_args, **_kwargs):
+        return {"message": {"role": "assistant", "content": "", "tool_calls": [{
+            "id": "build-2", "type": "function", "function": {
+                "name": "build", "arguments": "{}"}}]},
+            "calls": [{"id": "build-2", "name": "build", "input": arguments}],
+            "inputTokens": 10, "outputTokens": 20, "webSearchRequests": 0}
+
+    seen = {}
+
+    async def inline_build(build_state):
+        seen["model_calls"] = build_state["model_calls"]
+        return {"phase": "validate", "attempts": 2}
+
+    monkeypatch.setattr(design.models, "turn", turn)
+    monkeypatch.setattr(design, "build", inline_build)
+    result = await design.cad_session(state(original_request=request, model_calls=4,
+        cad_edits_since_build=1, cad_history=[{"role": "user", "content": request}]))
+
+    assert seen["model_calls"] == 5
+    assert result["phase"] == "validate"
+    assert result["model_calls"] == 5
+    assert result["cad_edits_since_build"] == 0
+    assert result["pending_cad_call"]["id"] == "build-2"
+
+
+@pytest.mark.asyncio
+async def test_build_ledger_key_changes_with_candidate_and_requirements(monkeypatch, graph_mocks):
+    graph_mocks["candidate"] = {"manifest": {"components": [{"id": "base", "kind": "solid"}],
+        "rootComponentId": "base"}, "files": {"parts/base.py": "source version 1"}}
+    keys = []
+
+    async def capture_operation(_run, key, _kind, callback, **_kwargs):
+        keys.append(key)
+        return await callback()
+
+    async def fake_build(_run, cp, _limits, _key):
+        cp["attempts"] += 1
+        return {"ok": True}
+
+    monkeypatch.setattr(design, "operation", capture_operation)
+    monkeypatch.setattr(design, "build_candidate", fake_build)
+    await design.build(state(attempts=2))
+    await design.build(state(attempts=2))
+    graph_mocks["candidate"]["files"]["parts/base.py"] = "source version 2"
+    await design.build(state(attempts=2))
+    await design.build(state(attempts=2, requirements=[{"id": "new-check",
+        "kind": "unverified", "description": "Additional advisory check"}]))
+
+    assert keys[0] == keys[1]
+    assert keys[1] != keys[2]
+    assert keys[2] != keys[3]
+
+
+@pytest.mark.asyncio
+async def test_cad_session_registers_buildable_part_when_manifest_is_omitted(monkeypatch, graph_mocks):
+    graph_mocks["candidate"] = {"manifest": {
+        "schemaVersion": 1, "units": "mm",
+        "components": [{"id": "base", "name": "Base", "source": "parts/base.py",
+            "kind": "solid", "dependencies": [], "parameters": {}}],
+        "instances": [], "rootComponentId": "base",
+    }, "files": {"parts/base.py": "def build(parameters, dependencies):\n    return None"}}
+    arguments = {"files": [{"path": "parts/sector_gear.py",
+        "content": "def build(parameters, dependencies):\n    return None"}],
+        "manifest": None, "deletePaths": []}
+
+    async def turn(*_args, **_kwargs):
+        return {"message": {"role": "assistant", "content": "", "tool_calls": [{
+            "id": "new-part", "type": "function", "function": {
+                "name": "apply_changes", "arguments": json.dumps(arguments)}}]},
+            "calls": [{"id": "new-part", "name": "apply_changes", "input": arguments}],
+            "inputTokens": 10, "outputTokens": 20, "webSearchRequests": 0}
+
+    monkeypatch.setattr(design.models, "turn", turn)
+    result = await design.cad_session(state())
+    components = graph_mocks["candidate"]["manifest"]["components"]
+    assert [(item["id"], item["source"]) for item in components] == [
+        ("base", "parts/base.py"), ("sector_gear", "parts/sector_gear.py")]
+    assert "sector_gear" in result["cad_history"][-1]["content"]
+    assert graph_mocks["candidate"]["manifest"]["rootComponentId"] == "base"
+
+
+def test_auto_registration_skips_helpers_without_build_and_existing_components():
+    manifest = {"components": [{"id": "base", "source": "parts/base.py", "kind": "solid"}]}
+    files = {
+        "parts/base.py": "def build(parameters, dependencies):\n    return None",
+        "parts/helper.py": "def radius():\n    return 1",
+        "parts/rail.py": "def build(parameters, dependencies):\n    return None",
+    }
+    updated, added = design.register_unlisted_part_sources(manifest, files)
+    assert added == ["rail"]
+    assert len(updated["components"]) == 2
+    assert len(manifest["components"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_cad_session_stops_repeated_text_instead_of_tool_call(monkeypatch, graph_mocks):
+    async def turn(*_args, **_kwargs):
+        return {"message": {"role": "assistant", "content": "[[{invalid tool text]"},
+            "calls": [], "inputTokens": 10, "outputTokens": 20, "webSearchRequests": 0}
+
+    monkeypatch.setattr(design.models, "turn", turn)
+    first = await design.cad_session(state())
+    assert first["phase"] == "cad_session"
+    assert first["cad_invalid_tool_attempts"] == 1
+    stopped = await design.cad_session(state(cad_invalid_tool_attempts=2))
+    assert stopped["phase"] == "final"
+    assert stopped["terminal_status"] == "failed"
+    assert "no usable tool call three times" in stopped["final_message"]
+
+
+@pytest.mark.asyncio
+async def test_cad_session_stops_repeated_malformed_tool_arguments(monkeypatch, graph_mocks):
+    arguments = {"path": ""}
+
+    async def turn(*_args, **_kwargs):
+        return {"message": {"role": "assistant", "content": "", "tool_calls": [{
+            "id": "empty-path", "type": "function", "function": {
+                "name": "read_file", "arguments": json.dumps(arguments)}}]},
+            "calls": [{"id": "empty-path", "name": "read_file", "input": arguments}],
+            "inputTokens": 10, "outputTokens": 20, "webSearchRequests": 0}
+
+    monkeypatch.setattr(design.models, "turn", turn)
+    result = await design.cad_session(state(cad_invalid_tool_attempts=2))
+    assert result["phase"] == "final"
+    assert result["terminal_status"] == "failed"
+    assert "invalid tool action three times" in result["final_message"]
+
+
+@pytest.mark.asyncio
+async def test_second_reviewer_repair_publishes_findings_for_user_edit(monkeypatch, graph_mocks):
+    graph_mocks["candidate"] = {
+        "manifest": {"schemaVersion": 1, "units": "mm", "components": [], "instances": [],
+            "rootComponentId": None, "references": [], "joints": [],
+            "configurations": [], "featureOperations": []}, "files": {},
+    }
+    review = {"summary": "One overlap remains.", "action": "repair", "findings": [{
+        "id": "overlap", "statement": "Parts should clear", "status": "observed_mismatch",
+        "severity": "error", "evidence": ["10 mm3 overlap"], "explanation": "Measured overlap.",
+        "repair_instruction": "Adjust the cavity.",
+    }]}
+
+    async def turn(*_args, **_kwargs):
+        return {"message": {"role": "assistant", "content": "", "tool_calls": [{
+            "id": "review-final", "type": "function", "function": {
+                "name": "submit_review", "arguments": json.dumps(review)}}]},
+            "calls": [{"id": "review-final", "name": "submit_review", "input": review}],
+            "inputTokens": 10, "outputTokens": 20, "webSearchRequests": 0}
+
+    monkeypatch.setattr(design.models, "turn", turn)
+    result = await design.review_session(state(
+        validation={"report": {"inspection": {}}}, review_repairs=2))
+    assert result["phase"] == "publish"
+    assert result["review"]["action"] == "publish"
+    assert "remaining findings" in result["review"]["summary"]
+
+
+def test_engineering_material_and_process_can_be_explanatory_text():
+    result = design.Analysis(
+        summary="Preliminary engineering assessment.",
+        selected_material="7075-T6 with certified minimum yield, density and temper-specific properties " * 12,
+        manufacturing_method="Forged case and carrier, finish-machined at the bearing bores and mounting faces " * 12,
+    )
+    assert len(result.selected_material) > 200
+    assert len(result.manufacturing_method) > 200
+
+
+@pytest.mark.asyncio
+async def test_pending_contract_correction_resumes_without_replaying_primary(monkeypatch, graph_mocks):
+    diagnostic = "selected_material and manufacturing_method exceeded their field limits"
+    rows = {
+        "graph:analysis:0": {"status": "failed", "result": {
+            "category": "tool_protocol", "diagnostic": diagnostic}},
+        "graph:analysis:contract-repair:1": {"status": "ambiguous", "result": None},
+    }
+
+    async def one(_table, params, *, required=True):
+        key = params["operation_key"].removeprefix("eq.")
+        return rows.get(key)
+
+    monkeypatch.setattr(design.db, "one", one)
+    calls = []
+    payload = {"summary": "Conservative concept assessment.",
+               "selected_material": "7075-T6", "manufacturing_method": "CNC machining"}
+
+    async def turn(_config, messages, tools, **_kwargs):
+        calls.append(messages)
+        return {"message": {"role": "assistant", "content": "", "tool_calls": [{
+            "id": "analysis-correction", "type": "function", "function": {
+                "name": "submit_analysis", "arguments": json.dumps(payload)}}]},
+            "calls": [{"id": "analysis-correction", "name": "submit_analysis", "input": payload}],
+            "inputTokens": 10, "outputTokens": 20, "webSearchRequests": 0}
+
+    monkeypatch.setattr(design.models, "turn", turn)
+    value, usage = await design.structured_turn(
+        state(), "engineering", "analysis", "Assess the design.", "submit_analysis", design.Analysis)
+
+    assert value.selected_material == "7075-T6"
+    assert usage["model_calls"] == 2
+    assert len(calls) == 1  # Only the correction call; the primary call is not replayed.
+    assert diagnostic in calls[0][-1]["content"]
+
+
+@pytest.mark.asyncio
+async def test_resumed_coordinator_answer_reaches_context_and_cad_delegation(monkeypatch, graph_mocks):
+    original = "Ask me for the new plate thickness before editing."
+    answer = "Use 3 mm and preserve all 60 occurrences."
+    monkeypatch.setattr(design, "interrupt", lambda _payload: {"message": answer})
+    initial = state(original_request=original, question="New thickness?",
+        coordinator_pending_call={"id": "question", "name": "ask_user"},
+        coordinator_history=[{"role": "user", "content": original},
+            {"role": "assistant", "tool_calls": [{"id": "question", "type": "function",
+                "function": {"name": "ask_user", "arguments": '{"question":"New thickness?"}'}}]}])
+    resumed = await design.coordinator_question(initial)
+    assert resumed["coordinator_history"][-1] == {"role": "user", "content": answer}
+
+    async def turn(_config, messages, _tools, **_kwargs):
+        context = json.loads(messages[1]["content"].split(": ", 1)[1])
+        assert answer in context["latestRequest"]
+        assert messages[-1] == {"role": "user", "content": answer}
+        arguments = {"role": "cad", "task": "Set thickness to 3 mm."}
+        return {"message": {"role": "assistant", "content": "", "tool_calls": [{
+            "id": "delegate", "type": "function", "function": {"name": "delegate", "arguments": json.dumps(arguments)}}]},
+            "calls": [{"id": "delegate", "name": "delegate", "input": arguments}],
+            "inputTokens": 10, "outputTokens": 20, "webSearchRequests": 0}
+
+    monkeypatch.setattr(design.models, "turn", turn)
+    result = await design.coordinator_session({**initial, **resumed})
+    assert result["phase"] == "cad_session"
+    task = json.loads(result["cad_history"][0]["content"])
+    assert answer in task["latestRequest"]
+    assert initial["original_request"] == original
+
+
+@pytest.mark.asyncio
+async def test_resumed_cad_answer_is_presented_as_user_input(monkeypatch, graph_mocks):
+    original = "Ask me for the thickness."
+    answer = "The thickness is 3 mm."
+    monkeypatch.setattr(design, "interrupt", lambda _payload: {"message": answer})
+    initial = state(original_request=original, pending_cad_call={"id": "question", "name": "ask_user"},
+        cad_history=[{"role": "user", "content": original},
+            {"role": "assistant", "tool_calls": [{"id": "question", "type": "function",
+                "function": {"name": "ask_user", "arguments": '{"question":"Thickness?"}'}}]}])
+    resumed = await design.cad_question(initial)
+    assert resumed["cad_history"][-1] == {"role": "user", "content": answer}
+
+    async def tool_turn(_state, **kwargs):
+        assert answer in kwargs["context"]["request"]
+        assert kwargs["history"][-1] == {"role": "user", "content": answer}
+        return None, kwargs["history"], {"model_calls": 1, "search_count": 0}
+
+    monkeypatch.setattr(design, "agent_tool_turn", tool_turn)
+    await design.cad_session({**initial, **resumed})

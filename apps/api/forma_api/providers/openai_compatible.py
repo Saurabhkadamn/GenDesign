@@ -7,6 +7,8 @@ or ``openrouter:web_search``.
 import asyncio
 import json
 import os
+import threading
+import time
 from urllib.parse import urlsplit
 
 import httpx
@@ -17,13 +19,30 @@ from ..tracing import sanitize
 from .openrouter import ModelFailure, _recover_text_tool_call
 
 DEFAULT_BASE_URL = "https://api.openai.com/v1"
-DEFAULT_MAX_OUTPUT_TOKENS = 32768
+DEFAULT_MAX_OUTPUT_TOKENS = 131072
+DEFAULT_REQUEST_TIMEOUT_SECONDS = 270
+VERCEL_MODEL_DEADLINE_SECONDS = 270
 NVIDIA_BASE_HOST = "integrate.api.nvidia.com"
 NVIDIA_NEMOTRON_PREFIX = "nvidia/nemotron-3-ultra-550b-a55b"
 NVIDIA_KIMI_PREFIX = "moonshotai/kimi-k3"
 BASETEN_BASE_HOST = "inference.baseten.co"
 BASETEN_DEEPSEEK_MODEL = "deepseek-ai/DeepSeek-V4.1-Flash"
+DEEPSEEK_V4_PREFIX = "deepseek-ai/DeepSeek-V4"
+NEBIUS_MINIMAX_PREFIX = "MiniMaxAI/MiniMax-M3"
+NEBIUS_FIRST_FALLBACK = "MiniMaxAI/MiniMax-M3"
 VERCEL_GATEWAY_HOST = "ai-gateway.vercel.sh"
+NEBIUS_TOKEN_FACTORY_HOSTS = {
+    "api.tokenfactory.us-central1.nebius.com",
+    "api.tokenfactory.nebius.com",
+}
+GEMINI_API_HOST = "generativelanguage.googleapis.com"
+GEMINI_DEFAULT_REQUESTS_PER_MINUTE = 4
+GEMINI_503_RETRY_DELAY_SECONDS = 1.0
+# A small margin makes the limit safe for any rolling 60 second window rather
+# than allowing a fifth call exactly on the minute boundary.
+GEMINI_REQUEST_INTERVAL_MARGIN_SECONDS = 0.1
+_gemini_request_lock = threading.Lock()
+_gemini_next_request_at = 0.0
 VERCEL_MODEL_CHAIN = (
     "spacexai/grok-4.6",
     "tencent/hy4-preview",
@@ -55,12 +74,12 @@ def base_url(config: dict) -> str:
 def _failure(status: int, body: str) -> ModelFailure:
     lower = body.lower()
     if status in (401, 403):
-        return ModelFailure("access", "The provider rejected access. Check the saved key and model access.")
+        return ModelFailure("access", "The provider rejected access. Check the saved key and model access.", status_code=status)
     if status == 429:
-        return ModelFailure("rate_limit", "The provider is rate-limited. Wait before continuing.", body[:8000])
+        return ModelFailure("rate_limit", "The provider is rate-limited. Wait before continuing.", body[:8000], status_code=status)
     if status >= 500 and any(word in lower for word in ("overload", "capacity", "unavailable")):
-        return ModelFailure("overloaded", "The selected provider is temporarily overloaded. Wait, then Continue.", body[:8000])
-    return ModelFailure("provider", f"The provider rejected this request (HTTP {status}). Check model availability and tool support.", body[:8000])
+        return ModelFailure("overloaded", "The selected provider is temporarily overloaded. Wait, then Continue.", body[:8000], status_code=status)
+    return ModelFailure("provider", f"The provider rejected this request (HTTP {status}). Check model availability and tool support.", body[:8000], status_code=status)
 
 
 def _output_tokens(requested: int | None = None, configured: int | None = None) -> int:
@@ -98,6 +117,54 @@ def _request_deadline_seconds() -> float:
     if os.getenv("VERCEL") == "1":
         seconds = min(seconds, 240.0)
     return seconds
+
+
+def _is_token_limit_rejection(raw: dict) -> bool:
+    if raw.get("status") not in (400, 413, 422):
+        return False
+    body = str(raw.get("body", "")).lower()
+    return any(term in body for term in (
+        "max_tokens", "max_completion_tokens", "max_output_tokens", "token limit",
+        "maximum tokens", "too many tokens", "context length", "context_length",
+    ))
+
+
+def _lower_token_budgets(current: int):
+    """Yield conservative retries only after a provider rejects the token cap."""
+    for budget in (65_536, 32_768, 16_384, 8_192, 4_096, 2_048, 1_024, 512, 256, 128, 64, 16):
+        if budget < current:
+            yield budget
+
+
+def _requests_per_minute(config: dict) -> int:
+    if urlsplit(base_url(config)).hostname != GEMINI_API_HOST:
+        return 0
+    raw = os.getenv("GEMINI_AI_STUDIO_REQUESTS_PER_MINUTE", str(GEMINI_DEFAULT_REQUESTS_PER_MINUTE))
+    try:
+        return min(60, max(1, int(raw)))
+    except (TypeError, ValueError):
+        return GEMINI_DEFAULT_REQUESTS_PER_MINUTE
+
+
+async def _pace_request(config: dict) -> None:
+    """Space Gemini requests for the single-run free-tier test path.
+
+    Google applies these quotas per project. Vercel can cold-start separate
+    Python processes, so this process-local limiter is intended to pace a
+    serialized Forma run; it is not a distributed quota coordinator.
+    """
+    rpm = _requests_per_minute(config)
+    if not rpm:
+        return
+    global _gemini_next_request_at
+    interval = 60.0 / rpm + GEMINI_REQUEST_INTERVAL_MARGIN_SECONDS
+    with _gemini_request_lock:
+        now = time.monotonic()
+        scheduled_at = max(now, _gemini_next_request_at)
+        _gemini_next_request_at = scheduled_at + interval
+    wait_seconds = max(0.0, scheduled_at - time.monotonic())
+    if wait_seconds:
+        await asyncio.sleep(wait_seconds)
 
 
 def _stream_enabled(config: dict) -> bool:
@@ -152,6 +219,12 @@ def _reasoning_effort(config: dict) -> str | None:
     model_id = str(config.get("model_id", ""))
     if host == NVIDIA_BASE_HOST and model_id.startswith(NVIDIA_KIMI_PREFIX):
         return "max"
+    if host == GEMINI_API_HOST and model_id.startswith("gemini-3.7-flash"):
+        return "high"
+    if host in NEBIUS_TOKEN_FACTORY_HOSTS and (
+        model_id.startswith(DEEPSEEK_V4_PREFIX) or model_id.startswith(NEBIUS_MINIMAX_PREFIX)
+    ):
+        return "high"
     if host == BASETEN_BASE_HOST and model_id == BASETEN_DEEPSEEK_MODEL:
         return "high"
     return None
@@ -161,6 +234,13 @@ def _tool_choice(config: dict, tools: list[dict]) -> str:
     if not tools:
         return "none"
     host = urlsplit(base_url(config)).hostname
+    # GLM-5.3-Flash on Nebius is a forced-thinking model.  With ``auto`` it
+    # can spend the entire completion budget narrating a plan for a large CAD
+    # context without emitting the next action.  Requiring one tool call is
+    # supported by the endpoint and keeps the graph advancing one action at a
+    # time, just like the other agent providers.
+    if host in NEBIUS_TOKEN_FACTORY_HOSTS:
+        return "required"
     # Hosted OpenAI-compatible gateways may advertise required tool calls but
     # return an empty assistant message for large CAD prompts when
     # ``tool_choice=required`` is forced.  Auto still selects a tool when one
@@ -172,6 +252,10 @@ def _tool_choice(config: dict, tools: list[dict]) -> str:
 def _sampling(config: dict) -> tuple[float, float | None]:
     host = urlsplit(base_url(config)).hostname
     model_id = str(config.get("model_id", ""))
+    if host == GEMINI_API_HOST and model_id.startswith("gemini-3.7-flash"):
+        # Google recommends the Gemini 3 default temperature for complex
+        # reasoning; effort is separately set to high above.
+        return 1.0, None
     if host == NVIDIA_BASE_HOST and (model_id.startswith(NVIDIA_KIMI_PREFIX) or model_id.startswith(NVIDIA_NEMOTRON_PREFIX)):
         return 1.0, 0.95
     return 0.2, None
@@ -282,6 +366,7 @@ async def _turn_once(config: dict, messages: list[dict], tools: list[dict], *, m
     reasoning_effort = _reasoning_effort(config)
     temperature, top_p = _sampling(config)
     try:
+        await _pace_request(config)
         raw = await _chat(api_key=config["api_key"], url=url, model_id=config["model_id"], messages=messages,
                           tools=tools, output_tokens=output_tokens, extra_body=extra_body,
                           tool_choice=tool_choice, stream=stream, reasoning_effort=reasoning_effort,
@@ -291,12 +376,12 @@ async def _turn_once(config: dict, messages: list[dict], tools: list[dict], *, m
                               "ls_model_name": config["model_id"], "base_url": url,
                               "max_output_tokens": output_tokens, "stream": stream,
                               "reasoning_effort": reasoning_effort}})
-        if raw["status"] in (400, 422) and output_tokens > 16_384 and any(term in raw["body"].lower() for term in ("max_tokens", "token limit", "maximum")):
-            # NVIDIA's examples use 16,384 for Nemotron. Keep a larger Forma
-            # budget for providers that support it, then retry a rejected
-            # request at the documented compatibility floor.
-            output_tokens = 16_384
+        requested_output_tokens = output_tokens
+        fallback_budgets = _lower_token_budgets(output_tokens) if _is_token_limit_rejection(raw) else ()
+        for fallback_tokens in fallback_budgets:
+            output_tokens = fallback_tokens
             extra_body = _extra_body(config, output_tokens, tools)
+            await _pace_request(config)
             raw = await _chat(api_key=config["api_key"], url=url, model_id=config["model_id"], messages=messages,
                               tools=tools, output_tokens=output_tokens, extra_body=extra_body,
                               tool_choice=tool_choice, stream=stream, reasoning_effort=reasoning_effort,
@@ -304,12 +389,17 @@ async def _turn_once(config: dict, messages: list[dict], tools: list[dict], *, m
                               langsmith_extra={"metadata": {
                                   "ls_provider": config.get("provider", "openai_compatible"),
                                   "ls_model_name": config["model_id"], "base_url": url,
-                                  "max_output_tokens": output_tokens, "token_limit_fallback": True,
+                                  "max_output_tokens": output_tokens,
+                                  "requested_max_output_tokens": requested_output_tokens,
+                                  "token_limit_fallback": True,
                                   "stream": stream}})
+            if not _is_token_limit_rejection(raw):
+                break
         if raw["status"] in (400, 422) and tools and any(term in raw["body"].lower() for term in ("tool_choice", "function calling", "unsupported")):
             # A few compatible gateways advertise tools but only accept the
             # permissive mode. A rejected 4xx request is safe to retry; the
             # response is still required to contain a valid tool call below.
+            await _pace_request(config)
             raw = await _chat(api_key=config["api_key"], url=url, model_id=config["model_id"], messages=messages,
                               tools=tools, output_tokens=output_tokens, extra_body=extra_body,
                               tool_choice="auto", stream=stream, reasoning_effort=reasoning_effort,
@@ -341,8 +431,18 @@ async def _turn_once(config: dict, messages: list[dict], tools: list[dict], *, m
             arguments = item["function"].get("arguments", {})
             if isinstance(arguments, str):
                 arguments = json.loads(arguments)
-            safe_message.setdefault("tool_calls", []).append({"id": item["id"], "type": "function",
-                "function": {"name": item["function"]["name"], "arguments": json.dumps(arguments)}})
+            # Gemini's OpenAI-compatible endpoint returns a provider-specific
+            # thought signature on each function call.  It must be echoed in
+            # the assistant tool-call message on the next request or Gemini
+            # rejects the follow-up with INVALID_ARGUMENT.  Preserve the
+            # opaque field while keeping the normal OpenAI tool-call shape for
+            # providers that do not send it.
+            tool_call = {"id": item["id"], "type": "function",
+                         "function": {"name": item["function"]["name"],
+                                      "arguments": json.dumps(arguments)}}
+            if isinstance(item.get("extra_content"), dict):
+                tool_call["extra_content"] = item["extra_content"]
+            safe_message.setdefault("tool_calls", []).append(tool_call)
             calls.append({"id": item["id"], "name": item["function"]["name"], "input": arguments})
         if not calls:
             recovered = _recover_text_tool_call(message.get("content"), tools)
@@ -374,10 +474,18 @@ def _fallback_configs(config: dict) -> list[dict]:
         fallback_ids = [os.getenv("OPENAI_COMPATIBLE_FALLBACK_MODEL_ID", NVIDIA_FIRST_FALLBACK).strip()]
     elif host == VERCEL_GATEWAY_HOST and model_id in VERCEL_MODEL_CHAIN:
         fallback_ids = list(VERCEL_MODEL_CHAIN[VERCEL_MODEL_CHAIN.index(model_id) + 1:])
+    elif host in NEBIUS_TOKEN_FACTORY_HOSTS and model_id.startswith(DEEPSEEK_V4_PREFIX):
+        fallback_ids = [os.getenv("OPENAI_COMPATIBLE_FALLBACK_MODEL_ID", NEBIUS_FIRST_FALLBACK).strip()]
     else:
         fallback_ids = []
+    fallback_stream = True if host == NVIDIA_BASE_HOST else config.get("stream", False)
     return [
-        {**config, "model_id": fallback_id, "stream": True, "fallback_for": model_id}
+        # Preserve the configured transport mode.  In particular, a Nebius
+        # retry should not be changed to streaming when the primary is
+        # non-streaming: waiting for a complete tool payload is more reliable
+        # for long reasoning responses and avoids an open stream with no
+        # actionable tool call.
+        {**config, "model_id": fallback_id, "stream": fallback_stream, "fallback_for": model_id}
         for fallback_id in fallback_ids
         if fallback_id and fallback_id != model_id
     ]
@@ -388,12 +496,94 @@ def _fallback_config(config: dict) -> dict | None:
     return next(iter(_fallback_configs(config)), None)
 
 
+def retry_config(config: dict) -> dict:
+    """Select the first same-endpoint fallback for an explicit user retry.
+
+    A provider timeout can consume almost the complete Vercel invocation
+    window.  Retrying the primary inside the next invocation would repeat the
+    same failure before the fallback gets any time.  The graph calls this only
+    after the user has explicitly resumed an uncertain operation.
+    """
+    return _fallback_config(config) or config
+
+
+def _gemini_key_fallbacks(config: dict) -> list[str]:
+    """Return saved secondary keys only for the Google AI Studio endpoint."""
+    if not _is_gemini_config(config):
+        return []
+    values = config.get("api_key_fallbacks") or []
+    if not isinstance(values, list):
+        return []
+    primary = config.get("api_key")
+    return [value for value in values if isinstance(value, str) and value and value != primary][:2]
+
+
+def _is_gemini_config(config: dict) -> bool:
+    try:
+        return urlsplit(base_url(config)).hostname == GEMINI_API_HOST
+    except ModelFailure:
+        return False
+
+
 async def turn(config: dict, messages: list[dict], tools: list[dict], *, max_tokens: int | None = None,
-               web_search=False, max_searches=0, allow_fallback=True):
+               web_search=False, max_searches=0, allow_fallback=True, allow_key_fallback=True):
     try:
         return await _turn_once(config, messages, tools, max_tokens=max_tokens,
                                 web_search=web_search, max_searches=max_searches)
     except ModelFailure as primary_error:
+        same_key_retry = False
+        # Google distinguishes 503 service overload from 429 quota errors.
+        # Retry a 503 once with the same key and bounded backoff; credential
+        # rotation below remains restricted to actual HTTP 429 responses.
+        if (_is_gemini_config(config) and primary_error.status_code == 503
+                and primary_error.category == "overloaded"):
+            same_key_retry = True
+            await asyncio.sleep(GEMINI_503_RETRY_DELAY_SECONDS)
+            try:
+                result = await _turn_once(config, messages, tools, max_tokens=max_tokens,
+                                          web_search=web_search, max_searches=max_searches)
+            except ModelFailure as retry_error:
+                primary_error = retry_error
+            else:
+                result["provider_retry"] = {"attempts": 1, "reason": "http_503_same_key"}
+                return result
+        # A completed HTTP 429 or 503 is safe to retry with the explicitly
+        # saved Google key order. The same-key 503 retry above gets first
+        # chance; rotating afterward also covers key/project-scoped capacity
+        # failures without interrupting the LangGraph run. Never rotate on
+        # timeouts, whose provider-side outcome is ambiguous.
+        retryable_google_error = (
+            (primary_error.status_code == 429 and primary_error.category == "rate_limit")
+            or (primary_error.status_code == 503 and primary_error.category == "overloaded")
+        )
+        if allow_key_fallback and retryable_google_error:
+            fallback_keys = _gemini_key_fallbacks(config)
+            last_key_error = primary_error
+            for key_index, api_key in enumerate(fallback_keys, start=2):
+                try:
+                    result = await _turn_once({**config, "api_key": api_key}, messages, tools,
+                                              max_tokens=max_tokens, web_search=web_search,
+                                              max_searches=max_searches)
+                except ModelFailure as key_error:
+                    if not ((key_error.status_code == 429 and key_error.category == "rate_limit")
+                            or (key_error.status_code == 503 and key_error.category == "overloaded")):
+                        raise
+                    last_key_error = key_error
+                    continue
+                result["credential_fallback"] = {
+                    "key_index": key_index,
+                    "reason": f"http_{primary_error.status_code}",
+                }
+                if same_key_retry:
+                    result["provider_retry"] = {"attempts": 1, "reason": "http_503_same_key"}
+                return result
+            primary_error = last_key_error
+        # A timeout is an ambiguous external operation. Do not start a second
+        # long model request in the same 300-second Vercel invocation; the
+        # operation ledger records it for an explicit Continue, which switches
+        # to the configured same-endpoint fallback in the next invocation.
+        if primary_error.category == "timeout" and os.getenv("VERCEL") == "1":
+            raise
         fallback_chain = _fallback_configs(config) if allow_fallback else []
         if not fallback_chain or primary_error.category not in FALLBACK_CATEGORIES:
             raise

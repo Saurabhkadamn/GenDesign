@@ -85,6 +85,7 @@ async def agent_context(project_id: str, owner_id: str, run_id: str,
         "select": "kind,stage,message", "order": "id.desc", "limit": 8})) if prior_runs else []
     validation = revision.get("validation") if revision else None
     report = validation if isinstance(validation, dict) else {}
+    measurements = report.get("components") if isinstance(report.get("components"), dict) else {}
     # Inspection can be large. Keep only the latest claims relevant to a
     # conversational answer; the candidate snapshot remains available to tools.
     return sanitize({
@@ -95,6 +96,9 @@ async def agent_context(project_id: str, owner_id: str, run_id: str,
             "manifest": revision.get("manifest"),
             "requirements": report.get("requirements", []),
             "allRequirementsVerified": report.get("allRequirementsVerified", False),
+            "componentMeasurements": {cid: {key: facts[key] for key in ("dimensions", "solids", "valid")
+                if key in facts} for cid, facts in measurements.items()
+                if isinstance(facts, dict)},
             "inspection": {key: report.get("inspection", {}).get(key)
                 for key in ("bounds", "components", "configurations")
                 if isinstance(report.get("inspection"), dict) and key in report["inspection"]}}
