@@ -13,7 +13,7 @@ from .contracts import AppSettings, CalculationResult, Snapshot, TERMINAL
 from .execution import ExecutionFailure, SandboxExpired, build_error, digest, executor, identity
 from .prompts import VERSION as PROMPT_VERSION, system_prompt
 from .requirements import design_work_requested, merge_requirements
-from .tools import model_tools, parse_tool
+from .tools import model_tools, parse_tool, updated_manifest
 
 
 class Pause(Exception):
@@ -354,7 +354,7 @@ async def execute_tool(run, cp, call, app_settings, worker):
         files = {**snapshot["files"], **value["files"]}
         for path in value.get("deletePaths", []):
             files.pop(path, None)
-        candidate = Snapshot.model_validate({"manifest": value["manifest"] or snapshot["manifest"], "files": files}).model_dump()
+        candidate = Snapshot.model_validate({"manifest": updated_manifest(snapshot["manifest"], parsed), "files": files}).model_dump()
         if not app_settings.surfacingEnabled and any(c["kind"] == "surface" for c in candidate["manifest"]["components"]):
             raise ValueError("Surface modeling is disabled by the administrator.")
         cp["snapshot"] = candidate

@@ -8,7 +8,9 @@
     "skipped": 0
   },
   "localApiTests": {
-    "passed": 171
+    "passed": 179,
+    "durationSeconds": 8.38,
+    "scope": "Latest local manifest-preservation fix; hosted qualification remains pending"
   },
   "databaseTests": {
     "passed": 10
@@ -156,8 +158,9 @@
         3
       ],
       "holeDiameterMm": 2,
-      "downloadedStepVolumeErrorMm3": 3.637978807091713e-12,
-      "occurrenceCentersMatch": true
+      "occurrenceCentersMatch": true,
+      "maxSymmetricDifferenceMm3": 0.0,
+      "downloadedStepVolumeErrorMm3": 3.637978807091713e-12
     },
     "artifactSha256": {
       "plate.step": "a84060a4ee346859a4f9a2d8d2730e3abc378ccfc139f5d7a2fa88beaeab4336",
@@ -173,5 +176,61 @@
     "constraintFramesAndJointEndpointsPreserved": true,
     "aiReview": "Provider HTTP 500 was reported visibly; draft remained available. Independent geometry and constraint checks passed.",
     "hostedBrowser": "3D assembly and BOM inspected; no console errors."
+  },
+  "followup": {
+    "deadlineUtc": "2026-10-02T21:57:00Z",
+    "endedAtUtc": "2026-10-03T05:56:31Z",
+    "automationDeleted": true,
+    "goalComplete": false,
+    "lastPushedCommit": "f5d469dee0849da972ab09af5b21c2f7278f39f6",
+    "productionPromoted": false,
+    "mainMerged": false,
+    "latestPreviewWorkflow": "paused",
+    "latestPreviewModelCalls": 31,
+    "localFixHostedQualified": false,
+    "failureFindings": [
+      "Malformed provider tool responses stopped without executing actions",
+      "Unchanged intermediate builds could not enter final review; regression fix pushed",
+      "Omitted root/native manifest fields were reset by defaults; preservation fix passes locally and is not yet hosted-qualified"
+    ]
+  },
+  "productionCandidateFixtures": {
+    "deploymentId": "dpl_6RZm2H8MMykPtkSRQRnr3Qp1g67C",
+    "sourceCommit": "8f17e001f16388b9d64960bae80fafa7da928729",
+    "promoted": false,
+    "cases": {
+      "sixty-parts-2mm": {
+        "status": "passed",
+        "independentGeometry": {
+          "passed": true,
+          "solidChecks": 60,
+          "plateDimensionsMm": [
+            8,
+            8,
+            2
+          ],
+          "holeDiameterMm": 2,
+          "occurrenceCentersMatch": true,
+          "maxSymmetricDifferenceMm3": 0.0,
+          "downloadedStepVolumeErrorMm3": 3.728928277269006e-11
+        }
+      },
+      "sixty-parts-4mm": {
+        "status": "passed",
+        "independentGeometry": {
+          "passed": true,
+          "solidChecks": 60,
+          "plateDimensionsMm": [
+            8,
+            8,
+            4
+          ],
+          "holeDiameterMm": 2,
+          "occurrenceCentersMatch": true,
+          "maxSymmetricDifferenceMm3": 0.0,
+          "downloadedStepVolumeErrorMm3": 7.457856554538012e-11
+        }
+      }
+    }
   }
 }

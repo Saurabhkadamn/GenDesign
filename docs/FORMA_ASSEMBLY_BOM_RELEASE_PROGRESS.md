@@ -2,7 +2,19 @@
 
 Goal: qualify native assembly technology, integrate assembly and deterministic BOM end to end, strengthen engineering reliability, verify local and hosted workflows, push reviewed source and publish the verified release. The goal remains active until every release gate below passes.
 
-## Authoritative checkpoint — 2026-10-02 07:17 UTC
+## Deadline checkpoint — 2026-10-03 05:56 UTC
+
+The scheduled follow-up ended after its **2026-10-02 21:57 UTC** deadline. Account availability interrupted the active turn; the next clock read was already after the deadline. No production promotion or main merge was performed. The goal is **incomplete**; the goal service reports `usageLimited`. The follow-up automation has been deleted. Preserve the saved work and evidence for a later user-authorized continuation.
+
+- Last pushed source: `f5d469dee0849da972ab09af5b21c2f7278f39f6`, draft PR #19. Preview `dpl_9gABcLb1DobkEEC3hUJhrmNjtbCG`, `https://forma-7elr9p68t-negens-projects.vercel.app`, is ready. The final local manifest-preservation fix is saved separately and has **179 passing API tests**, but has not been pushed or hosted-qualified.
+- New diagnosis: generated manifest updates omitted `rootComponentId` and `nativeAssembly`; Pydantic filled their defaults and silently cleared existing assembly state. The local fix preserves omitted top-level fields while applying explicit fields/arrays as replacements. Explicit removals still pass through the complete Snapshot constraints; failed changes remain atomic. Both tool execution paths use the same helper. Prompt/tool descriptions now explain these semantics and how a completed intermediate build enters final review.
+- The latest preview qualification run `4e2aa1b3-f973-4cb5-95c2-fef3166112d9` is confirmed **paused, 31 model calls**, last updated `2026-10-02 07:38:37.846838 UTC`. Its draft lost the root/native settings before the local fix. Its original 4 mm published revision remains preserved. It has not passed final publication and must not be counted as a completed workflow. Private checkpoint/deployment/continuation history: `D:\v1\test-results\native-clarification-preview`.
+- Existing production qualification run `a4a07c44-432b-4909-b143-40e5c4fd77f6` remains **waiting_input, 4 model calls**, with its original 4 mm revision preserved. No new native build, model call or resume was started after the deadline. Private state: `D:\v1\test-results\native-application-production` and `native-production-release.json`.
+- Both production fixture exports passed the independent mutual-cut geometry oracle: 60 ideal solids/placements, dimensions, central hole and BOM quantity at 2 mm and 4 mm. The earlier completed preview's 2/4/3 mm exports also passed. Native snapshot source is unchanged.
+- Local Next server still listens on 3107, PID 19284; it is a UI fixture server, not a running hosted release job. Other local acceptance jobs completed. The native snapshot builder remains stopped.
+- Next work, after renewed authorization/availability: review the local fix; qualify it on a preview from an intact owned 4 mm revision, preserving the failed-run evidence. Recover the existing production checkpoint through the corrected production candidate, verify final publication/geometry/private downloads, then persist the production runtime pair, promote, merge the reviewed source and verify main's deployment. Do not promote the older candidate or claim CATIA/SOLIDWORKS parity.
+
+## Prior qualification checkpoint — 2026-10-02 07:17 UTC
 
 - Worktree: `C:\Users\SAURABH\.codex\worktrees\native-assembly-bom\v1`; branch `codex/native-assembly-bom`, base `3cdebe0`. Preserve the original `D:\v1` checkout, its authorized Forma patch and unrelated projects. Conflicts were reconciled; no unmerged entries remain.
 - Pinned native engine: OndselSolver `4be80eef02a3486cda0d78f3ccbb308d207a9639`, via typed C++ process adapter. CadQuery/OCP performs geometry; XDE preserves placed occurrence identities; Forma derives BOMs from accepted physical inventory. See `FORMA_NATIVE_ASSEMBLY_BOM_DECISION.md` and `FORMA_ENGINEERING_ARCHITECTURE_DECISION.md`.

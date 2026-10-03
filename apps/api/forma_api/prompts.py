@@ -71,6 +71,10 @@ CadQuery string selectors are not arbitrary Python expressions: x>39 is invalid 
 For through-holes, use faces('>Z').workplane().pushPoints([(x,y),...]).hole(diameter). A missing depth makes through-holes.
 translate takes one tuple. Model reusable parts in local coordinates; a centered part needs no translation and a zero instance frame.
 The manifest has schemaVersion=1,units='mm',components,instances,rootComponentId. Components have id,name,source,kind,dependencies,parameters,color and optional material.
+apply_changes preserves omitted top-level manifest fields. Provided fields replace their values; arrays replace the entire
+array, so include complete entries and preserve part identities, frames and relationships when resubmitting them. Explicit
+null or empty arrays clear those fields and must represent an intended change. Do not clear nativeAssembly or rootComponentId
+when only changing a part parameter.
 As soon as more than one physical part is staged, rootComponentId must name a kind=assembly component whose
 assemblies/ source builds those parts at the exact manifest instance frames. A solid part cannot be the root of a
 multi-part assembly: its STEP contains only that part even if the manifest lists more instances.

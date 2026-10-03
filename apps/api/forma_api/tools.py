@@ -35,6 +35,13 @@ class ApplyChanges(Contract):
         return value
 
 
+def updated_manifest(previous: dict, change: ApplyChanges) -> dict:
+    """Preserve omitted top-level fields; explicit fields replace their values."""
+    if change.manifest is None:
+        return previous
+    return {**previous, **change.manifest.model_dump(include=change.manifest.model_fields_set)}
+
+
 class Build(Contract):
     final: bool = Field(default=True, description=(
         "False for an intermediate assembly milestone; true only when all requested "
@@ -71,7 +78,7 @@ class RequestEngineering(Contract):
 SPECS = {
     "read_file": (ReadFile, "Read a private workspace source file before editing it."),
     "search_files": (Search, "Search private workspace files by literal text."),
-    "apply_changes": (ApplyChanges, "Atomically stage related files and an optional complete manifest. Does not execute code."),
+    "apply_changes": (ApplyChanges, "Atomically stage related files and optional manifest changes. Omitted top-level manifest fields are preserved; provided fields and arrays replace their values. Include complete entries in provided arrays. Does not execute code."),
     "build": (Build, "Build and validate the current CAD workspace. Use final=false for an intermediate assembly milestone, or final=true only when the requested design is represented."),
     "inspect_geometry": (Empty, "Inspect the current candidate's build report and optional requirement evidence."),
     "inspect_project": (Empty, "Inspect the current project, previous conversation, selected parts, revision, and verification evidence."),

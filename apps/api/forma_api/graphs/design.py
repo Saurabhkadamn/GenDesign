@@ -20,7 +20,7 @@ from ..prompts import VERSION as PROMPT_VERSION, system_prompt
 from ..providers.openrouter import ModelFailure
 from ..requirements import design_work_requested, merge_requirements
 from ..services import runs as run_service
-from ..tools import model_tools, parse_tool, portable_schema
+from ..tools import model_tools, parse_tool, portable_schema, updated_manifest
 from .state import AgentState
 
 _worker: ContextVar[str] = ContextVar("forma_graph_worker", default="graph")
@@ -1571,7 +1571,7 @@ async def cad_session(state: AgentState) -> dict:
             files.update({path: normalize_python_source(source)
                 for path, source in value["files"].items()})
             manifest, hierarchy_normalized = normalize_instance_hierarchy(
-                value["manifest"] or snapshot["manifest"])
+                updated_manifest(snapshot["manifest"], parsed))
             hierarchy_normalized = hierarchy_pre_normalized or hierarchy_normalized
             syntax = source_syntax_error(files)
             if syntax:
@@ -1701,7 +1701,7 @@ async def cad_session(state: AgentState) -> dict:
         if not final_build and state.get("last_milestone_hash") == digest(snapshot):
             history = bounded_history([*history, tool_message(call, {
                 "ok": False, "category": "unchanged_milestone",
-                "message": "This exact intermediate candidate already built. Add the remaining parts or instances before building again.",
+                "message": "This exact intermediate candidate already built. If the requested inventory is complete, call build(final=true) for final review. Otherwise add the remaining parts or instances.",
             })])
             return {**usage, "phase": "cad_session", "cad_history": history}
         # Execute the build transition in the same graph step as the explicit
@@ -1877,8 +1877,8 @@ async def validate(state: AgentState) -> dict:
             "final_message": error.get("guidance", "Repair the failed CAD operation.")}
     intermediate = not state.get("build_final", True)
     history = bounded_history([*state.get("cad_history", []), tool_message(pending, {
-        "ok": True, "message": ("The staged assembly built and passed CAD integrity checks. Continue adding "
-            "the remaining requested parts and instances." if intermediate else
+        "ok": True, "message": ("The staged assembly built and passed CAD integrity checks. If the requested "
+            "inventory is complete, call build(final=true) for final review; otherwise add the remaining parts and instances." if intermediate else
             "The candidate built and passed universal CAD integrity checks."),
         "inspectionAvailable": bool(result.get("inspection")),
     })])

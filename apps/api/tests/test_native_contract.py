@@ -56,3 +56,46 @@ def test_legacy_advisory_joints_remain_backward_compatible():
     source["manifest"].pop("nativeAssembly")
     source["manifest"]["joints"][0].pop("occurrenceB")
     assert Snapshot.model_validate(source).manifest.nativeAssembly is None
+
+
+@pytest.mark.asyncio
+async def test_parameter_edit_preserves_omitted_assembly_fields():
+    from forma_api import engine
+    from forma_api.contracts import AppSettings
+
+    original = Snapshot.model_validate(candidate()).model_dump()
+    components = copy.deepcopy(original["manifest"]["components"])
+    components[0]["parameters"]["thickness"] = 3
+    cp = {"snapshot": original, "role": "cad"}
+    await engine.execute_tool({}, cp, {"id": "edit", "name": "apply_changes", "input": {
+        "files": {}, "manifest": {"components": components}}}, AppSettings(), "worker")
+    changed = cp["snapshot"]["manifest"]
+    assert changed["components"][0]["parameters"]["thickness"] == 3
+    for key in ["rootComponentId", "nativeAssembly", "instances", "references", "joints"]:
+        assert changed[key] == original["manifest"][key]
+
+
+@pytest.mark.asyncio
+async def test_explicit_native_removal_is_distinct_from_omission():
+    from forma_api import engine
+    from forma_api.contracts import AppSettings
+
+    original = Snapshot.model_validate(candidate()).model_dump()
+    cp = {"snapshot": original, "role": "cad"}
+    await engine.execute_tool({}, cp, {"id": "remove", "name": "apply_changes", "input": {
+        "files": {}, "manifest": {"nativeAssembly": None}}}, AppSettings(), "worker")
+    assert cp["snapshot"]["manifest"]["nativeAssembly"] is None
+    assert cp["snapshot"]["manifest"]["joints"] == original["manifest"]["joints"]
+
+
+@pytest.mark.asyncio
+async def test_explicit_array_removal_still_checks_retained_constraints_atomically():
+    from forma_api import engine
+    from forma_api.contracts import AppSettings
+
+    original = Snapshot.model_validate(candidate()).model_dump()
+    cp = {"snapshot": original, "role": "cad"}
+    with pytest.raises(ValueError, match="physical occurrences"):
+        await engine.execute_tool({}, cp, {"id": "remove", "name": "apply_changes", "input": {
+            "files": {}, "manifest": {"instances": []}}}, AppSettings(), "worker")
+    assert cp["snapshot"] == original
