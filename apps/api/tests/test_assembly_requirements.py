@@ -92,6 +92,12 @@ def test_only_semantically_mistaken_preservation_bindings_are_changed():
     assert normalize_assembly_requirements(items, m) == items
 
 
+def test_real_geometric_constraints_that_mention_grounding_or_mates_are_not_rebound():
+    items = [Requirement(id="centre", description="Keep assembly centered at origin with base grounded", kind="center", center=[0, 0, 0]).model_dump(),
+             Requirement(id="holes", description="Preserve through-holes aligned with mates", kind="through_holes", count=0, diameter=4).model_dump()]
+    assert normalize_assembly_requirements(items, fixture()["manifest"]) == items
+
+
 @pytest.mark.asyncio
 async def test_saved_bad_binding_requires_fresh_build_without_geometry_or_model_edits(monkeypatch):
     snapshot = fixture()

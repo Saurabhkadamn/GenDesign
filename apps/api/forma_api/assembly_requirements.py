@@ -19,8 +19,12 @@ def normalize_assembly_requirements(requirements: list[dict], manifest: dict) ->
         item = deepcopy(requirement)
         description = item.get("description", "").lower()
         preserve = bool(re.search(r"\b(preserve|retain|keep|unchanged)\b", description))
-        mistaken_ground = item.get("kind") == "center" and re.search(r"\bground(?:ed|ing)?\b", description)
-        mistaken_joints = item.get("kind") == "through_holes" and re.search(r"\b(joints?|mates?)\b", description)
+        mistaken_ground = (item.get("kind") == "center"
+                           and re.search(r"\bground(?:ed|ing)?\b", description)
+                           and not re.search(r"\b(?:cent(?:er|re)(?:ed)?|centroid|mass)\b", description))
+        mistaken_joints = (item.get("kind") == "through_holes"
+                           and re.search(r"\b(joints?|mates?)\b", description)
+                           and not re.search(r"\b(?:holes?|bores?|diameter|drill(?:ed)?)\b", description))
         if preserve and (mistaken_ground or mistaken_joints):
             item.update(kind="assembly_preservation", componentId=manifest.get("rootComponentId"),
                         center=None, dimensions=None, count=None, diameter=None, radius=None, positions=[])
