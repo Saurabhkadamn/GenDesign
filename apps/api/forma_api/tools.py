@@ -63,6 +63,12 @@ class UpdateParameters(Contract):
         return self
 
 
+class ReviewResponse(Contract):
+    findingId: SafeId
+    explanation: str = Field(min_length=1, max_length=3000)
+    evidence: list[str] = Field(min_length=1, max_length=20)
+
+
 def parameter_patch(previous: dict, update: UpdateParameters) -> ApplyChanges:
     """Translate a small parameter delta into the existing atomic edit path."""
     components = deepcopy(previous["components"])
@@ -116,6 +122,7 @@ SPECS = {
     "search_files": (Search, "Search private workspace files by literal text."),
     "apply_changes": (ApplyChanges, "Atomically stage related files and optional manifest changes. Omitted top-level manifest fields are preserved; provided fields and arrays replace their values. Include complete entries in provided arrays. Does not execute code."),
     "update_parameters": (UpdateParameters, "Atomically change existing named component parameters without rewriting source or assembly relationships. Read the component source first. New parameters require apply_changes. Rebuild and validate before publication."),
+    "respond_to_review": (ReviewResponse, "Read-only response when a specific repair finding contradicts current validated evidence. Return the unchanged validated candidate to its reviewer for reassessment once per finding. Does not edit, validate or publish geometry."),
     "build": (Build, "Build and validate the current CAD workspace. Use final=false for an intermediate assembly milestone, or final=true only when the requested design is represented."),
     "inspect_geometry": (Empty, "Inspect the current candidate's build report and optional requirement evidence."),
     "inspect_project": (Empty, "Inspect the current project, previous conversation, selected parts, revision, and verification evidence."),
@@ -129,7 +136,7 @@ SPECS = {
 }
 ROLE_TOOLS = {
     "coordinator": ("inspect_project", "read_file", "search_files", "delegate", "inspect_geometry", "publish_revision", "restore_revision", "ask_user", "finish"),
-    "cad": ("read_file", "search_files", "apply_changes", "update_parameters", "build", "inspect_geometry", "request_engineering", "ask_user", "finish"),
+    "cad": ("read_file", "search_files", "apply_changes", "update_parameters", "respond_to_review", "build", "inspect_geometry", "request_engineering", "ask_user", "finish"),
     "engineering": ("read_file", "search_files", "apply_changes", "calculate", "inspect_geometry", "ask_user", "finish"),
 }
 
@@ -222,9 +229,10 @@ def portable_schema(schema: dict) -> dict:
     return expand(schema)
 
 
-def model_tools(role: Role) -> list[dict]:
+def model_tools(role: Role, *, review_response: bool = False) -> list[dict]:
     return [{"type": "function", "function": {"name": name, "description": SPECS[name][1],
-            "parameters": portable_schema(SPECS[name][0].model_json_schema())}} for name in ROLE_TOOLS[role]]
+            "parameters": portable_schema(SPECS[name][0].model_json_schema())}} for name in ROLE_TOOLS[role]
+            if name != "respond_to_review" or review_response]
 
 
 def parse_tool(role: Role, name: str, value: dict):

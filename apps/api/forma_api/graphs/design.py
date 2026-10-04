@@ -19,6 +19,7 @@ from ..execution import digest, identity, normalize_python_source
 from ..prompts import VERSION as PROMPT_VERSION, system_prompt
 from ..providers.openrouter import ModelFailure
 from ..requirements import design_work_requested, merge_requirements
+from ..assembly_requirements import normalize_assembly_requirements
 from ..services import runs as run_service
 from ..tools import model_tools, parameter_patch, parse_tool, portable_schema, updated_manifest
 from .state import AgentState
@@ -50,7 +51,7 @@ class TriageRequirement(Contract):
     id: SafeId
     description: str = Field(default="Requirement details are recorded in the original request.",
                               min_length=1, max_length=500)
-    kind: Literal["dimensions", "max_dimensions", "center", "solid_count", "through_holes", "corner_radius", "unverified"] = Field(description=(
+    kind: Literal["dimensions", "max_dimensions", "center", "solid_count", "through_holes", "corner_radius", "assembly_preservation", "unverified"] = Field(description=(
         "Use dimensions for exact sizes and max_dimensions for upper envelopes. "
         "Use center, solid_count, through_holes or corner_radius only "
         "when every value required by that check is present. Use unverified for "
@@ -1045,8 +1046,8 @@ def sandbox_name(run_id: str, suffix: str) -> str:
 
 
 def checkpoint_view(state: AgentState, snapshot: dict) -> dict:
-    return {"snapshot": snapshot, "role": "cad", "requirements": merge_requirements(
-        state.get("original_request", ""), state.get("requirements", [])),
+    return {"snapshot": snapshot, "role": "cad", "requirements": normalize_assembly_requirements(merge_requirements(
+        state.get("original_request", ""), state.get("requirements", [])), snapshot.get("manifest", {})),
         "repairs": state.get("repairs", 0), "attempts": state.get("attempts", 0),
         "sequence": state.get("model_calls", 0), "modelCalls": state.get("model_calls", 0),
         "startedNs": state.get("started_ns", time.time_ns()), "sandbox": state.get("sandbox"),
@@ -1062,6 +1063,8 @@ def sync_checkpoint(cp: dict) -> dict:
         "last_failed_candidate": cp.get("lastFailedCandidate")}
     if cp.get("validated"):
         result["validation"] = cp["validated"]
+    if "requirements" in cp:
+        result["requirements"] = cp["requirements"]
     return result
 
 
@@ -1130,7 +1133,7 @@ def bind_requirements_to_manifest(requirements: list[dict], manifest: dict) -> l
                 if isinstance(center, (int, float)):
                     item["positions"] = [[float(x), float(z) + float(center)] for x, z in item.get("positions", [])]
         bound.append(item)
-    return bound
+    return normalize_assembly_requirements(bound, manifest)
 
 
 def normalize_instance_hierarchy(manifest: dict) -> tuple[dict, bool]:
@@ -1186,7 +1189,7 @@ def normalize_instance_hierarchy(manifest: dict) -> tuple[dict, bool]:
 
 CAD_SESSION_TOOL_NAMES = {
     "read_file", "search_files", "apply_changes", "update_parameters", "build",
-    "inspect_geometry", "request_engineering", "ask_user",
+    "inspect_geometry", "request_engineering", "respond_to_review", "ask_user",
 }
 MAX_CAD_EDITS_WITHOUT_BUILD = 3
 MAX_REVIEW_REPAIR_CYCLES = 2
@@ -1243,6 +1246,32 @@ def unavailable_review(reason: str) -> dict:
         }]}
 
 
+def native_grounding_evidence(snapshot: dict, validation: dict) -> dict:
+    """Keep occurrence-frame facts distinct from aggregate geometric centres."""
+    manifest = snapshot.get("manifest", {})
+    native = manifest.get("nativeAssembly") or {}
+    if not native:
+        return {}
+    report = validation.get("report", validation) or {}
+    evidence = report.get("nativeAssembly") or {}
+    expected = identity(snapshot, [])
+    current = ((report.get("identity") or {}).get("candidate") == expected["candidate"]
+               and (report.get("identity") or {}).get("runtime") == expected["runtime"]
+               and evidence.get("engine") == "OndselSolver"
+               and int(evidence.get("solvedFrames") or 0) > 0)
+    instances = {item["id"]: item for item in manifest.get("instances", [])}
+    return {
+        "nativeGroundingCheckedForCurrentCandidate": current,
+        "groundedOccurrences": {iid: {
+            "declaredFrame": instances[iid]["frame"],
+            "coordinateSystem": ("world" if not instances[iid].get("parentId") else "parent:" + instances[iid]["parentId"]),
+        } for iid in native.get("groundedInstances", []) if iid in instances},
+        "interpretation": ("Native validation rejects any solved state that moves a grounded occurrence from its declared world pose. "
+            "A whole-assembly bounds centre or centre of mass is not an occurrence frame origin. Look up the exact occurrence ID. "
+            "Ungrounded manifest frames are seed poses; accepted native poses and independently reopened STEP describe the solved assembly."),
+    }
+
+
 async def record_review_result(state: AgentState, review: dict, snapshot: dict,
                                validation: dict, history: list[dict], usage: dict | None = None) -> dict:
     """Route a review to one focused repair, or publish the built draft with findings."""
@@ -1262,8 +1291,14 @@ async def record_review_result(state: AgentState, review: dict, snapshot: dict,
             "the remaining findings are included for your review.")
     if review.get("action") == "repair" and same_defect_repeated:
         review["action"] = "publish"
-        review["summary"] += (" The same actionable finding remained after a focused repair, so further "
-            "automatic retries stopped. The built draft and remaining finding are published for your review.")
+        response = state.get("review_response") or {}
+        if response.get("candidateHash") == digest(snapshot):
+            review["cadResponse"] = response
+            review["summary"] += (" The reviewer retained a disputed finding after read-only evidence reassessment. "
+                "No geometry was changed by that response. The built draft, finding and CAD response require human review.")
+        else:
+            review["summary"] += (" The same actionable finding remained after a focused repair, so further "
+                "automatic retries stopped. The built draft and remaining finding are published for your review.")
     if review.get("action") == "repair" and repairs_done >= MAX_REVIEW_REPAIR_CYCLES:
         review["action"] = "publish"
         review["summary"] += (f" The maximum of {MAX_REVIEW_REPAIR_CYCLES} focused review repair cycles is "
@@ -1352,6 +1387,13 @@ def register_unlisted_part_sources(manifest: dict, files: dict[str, str]) -> tup
 async def cad_session(state: AgentState) -> dict:
     """Let the CAD model choose one incremental workspace/tool action."""
     snapshot = await run_service.load_candidate(state["run_id"])
+    bound = normalize_assembly_requirements(state.get("requirements", []), snapshot["manifest"])
+    if bound != state.get("requirements", []):
+        await repo.event(state["run_id"], "Corrected an assembly requirement binding; rebuilding unchanged geometry against its owned base revision.", stage="validation")
+        return await build({**state, "requirements": bound, "validation": {}, "build_result": {},
+                            "review": {}, "review_history": [], "review_response": {},
+                            "pending_cad_call": {"id": "assembly-binding-rebuild", "name": "build", "input": {"final": True}},
+                            "build_final": True})
     history = state.get("cad_history") or [{
         "role": "user", "content": state.get("clarified_request") or state["original_request"]
     }]
@@ -1401,8 +1443,9 @@ async def cad_session(state: AgentState) -> dict:
         },
         "lastBuild": state.get("build_result"),
         "lastReview": state.get("review"),
+        "nativeGroundingEvidence": native_grounding_evidence(snapshot, state.get("validation") or {}),
     }
-    tools = [item for item in model_tools("cad")
+    tools = [item for item in model_tools("cad", review_response=(state.get("review") or {}).get("action") == "repair")
              if item["function"]["name"] in CAD_SESSION_TOOL_NAMES]
     if len(requested_components) > 1:
         staged = staged_component_count(snapshot["manifest"])
@@ -1553,6 +1596,27 @@ async def cad_session(state: AgentState) -> dict:
         }
         return {**usage, "phase": "cad_session", "cad_history": bounded_history([
             *history, tool_message(call, result)])}
+    if name == "respond_to_review":
+        current_hash = digest(snapshot)
+        review = state.get("review") or {}
+        validation = state.get("validation") or {}
+        targets = {item["id"] for item in review.get("findings", []) if is_review_repair_target(item)}
+        response_key = f"{current_hash}:{value['findingId']}"
+        previous = state.get("review_responses", [])
+        if (review.get("action") != "repair" or value["findingId"] not in targets
+                or state.get("reviewed_candidate_hash") != current_hash
+                or validation.get("identity") != identity(snapshot, state.get("requirements", []))
+                or response_key in previous):
+            return {**usage, "phase": "cad_session", "cad_history": bounded_history([
+                *history, tool_message(call, {"ok": False, "category": "review_response",
+                    "message": "Respond only once to an existing repair finding for the exact current independently validated candidate. Changed or unvalidated geometry must be rebuilt."})])}
+        response = {**value, "candidateHash": current_hash}
+        await repo.event(state["run_id"], "CAD returned a conflicting repair finding for evidence reassessment; geometry is unchanged.", stage="review")
+        return {**usage, "phase": "review_session", "review_response": response,
+            "review_responses": [*previous, response_key], "review_reads": 0,
+            "review_inspected": False, "review_actions": 0,
+            "cad_history": bounded_history([*history, tool_message(call, {"ok": True, "returnedForReview": True, "geometryChanged": False})]),
+            "review_history": [{"role": "user", "content": "CAD disputes this repair finding using current evidence. Reassess the unchanged validated candidate; do not confuse aggregate centres with occurrence frame origins. " + json.dumps(response)}]}
     if name in {"apply_changes", "update_parameters"}:
         invalid_paths = [path for path in value["files"]
                          if not (path.startswith("parts/") or path.startswith("assemblies/"))]
@@ -1979,6 +2043,8 @@ async def review_session(state: AgentState) -> dict:
         "manifest": snapshot["manifest"],
         "sourceFiles": sorted(snapshot["files"]),
         "buildReport": validation.get("report", validation),
+        "nativeGroundingEvidence": native_grounding_evidence(snapshot, validation),
+        "cadReviewResponse": (state.get("review_response") if (state.get("review_response") or {}).get("candidateHash") == digest(snapshot) else None),
         "previousReview": state.get("review", {}),
         "reviewInstructions": ("List requirements that are demonstrated as passing and preserve them. Identify only "
             "specific missing/wrong geometry with evidence as repair targets. Mark unsupported measurements, "

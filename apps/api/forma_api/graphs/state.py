@@ -47,6 +47,8 @@ class AgentState(TypedDict, total=False):
     review: dict[str, Any]
     review_fingerprint: str
     reviewed_candidate_hash: str
+    review_response: dict[str, Any]
+    review_responses: list[str]
     pending_cad_call: dict[str, Any]
     engineering_request: str
     engineering_candidate_hash: str

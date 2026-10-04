@@ -4,7 +4,17 @@ Goal: qualify native assembly technology, integrate assembly and deterministic B
 
 ## Current continuation — 2026-10-04 IST
 
-### Parameter-delta refinement — local qualification
+### Assembly requirement and review refinement — 4 October
+
+Current local API qualification: **207 passed**, including owned-baseline assembly comparisons, stale/missing-evidence rejection, structural mutation failures and safe rebinding of saved grounding/joint requirements. Native runtime source is unchanged; the existing 47-test Windows/47-test Linux image remains applicable. No new runtime image was built.
+
+The actual 3 mm preview build completed with fresh native and STEP validation, preserving all 60 occurrences and 59 joints. Its coordinator incorrectly bound “preserve grounding” to the aggregate assembly bounding-box centre. That check failed at [54,30,0] even though the grounded occurrence remained at [0,0,0]. The reviewer then requested an unnecessary geometry repair; the run is paused at 15 model calls. A new assembly_preservation requirement compares all manifest state except editable component parameters against the run's owned immutable base revision after fresh independent validation. Wrong legacy centre/hole bindings are retained with their IDs/descriptions and corrected to this stronger structural check. A changed requirement identity forces rebuilding unchanged geometry; old validation is not relabelled or reused. A read-only CAD response also lets an evidence-backed challenge return to review once per finding and candidate.
+
+The production model run remains paused at 8 calls. Its original published 4 mm revision is preserved. Preview and production candidates from f2a849b are ready but do not include this local refinement. Original public deployment dpl_E7ESYfMkaDXaDFTtU73LDv6E6tPP remains unchanged. Vercel CLI access was restored using its device authorization flow; no credentials were copied into source or reports.
+
+Next: push this API-only refinement, inspect the automatic preview, recover the same saved preview through the new deployment and qualify final 3 mm publication/downloads/oracle. Then qualify a new production candidate and recover the preserved production workflow before promotion/merge. BOM is exposed under Files → Bill of materials, with Parts list/Assembly structure and CSV/JSON artifacts. Engineering 2D drawings are planned; no drawing panel/artifact generator is implemented in this release.
+
+### Prior parameter-delta checkpoint
 
 Both saved model workflows are now confirmed **paused at 8 model calls**. Preview `f9f90fc9-41fd-4379-8c6e-03878483dba4` timed out, then one explicit Continue returned a malformed tool action. Production `a4a07c44-432b-4909-b143-40e5c4fd77f6` resumed from its confirmed original waiting-input checkpoint through the refined candidate; it also returned a malformed CAD tool action. No invalid action executed; both original 4 mm revisions and complete native candidates remain intact. Private retry receipts and dated operation snapshots are preserved. Do not duplicate a chat or automatically replay a failed operation.
 

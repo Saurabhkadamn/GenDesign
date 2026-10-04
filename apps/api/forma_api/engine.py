@@ -13,6 +13,7 @@ from .contracts import AppSettings, CalculationResult, Snapshot, TERMINAL
 from .execution import ExecutionFailure, SandboxExpired, build_error, digest, executor, identity
 from .prompts import VERSION as PROMPT_VERSION, system_prompt
 from .requirements import design_work_requested, merge_requirements
+from .assembly_requirements import check_assembly_preservation, normalize_assembly_requirements
 from .tools import model_tools, parameter_patch, parse_tool, updated_manifest
 
 
@@ -228,6 +229,7 @@ async def model_turn(run, cp, limits):
 
 async def build_candidate(run, cp, limits, key):
     snapshot = Snapshot.model_validate(cp["snapshot"]).model_dump()
+    cp["requirements"] = normalize_assembly_requirements(cp["requirements"], snapshot["manifest"])
     expected = identity(snapshot, cp["requirements"])
     validated = cp.get("validated") or {}
     if validated.get("identity") == expected:
@@ -295,6 +297,15 @@ async def build_candidate(run, cp, limits, key):
         report = json.loads(await executor().read(validator, "report.json"))
         if report.get("identity") != expected:
             raise ExecutionFailure("Validation identity mismatch")
+        if any(item["kind"] == "assembly_preservation" for item in cp["requirements"]):
+            base_id = run.get("base_revision_id")
+            base = None
+            if base_id:
+                # Restrict the trusted baseline to this run's owned project.
+                await repo.owned_project(run["project_id"], run["owner_id"])
+                await db.one("revisions", {"id": f"eq.{base_id}", "project_id": f"eq.{run['project_id']}"})
+                base = await repo.load_snapshot(base_id)
+            report = check_assembly_preservation(report, snapshot, cp["requirements"], base, base_id)
         # Requirement measurements are advisory evidence for the human reviewer.
         # The build and artifact identity/format checks above remain mandatory,
         # but an unsupported or failed measurement must not hide a usable draft.

@@ -352,7 +352,7 @@ class Requirement(Contract):
     """Numeric expectations are coordinator-owned, never mutable by generated CAD code."""
     id: SafeId
     description: str = Field(min_length=1, max_length=500)
-    kind: Literal["dimensions", "max_dimensions", "center", "solid_count", "through_holes", "corner_radius", "unverified"]
+    kind: Literal["dimensions", "max_dimensions", "center", "solid_count", "through_holes", "corner_radius", "assembly_preservation", "unverified"]
     componentId: SafeId | None = None
     axis: Literal["X", "Y", "Z"] = "Z"
     dimensions: Vector | None = None
@@ -368,7 +368,7 @@ class Requirement(Contract):
         required = {"dimensions": [self.dimensions], "max_dimensions": [self.dimensions],
                     "center": [self.center],
                     "solid_count": [self.count], "through_holes": [self.diameter, self.count],
-                    "corner_radius": [self.radius, self.count], "unverified": []}[self.kind]
+                    "corner_radius": [self.radius, self.count], "assembly_preservation": [], "unverified": []}[self.kind]
         if any(x is None for x in required):
             raise ValueError("Requirement is missing expected values.")
         if self.kind == "through_holes" and len(self.positions) != self.count:

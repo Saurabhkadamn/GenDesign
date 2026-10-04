@@ -100,6 +100,73 @@ async def test_cad_parameter_tool_preserves_source_and_clears_only_stale_evidenc
         assert result["cad_edits_since_build"] == 1
 
 
+def grounded_review_candidate():
+    frame = {"position": [0, 0, 0], "rotation": [0, 0, 0]}
+    return design.Snapshot.model_validate({"manifest": {
+        "components": [{"id": "plate", "name": "Plate", "source": "parts/plate.py", "kind": "solid"},
+            {"id": "assembly", "name": "Assembly", "source": "assemblies/grid.py", "kind": "assembly", "dependencies": ["plate"]}],
+        "rootComponentId": "assembly",
+        "instances": [{"id": "ground", "definitionId": "plate", "name": "Ground", "frame": frame},
+            {"id": "other", "definitionId": "plate", "name": "Other", "frame": {**frame, "position": [13, 2, 3]}}],
+        "references": [{"id": "datum", "componentId": "plate", "kind": "datum", "frame": frame}],
+        "joints": [{"id": "mate", "kind": "fixed", "referenceA": "datum", "referenceB": "datum", "occurrenceA": "ground", "occurrenceB": "other"}],
+        "nativeAssembly": {"groundedInstances": ["ground"], "allowedDof": 0}},
+        "files": {"parts/plate.py": "def build(p,d): return None", "assemblies/grid.py": "def build(p,d): return None"}}).model_dump()
+
+
+def test_grounding_facts_use_exact_occurrence_and_reject_stale_report():
+    snapshot = grounded_review_candidate()
+    report = {"identity": design.identity(snapshot, []),
+        "nativeAssembly": {"engine": "OndselSolver", "solvedFrames": 1},
+        "inspection": {"boundsCentreMm": [54, 30, 0]}}
+    facts = design.native_grounding_evidence(snapshot, {"report": report})
+    assert facts["nativeGroundingCheckedForCurrentCandidate"] is True
+    assert list(facts["groundedOccurrences"]) == ["ground"]
+    assert facts["groundedOccurrences"]["ground"]["declaredFrame"]["position"] == (0, 0, 0)
+    assert facts["groundedOccurrences"]["ground"]["coordinateSystem"] == "world"
+    report["identity"]["candidate"] = "stale"
+    assert design.native_grounding_evidence(snapshot, {"report": report})["nativeGroundingCheckedForCurrentCandidate"] is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case", ["current", "unknown", "stale", "repeated"])
+async def test_disputed_review_can_be_reassessed_once_without_editing_or_publishing(monkeypatch, graph_mocks, case):
+    snapshot = grounded_review_candidate()
+    graph_mocks["candidate"] = deepcopy(snapshot)
+    finding = {"id": "grounding", "status": "observed_mismatch", "evidence": ["assembly centre"],
+        "statement": "Ground moved", "repair_instruction": "Move the ground", "explanation": "Claimed mismatch"}
+    review = {"action": "repair", "summary": "Grounding claim", "findings": [finding]}
+    arguments = {"findingId": "missing" if case == "unknown" else "grounding",
+        "explanation": "The exact ground frame is still zero; the aggregate centre belongs to the whole assembly.",
+        "evidence": ["ground frame [0,0,0]", "current native grounding check passed"]}
+    validated = {"identity": design.identity(snapshot, [])}
+    if case == "stale": validated["identity"]["candidate"] = "stale"
+    response_key = f"{design.digest(snapshot)}:grounding"
+
+    async def turn(_config, _messages, tools, **_kwargs):
+        assert "respond_to_review" in {t["function"]["name"] for t in tools}
+        return {"message": {"role": "assistant", "content": "", "tool_calls": [{"id": "response", "type": "function",
+            "function": {"name": "respond_to_review", "arguments": json.dumps(arguments)}}]},
+            "calls": [{"id": "response", "name": "respond_to_review", "input": arguments}], "inputTokens": 1, "outputTokens": 1}
+
+    monkeypatch.setattr(design.models, "turn", turn)
+    result = await design.cad_session(state(review=review, validation=validated,
+        reviewed_candidate_hash=design.digest(snapshot), review_responses=[response_key] if case == "repeated" else []))
+    assert graph_mocks["candidate"] == snapshot
+    assert "validation" not in result and "published_revision_id" not in result
+    if case == "current":
+        assert result["phase"] == "review_session"
+        assert result["review_responses"] == [response_key]
+        assert result["review_response"]["candidateHash"] == design.digest(snapshot)
+    else:
+        assert result["phase"] == "cad_session" and "review_response" not in result
+
+
+def test_review_response_is_not_advertised_outside_a_review_repair():
+    from forma_api.tools import model_tools
+    assert "respond_to_review" not in {tool["function"]["name"] for tool in model_tools("cad")}
+
+
 @pytest.mark.asyncio
 async def test_cad_session_applies_one_incremental_source_patch(monkeypatch, graph_mocks):
     manifest = {
