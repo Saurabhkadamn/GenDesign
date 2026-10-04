@@ -1,0 +1,674 @@
+{
+  "schemaVersion": 1,
+  "qualifiedOn": "2026-10-01",
+  "runtimeVersion": "forma-2d813e6a363b4808",
+  "sourceHash": "b6ea1833b7ac2751e7a509e0fd7f97888a73272afe7d3deb638203516eaa771a",
+  "linuxRuntimeTests": {
+    "passed": 45,
+    "skipped": 0
+  },
+  "localApiTests": {
+    "passed": 179,
+    "durationSeconds": 8.38,
+    "scope": "Latest local manifest-preservation fix; hosted qualification remains pending"
+  },
+  "databaseTests": {
+    "passed": 10
+  },
+  "cases": {
+    "sixty-parts-2mm": {
+      "status": "passed",
+      "identity": {
+        "candidate": "3624bb1a42183f1068837daef5cdf83bdf2b4a62ef18e065b9bd4639cf8006c6",
+        "requirements": "0b74658e06b1d5187d80f518a002e2083340a8806e5016ea25d925f85a6c4298",
+        "runtime": "forma-2d813e6a363b4808"
+      },
+      "solidChecks": 60,
+      "bomQuantity": 60,
+      "downloadedStepVolumeErrorMm3": 3.728928277269006e-11,
+      "buildReceipt": {
+        "exitCode": 0,
+        "timedOut": false,
+        "clean": true,
+        "elapsedMs": 9511.274239999999
+      },
+      "validationReceipt": {
+        "exitCode": 0,
+        "timedOut": false,
+        "clean": true,
+        "elapsedMs": 12707.328706999995
+      },
+      "nativeAssembly": {
+        "engine": "OndselSolver",
+        "commit": "4be80eef02a3486cda0d78f3ccbb308d207a9639",
+        "degreesOfFreedom": 0,
+        "maxPositionResidualMm": 0.0,
+        "maxAngularResidualRad": 0.0,
+        "solvedFrames": 1,
+        "checkedJointFrames": 59
+      },
+      "artifactSha256": {
+        "plate.step": "1f9c36fbb5ef1b0bdb9f6a6468e5ac33ed9e165de0feb9e4c0517d4edbac1575",
+        "plate.glb": "37c50b951716ba5a372a5f1fef822d138c3e5930abc3e8195a24cb57875638d8",
+        "assembly.step": "fd03e74ce99f2478cfcf63dfb4335755efe345a473dd1b1f64aae72f0a112881",
+        "assembly.glb": "7e00951a78eb2ea2ae79a6aba649b87bf6bf52637687553f8c4c0137d03ce13b",
+        "assembly.json": "de3f6013f5a87ff46d7a35c2166af52371dc3f44e7f8061f52cc2bac43500b29",
+        "preview.glb": "ad1b07f8d5f94e15e1ac39c3299f22ff1ec80abdabd8b989ffbbe27a7869eab0",
+        "bom.json": "49ba4a7d200a75007e42b1ff1c622ff954b1ea9b2e5ef8e9bee54583e6d04d77",
+        "bom-flat.csv": "a41505fc97ef96200f7ebdd10559b34e1c44ae6b58055f05191abcac53b67e7e",
+        "bom-structured.csv": "01ebbf2c6f8c977739ba4941823e313ae0fa838d0947c0b4363a7b654d518682"
+      }
+    },
+    "sixty-parts-4mm": {
+      "status": "passed",
+      "identity": {
+        "candidate": "413ca02795af6a2317168c0661962a8d691812be9e33ecacc8c0b4be1bf96108",
+        "requirements": "0b74658e06b1d5187d80f518a002e2083340a8806e5016ea25d925f85a6c4298",
+        "runtime": "forma-2d813e6a363b4808"
+      },
+      "solidChecks": 60,
+      "bomQuantity": 60,
+      "downloadedStepVolumeErrorMm3": 7.457856554538012e-11,
+      "buildReceipt": {
+        "exitCode": 0,
+        "timedOut": false,
+        "clean": true,
+        "elapsedMs": 9053.098126999997
+      },
+      "validationReceipt": {
+        "exitCode": 0,
+        "timedOut": false,
+        "clean": true,
+        "elapsedMs": 12557.847107999996
+      },
+      "nativeAssembly": {
+        "engine": "OndselSolver",
+        "commit": "4be80eef02a3486cda0d78f3ccbb308d207a9639",
+        "degreesOfFreedom": 0,
+        "maxPositionResidualMm": 0.0,
+        "maxAngularResidualRad": 0.0,
+        "solvedFrames": 1,
+        "checkedJointFrames": 59
+      },
+      "artifactSha256": {
+        "plate.step": "f6481c51bb77d2c86e5dd2c58a40ca5e30e655def8c6ebc4cfe480a4818ea6a4",
+        "plate.glb": "ff31a52ef6504a2f9c848cb90c55216679848f3007b33d53db15f11bed8d4f3b",
+        "assembly.step": "41fe1cabd2646354185faa58ef56c78022088bcf4c09f8cfc68f13b86c8f5cb4",
+        "assembly.glb": "6b45edbd37b305536aac009b6b7a78c9a217d91828934dcaffbed1b4fbcdb4fc",
+        "assembly.json": "7502eaa78f09439c15062bc90c2fa9ddf4a50f45932077cae20faa404680f354",
+        "preview.glb": "c4fcb2f1475bb5922567904cf1a9ed186abac136164d1f2dad8307e7f3bdea67",
+        "bom.json": "f7080a58611bd0275f809479e1d6037785a75cdd8bdae46ef7e75b86fa0237bf",
+        "bom-flat.csv": "a41505fc97ef96200f7ebdd10559b34e1c44ae6b58055f05191abcac53b67e7e",
+        "bom-structured.csv": "01ebbf2c6f8c977739ba4941823e313ae0fa838d0947c0b4363a7b654d518682"
+      }
+    },
+    "contradictory-grounded": {
+      "status": "passed",
+      "identity": {
+        "candidate": "6ca9d07263c142d53b0ccf34f143f0503e2859e69b4bb3037629755d516757db",
+        "requirements": "0b74658e06b1d5187d80f518a002e2083340a8806e5016ea25d925f85a6c4298",
+        "runtime": "forma-2d813e6a363b4808"
+      },
+      "expectedRejection": true,
+      "buildReceipt": {
+        "exitCode": 1,
+        "timedOut": false,
+        "clean": true,
+        "elapsedMs": 4232.445063
+      }
+    }
+  },
+  "bomUi": {
+    "passed": true,
+    "api": "mocked UI fixture",
+    "flatQuantity": 60,
+    "structuredQuantity": 60,
+    "artifactLinks": 6,
+    "consoleErrors": 0
+  },
+  "releaseGates": {
+    "applicationPublication": "passed",
+    "authenticatedDownloads": "passed",
+    "preview": "passed",
+    "production": "pending",
+    "sourcePush": "passed"
+  },
+  "limitations": [
+    "Representative repeated-part fixture; no large industrial assembly performance qualification.",
+    "Sampled mechanisms do not establish collision-free motion, strength or contact dynamics.",
+    "Draft BOM with occurrence counts in ea; no procurement release or material cut list.",
+    "CAD runtime qualification and UI mocks do not prove application workflow publication."
+  ],
+  "applicationPreview": {
+    "deploymentId": "dpl_DvP6Y6LU3h7U6MYRwkcFkc1Vbijg",
+    "sourceCommit": "f859e923abd42136ee2f17ae0235dbb2e93b4d2d",
+    "authentication": "passed",
+    "nativePipeline": "passed",
+    "wrongWorkerPublicationRejected": true,
+    "anonymousAccessRejected": true,
+    "otherOwnerAccessRejected": true,
+    "modelDrivenThicknessEdit": "passed",
+    "modelCalls": 14,
+    "chatIndependentGeometry": {
+      "passed": true,
+      "solidChecks": 60,
+      "plateDimensionsMm": [
+        8,
+        8,
+        3
+      ],
+      "holeDiameterMm": 2,
+      "occurrenceCentersMatch": true,
+      "maxSymmetricDifferenceMm3": 0.0,
+      "downloadedStepVolumeErrorMm3": 3.637978807091713e-12
+    },
+    "artifactSha256": {
+      "plate.step": "a84060a4ee346859a4f9a2d8d2730e3abc378ccfc139f5d7a2fa88beaeab4336",
+      "plate.glb": "836cfd595ec1f4bafb083dab5acdb4e98c050a85de99e96c81662fa9857acdc1",
+      "assembly.step": "d1f582421ff3b9b61a69ccea0213c2579c83e27f843f3c57b92b6148ca9f25b8",
+      "assembly.glb": "0281e80108509dacbda4c8e8eb81d1933fbaf63b3248a86bfb0bd25fc70020d6",
+      "assembly.json": "bd7c9976c6d7fb24f942d55235e2ce6b154767978d37dad3f267e36ed0428644",
+      "preview.glb": "36a008c7a542559435fbd2364b744a8ce32b11fd0758f14d56a76ffe12484667",
+      "bom.json": "80f3ed5609245f8b3928f893f578adbd2cda31854e066d92aa7e60f7e1c3399c",
+      "bom-flat.csv": "a41505fc97ef96200f7ebdd10559b34e1c44ae6b58055f05191abcac53b67e7e",
+      "bom-structured.csv": "01ebbf2c6f8c977739ba4941823e313ae0fa838d0947c0b4363a7b654d518682"
+    },
+    "constraintFramesAndJointEndpointsPreserved": true,
+    "aiReview": "Provider HTTP 500 was reported visibly; draft remained available. Independent geometry and constraint checks passed.",
+    "hostedBrowser": "3D assembly and BOM inspected; no console errors."
+  },
+  "followup": {
+    "deadlineUtc": "2026-10-02T21:57:00Z",
+    "endedAtUtc": "2026-10-03T05:56:31Z",
+    "automationDeleted": true,
+    "goalComplete": false,
+    "lastPushedCommit": "f5d469dee0849da972ab09af5b21c2f7278f39f6",
+    "productionPromoted": false,
+    "mainMerged": false,
+    "latestPreviewWorkflow": "paused",
+    "latestPreviewModelCalls": 31,
+    "localFixHostedQualified": false,
+    "failureFindings": [
+      "Malformed provider tool responses stopped without executing actions",
+      "Unchanged intermediate builds could not enter final review; regression fix pushed",
+      "Omitted root/native manifest fields were reset by defaults; preservation fix passes locally and is not yet hosted-qualified"
+    ]
+  },
+  "productionCandidateFixtures": {
+    "deploymentId": "dpl_6RZm2H8MMykPtkSRQRnr3Qp1g67C",
+    "sourceCommit": "8f17e001f16388b9d64960bae80fafa7da928729",
+    "promoted": false,
+    "cases": {
+      "sixty-parts-2mm": {
+        "status": "passed",
+        "independentGeometry": {
+          "passed": true,
+          "solidChecks": 60,
+          "plateDimensionsMm": [
+            8,
+            8,
+            2
+          ],
+          "holeDiameterMm": 2,
+          "occurrenceCentersMatch": true,
+          "maxSymmetricDifferenceMm3": 0.0,
+          "downloadedStepVolumeErrorMm3": 3.728928277269006e-11
+        }
+      },
+      "sixty-parts-4mm": {
+        "status": "passed",
+        "independentGeometry": {
+          "passed": true,
+          "solidChecks": 60,
+          "plateDimensionsMm": [
+            8,
+            8,
+            4
+          ],
+          "holeDiameterMm": 2,
+          "occurrenceCentersMatch": true,
+          "maxSymmetricDifferenceMm3": 0.0,
+          "downloadedStepVolumeErrorMm3": 7.457856554538012e-11
+        }
+      }
+    }
+  },
+  "measurementRefinement": {
+    "qualifiedOn": "2026-10-03",
+    "runtimeVersion": "forma-b62c5048f2ceea82",
+    "sourceHash": "6c5a1926ef8dd687fb9bddbffe3d0916725e7ddd820f167c92589d9693ae47d3",
+    "linuxRuntimeTests": {
+      "passed": 47,
+      "skipped": 0,
+      "durationSeconds": 11.22
+    },
+    "localRuntimeTests": {
+      "passed": 47,
+      "skipped": 0,
+      "durationSeconds": 30.7
+    },
+    "localApiTests": {
+      "passed": 180,
+      "durationSeconds": 5.88
+    },
+    "regressions": [
+      "Preview tessellation must not alter inspection B-rep bounds",
+      "STEP, inspection and dimension requirements agree after preview generation",
+      "Old durable checkpoints refresh accepted component measurements once"
+    ],
+    "priorPreviewStop": {
+      "reportedModelCalls": 20,
+      "status": "paused",
+      "completeWorkflow": false,
+      "findings": [
+        "Mesh deflection inflated inspection/requirement bounds",
+        "Unrelated prompt example footprint was copied into the thickness requirement"
+      ]
+    },
+    "previewWorkflow": "pending",
+    "productionWorkflow": "pending",
+    "builderStopped": true,
+    "parameterDeltaRefinement": {
+      "date": "2026-10-04 IST",
+      "localApiTests": {
+        "passed": 187,
+        "durationSeconds": 9.27
+      },
+      "focusedContractAndGraphTests": {
+        "passed": 65
+      },
+      "runtimeSourceUnchanged": true,
+      "previewWorkflow": "pending",
+      "productionWorkflow": "pending",
+      "priorPreviewStop": {
+        "modelCalls": 8,
+        "status": "paused",
+        "reason": "Timeout followed by a malformed tool action on one explicit recovery"
+      },
+      "priorProductionStop": {
+        "modelCalls": 8,
+        "status": "paused",
+        "reason": "Malformed CAD tool action after confirmed checkpoint recovery"
+      },
+      "invalidActionsExecuted": false,
+      "originalPublishedRevisionsPreserved": true,
+      "scope": "Existing named parameter deltas use the atomic edit path, preserve source and assembly state, and require fresh validation before publication. Hosted qualification remains pending."
+    },
+    "refinedPreview": {
+      "deploymentId": "dpl_CcYsxHxTzpmcuAZYwbi6tXrYwRcj",
+      "sourceCommit": "1f47976fe4dc48a53116de61184a2b09d3cc27b1",
+      "runtimeVersion": "forma-b62c5048f2ceea82",
+      "pipeline": "passed",
+      "authentication": "passed",
+      "anonymousAccessRejected": true,
+      "otherOwnerAccessRejected": true,
+      "cases": {
+        "sixty-parts-2mm": {
+          "status": "passed",
+          "identity": {
+            "candidate": "3624bb1a42183f1068837daef5cdf83bdf2b4a62ef18e065b9bd4639cf8006c6",
+            "requirements": "0b74658e06b1d5187d80f518a002e2083340a8806e5016ea25d925f85a6c4298",
+            "runtime": "forma-b62c5048f2ceea82"
+          },
+          "artifactCount": 9,
+          "leaseFence": "passed",
+          "authenticatedDownloads": {
+            "plate.step": "4dfff11c463066b7b7adc0e62dc9cbd1b4ab98cfff5b7cbd5373e120b9920a4c",
+            "plate.glb": "37c50b951716ba5a372a5f1fef822d138c3e5930abc3e8195a24cb57875638d8",
+            "assembly.step": "c8ab431af81858bc5e82f9f3f4761e145b81be048f801ab10b831c54995d6cde",
+            "assembly.glb": "bf18305aec99317222e85763c181655613dc88c0f8d32af5806ed4c1f3a0a33e",
+            "assembly.json": "0951d156a82c9b2a67ca513f43cde52bf7d3a9cc29b02e482876dddc00a6226c",
+            "preview.glb": "ad1b07f8d5f94e15e1ac39c3299f22ff1ec80abdabd8b989ffbbe27a7869eab0",
+            "bom.json": "1577294051c8f7109768d82c1430300772c881b4054fc0f95f0a85e410a31a45",
+            "bom-flat.csv": "a41505fc97ef96200f7ebdd10559b34e1c44ae6b58055f05191abcac53b67e7e",
+            "bom-structured.csv": "01ebbf2c6f8c977739ba4941823e313ae0fa838d0947c0b4363a7b654d518682"
+          },
+          "independentGeometry": {
+            "passed": true,
+            "solidChecks": 60,
+            "plateDimensionsMm": [
+              8,
+              8,
+              2
+            ],
+            "holeDiameterMm": 2,
+            "occurrenceCentersMatch": true,
+            "maxSymmetricDifferenceMm3": 0.0,
+            "downloadedStepVolumeErrorMm3": 3.728928277269006e-11
+          }
+        },
+        "sixty-parts-4mm": {
+          "status": "passed",
+          "identity": {
+            "candidate": "413ca02795af6a2317168c0661962a8d691812be9e33ecacc8c0b4be1bf96108",
+            "requirements": "0b74658e06b1d5187d80f518a002e2083340a8806e5016ea25d925f85a6c4298",
+            "runtime": "forma-b62c5048f2ceea82"
+          },
+          "artifactCount": 9,
+          "leaseFence": "passed",
+          "authenticatedDownloads": {
+            "plate.step": "c4b63754819dbdcb481087016ad24822c02b8b305c31a03171a11def3ad84e24",
+            "plate.glb": "ff31a52ef6504a2f9c848cb90c55216679848f3007b33d53db15f11bed8d4f3b",
+            "assembly.step": "a24fc931b33687c5061e100bb5021e2aa5f42ff8b30289bedbbed4c53dd43123",
+            "assembly.glb": "d8bdb2593733c7f1740b6b00d80120c9f69099ed25db1259e1ed24e79086c0cd",
+            "assembly.json": "692c47c961e9fa3719a3e363b51a8ffaf96420008407b59ee7d0a8fdd95d1311",
+            "preview.glb": "c4fcb2f1475bb5922567904cf1a9ed186abac136164d1f2dad8307e7f3bdea67",
+            "bom.json": "e2fcff3ec12f00f41795b70b4d9fc2d6e199ea53852ab68835ed0417a67d5950",
+            "bom-flat.csv": "a41505fc97ef96200f7ebdd10559b34e1c44ae6b58055f05191abcac53b67e7e",
+            "bom-structured.csv": "01ebbf2c6f8c977739ba4941823e313ae0fa838d0947c0b4363a7b654d518682"
+          },
+          "independentGeometry": {
+            "passed": true,
+            "solidChecks": 60,
+            "plateDimensionsMm": [
+              8,
+              8,
+              4
+            ],
+            "holeDiameterMm": 2,
+            "occurrenceCentersMatch": true,
+            "maxSymmetricDifferenceMm3": 0.0,
+            "downloadedStepVolumeErrorMm3": 7.457856554538012e-11
+          }
+        }
+      }
+    },
+    "refinedProduction": {
+      "deploymentId": "dpl_4FkPuuQsWnTjDTgdoHS1YujwXDCt",
+      "sourceCommit": "1f47976fe4dc48a53116de61184a2b09d3cc27b1",
+      "runtimeVersion": "forma-b62c5048f2ceea82",
+      "pipeline": "passed",
+      "authentication": "passed",
+      "anonymousAccessRejected": true,
+      "otherOwnerAccessRejected": true,
+      "cases": {
+        "sixty-parts-2mm": {
+          "status": "passed",
+          "identity": {
+            "candidate": "3624bb1a42183f1068837daef5cdf83bdf2b4a62ef18e065b9bd4639cf8006c6",
+            "requirements": "0b74658e06b1d5187d80f518a002e2083340a8806e5016ea25d925f85a6c4298",
+            "runtime": "forma-b62c5048f2ceea82"
+          },
+          "artifactCount": 9,
+          "leaseFence": "passed",
+          "authenticatedDownloads": {
+            "plate.step": "63eb561578fd08b9dc11ef7f10bfea021ceabedb8a8a22005494ff2926d8c1cd",
+            "plate.glb": "37c50b951716ba5a372a5f1fef822d138c3e5930abc3e8195a24cb57875638d8",
+            "assembly.step": "cadcaacf859abb6490098f575f82f1ece93cf4400b6c36b749d2fd26be252ed1",
+            "assembly.glb": "bf18305aec99317222e85763c181655613dc88c0f8d32af5806ed4c1f3a0a33e",
+            "assembly.json": "0951d156a82c9b2a67ca513f43cde52bf7d3a9cc29b02e482876dddc00a6226c",
+            "preview.glb": "ad1b07f8d5f94e15e1ac39c3299f22ff1ec80abdabd8b989ffbbe27a7869eab0",
+            "bom.json": "1577294051c8f7109768d82c1430300772c881b4054fc0f95f0a85e410a31a45",
+            "bom-flat.csv": "a41505fc97ef96200f7ebdd10559b34e1c44ae6b58055f05191abcac53b67e7e",
+            "bom-structured.csv": "01ebbf2c6f8c977739ba4941823e313ae0fa838d0947c0b4363a7b654d518682"
+          },
+          "independentGeometry": {
+            "passed": true,
+            "solidChecks": 60,
+            "plateDimensionsMm": [
+              8,
+              8,
+              2
+            ],
+            "holeDiameterMm": 2,
+            "occurrenceCentersMatch": true,
+            "maxSymmetricDifferenceMm3": 0.0,
+            "downloadedStepVolumeErrorMm3": 3.728928277269006e-11
+          }
+        },
+        "sixty-parts-4mm": {
+          "status": "passed",
+          "identity": {
+            "candidate": "413ca02795af6a2317168c0661962a8d691812be9e33ecacc8c0b4be1bf96108",
+            "requirements": "0b74658e06b1d5187d80f518a002e2083340a8806e5016ea25d925f85a6c4298",
+            "runtime": "forma-b62c5048f2ceea82"
+          },
+          "artifactCount": 9,
+          "leaseFence": "passed",
+          "authenticatedDownloads": {
+            "plate.step": "25751a59ac61f0efe3aa153a7f499b153fbf5b24a979f8c9354cb6a2d3770d75",
+            "plate.glb": "ff31a52ef6504a2f9c848cb90c55216679848f3007b33d53db15f11bed8d4f3b",
+            "assembly.step": "a4ebb8b357c6f15a61accae220ef6a72bfce419baf70f678c9188d15f7326de9",
+            "assembly.glb": "d8bdb2593733c7f1740b6b00d80120c9f69099ed25db1259e1ed24e79086c0cd",
+            "assembly.json": "692c47c961e9fa3719a3e363b51a8ffaf96420008407b59ee7d0a8fdd95d1311",
+            "preview.glb": "c4fcb2f1475bb5922567904cf1a9ed186abac136164d1f2dad8307e7f3bdea67",
+            "bom.json": "e2fcff3ec12f00f41795b70b4d9fc2d6e199ea53852ab68835ed0417a67d5950",
+            "bom-flat.csv": "a41505fc97ef96200f7ebdd10559b34e1c44ae6b58055f05191abcac53b67e7e",
+            "bom-structured.csv": "01ebbf2c6f8c977739ba4941823e313ae0fa838d0947c0b4363a7b654d518682"
+          },
+          "independentGeometry": {
+            "passed": true,
+            "solidChecks": 60,
+            "plateDimensionsMm": [
+              8,
+              8,
+              4
+            ],
+            "holeDiameterMm": 2,
+            "occurrenceCentersMatch": true,
+            "maxSymmetricDifferenceMm3": 0.0,
+            "downloadedStepVolumeErrorMm3": 7.457856554538012e-11
+          }
+        }
+      },
+      "uploadRecovery": {
+        "sameRunRecovered": true,
+        "previousStop": "Private artifact upload transport retries exhausted",
+        "previousRevisionPreserved": true,
+        "expiredSandboxesConfirmed": true,
+        "attempts": 1
+      }
+    },
+    "productionFixtureBrowser": {
+      "passed": true,
+      "flatQuantity": 60,
+      "structuredQuantity": 60,
+      "generatedFileButtons": 8,
+      "pageErrors": 0,
+      "scope": "Actual authenticated refined production 4 mm fixture, both BOM layouts and private artifact API downloads"
+    }
+  },
+  "currentQualification": "finalReleaseQualification20261004",
+  "finalReleaseQualification20261004": {
+    "releaseStatus": "candidate_promoted_main_integration_pending",
+    "candidateSource": "7cc3b27fdb4fa7dd16809a33445a458ba45d96dd",
+    "candidateDeploymentId": "dpl_5vYmF2sj2u45z8c168u7AMCdttV7",
+    "candidateUrl": "https://forma-c7upi4743-negens-projects.vercel.app",
+    "runtime": {
+      "snapshotId": "snap_iKa7XXTQI3tq44gHu5TiEvUGsIj5",
+      "version": "forma-b62c5048f2ceea82",
+      "sourceHash": "6c5a1926ef8dd687fb9bddbffe3d0916725e7ddd820f167c92589d9693ae47d3"
+    },
+    "tests": {
+      "apiPassed": 208,
+      "windowsRuntimePassed": 47,
+      "linuxRuntimePassed": 47,
+      "runtimeSkipped": 0
+    },
+    "productionWorkflow": {
+      "deployment": "https://forma-jeyi9mosy-negens-projects.vercel.app",
+      "workflowSourceCommit": "a884ded71acebf6d5b935c50e25d162ca1fa1565",
+      "pipeline": null,
+      "chatWorkflow": "passed",
+      "run": {
+        "id": "a4a07c44-432b-4909-b143-40e5c4fd77f6",
+        "status": "succeeded",
+        "model_calls": 14,
+        "updated_at": "2026-10-04T16:08:14.014304+00:00"
+      },
+      "revisionId": "6cfdfc0f-f6f4-5a78-8803-282c55216ceb",
+      "reviewQualified": true,
+      "privateArtifactCount": 9,
+      "artifactHashes": {
+        "plate.step": "aaad78f28ff6a09862f515ef357530506c49818a852288e2987ada9d0d37844f",
+        "plate.glb": "836cfd595ec1f4bafb083dab5acdb4e98c050a85de99e96c81662fa9857acdc1",
+        "assembly.step": "625da0b5cba8c7d8820625af4682879d4c979325a1300d758878f508d9ab566a",
+        "assembly.glb": "cee38a66cf1b338a2dcf106dbb7a6fb99799980f3e9a580ee1e90bd3bb975a1c",
+        "assembly.json": "d2da4725992c968e632cb2b206c94ae87616ca45403fbf958733362b577b2312",
+        "preview.glb": "36a008c7a542559435fbd2364b744a8ce32b11fd0758f14d56a76ffe12484667",
+        "bom.json": "420f8878f25cc0038b9d88c9e6b931745fad67a78fb73870d910c05ffcf164de",
+        "bom-flat.csv": "a41505fc97ef96200f7ebdd10559b34e1c44ae6b58055f05191abcac53b67e7e",
+        "bom-structured.csv": "01ebbf2c6f8c977739ba4941823e313ae0fa838d0947c0b4363a7b654d518682"
+      },
+      "independentGeometry": {
+        "passed": true,
+        "solidChecks": 60,
+        "plateDimensionsMm": [
+          8,
+          8,
+          3
+        ],
+        "holeDiameterMm": 2,
+        "occurrenceCentersMatch": true,
+        "maxSymmetricDifferenceMm3": 0.0,
+        "downloadedStepVolumeErrorMm3": 3.637978807091713e-12
+      },
+      "anonymousAccessRejected": true,
+      "otherOwnerAccessRejected": true
+    },
+    "freshPreviewWorkflow": {
+      "deployment": "https://forma-160kk0dit-negens-projects.vercel.app",
+      "workflowSourceCommit": "a37ca56e065b4bce72d6a527489982c3824a45fe",
+      "pipeline": "passed",
+      "chatWorkflow": "passed",
+      "run": {
+        "id": "8ae5990d-1ada-44e4-8467-965df6d5bd1e",
+        "status": "succeeded",
+        "model_calls": 9,
+        "updated_at": "2026-10-04T16:17:57.261998+00:00"
+      },
+      "revisionId": "6847e258-4f28-5859-9d20-dbf35910df9b",
+      "reviewQualified": true,
+      "privateArtifactCount": 9,
+      "artifactHashes": {
+        "plate.step": "c4c4fb811bc8fb42abf9c81008ba80210ca430a47b56478a52859452ff7b69f9",
+        "plate.glb": "836cfd595ec1f4bafb083dab5acdb4e98c050a85de99e96c81662fa9857acdc1",
+        "assembly.step": "3c7365515223499589347e06d89fcfc2be42162e4d19e02f71fdc41cc31569f3",
+        "assembly.glb": "cee38a66cf1b338a2dcf106dbb7a6fb99799980f3e9a580ee1e90bd3bb975a1c",
+        "assembly.json": "bdbfde276ccf19062cfd079872fcc7c733429782e784d133098ea3ea48f4b257",
+        "preview.glb": "36a008c7a542559435fbd2364b744a8ce32b11fd0758f14d56a76ffe12484667",
+        "bom.json": "fd85ed2f721858e4aba34e9e862a40f61ef591342a651b5f9860c009ba6ed251",
+        "bom-flat.csv": "a41505fc97ef96200f7ebdd10559b34e1c44ae6b58055f05191abcac53b67e7e",
+        "bom-structured.csv": "01ebbf2c6f8c977739ba4941823e313ae0fa838d0947c0b4363a7b654d518682"
+      },
+      "independentGeometry": {
+        "passed": true,
+        "solidChecks": 60,
+        "plateDimensionsMm": [
+          8,
+          8,
+          3
+        ],
+        "holeDiameterMm": 2,
+        "occurrenceCentersMatch": true,
+        "maxSymmetricDifferenceMm3": 0.0,
+        "downloadedStepVolumeErrorMm3": 3.637978807091713e-12
+      },
+      "anonymousAccessRejected": true,
+      "otherOwnerAccessRejected": true
+    },
+    "latestCandidateReads": {
+      "deployment": "https://forma-c7upi4743-negens-projects.vercel.app",
+      "workflowSourceCommit": "a884ded71acebf6d5b935c50e25d162ca1fa1565",
+      "pipeline": null,
+      "chatWorkflow": "passed",
+      "run": {},
+      "revisionId": "6cfdfc0f-f6f4-5a78-8803-282c55216ceb",
+      "reviewQualified": true,
+      "privateArtifactCount": 9,
+      "artifactHashes": {
+        "plate.step": "aaad78f28ff6a09862f515ef357530506c49818a852288e2987ada9d0d37844f",
+        "plate.glb": "836cfd595ec1f4bafb083dab5acdb4e98c050a85de99e96c81662fa9857acdc1",
+        "assembly.step": "625da0b5cba8c7d8820625af4682879d4c979325a1300d758878f508d9ab566a",
+        "assembly.glb": "cee38a66cf1b338a2dcf106dbb7a6fb99799980f3e9a580ee1e90bd3bb975a1c",
+        "assembly.json": "d2da4725992c968e632cb2b206c94ae87616ca45403fbf958733362b577b2312",
+        "preview.glb": "36a008c7a542559435fbd2364b744a8ce32b11fd0758f14d56a76ffe12484667",
+        "bom.json": "420f8878f25cc0038b9d88c9e6b931745fad67a78fb73870d910c05ffcf164de",
+        "bom-flat.csv": "a41505fc97ef96200f7ebdd10559b34e1c44ae6b58055f05191abcac53b67e7e",
+        "bom-structured.csv": "01ebbf2c6f8c977739ba4941823e313ae0fa838d0947c0b4363a7b654d518682"
+      },
+      "independentGeometry": {
+        "passed": true,
+        "solidChecks": 60,
+        "plateDimensionsMm": [
+          8,
+          8,
+          3
+        ],
+        "holeDiameterMm": 2,
+        "occurrenceCentersMatch": true,
+        "maxSymmetricDifferenceMm3": 0.0,
+        "downloadedStepVolumeErrorMm3": 3.637978807091713e-12
+      },
+      "anonymousAccessRejected": true,
+      "otherOwnerAccessRejected": true,
+      "applicationVerificationSource": "7cc3b27fdb4fa7dd16809a33445a458ba45d96dd",
+      "workflowQualificationDeployment": "https://forma-jeyi9mosy-negens-projects.vercel.app",
+      "browser": {
+        "flatQuantity": 60,
+        "structuredQuantity": 60,
+        "fileButtons": 8,
+        "errors": 0,
+        "screenshotInspected": true
+      }
+    },
+    "previousPreview": {
+      "runId": "f9f90fc9-41fd-4379-8c6e-03878483dba4",
+      "geometryPassed": true,
+      "reviewQualified": false,
+      "reason": "Retained a contradicted grounding finding from stale review state; publication preserved as historical evidence."
+    },
+    "productionSchedulerRecovery": {
+      "existingWorkflowId": "wrun_01M43SXZ1T2VPBAXMV1968FVPH",
+      "existingOverdueWaitWokenOnce": true,
+      "newWorkflowCreated": false
+    },
+    "stablePromotion": {
+      "url": "https://forma-cad-eosin.vercel.app",
+      "deploymentId": "dpl_5vYmF2sj2u45z8c168u7AMCdttV7",
+      "authenticatedReads": {
+        "deployment": "https://forma-cad-eosin.vercel.app",
+        "workflowSourceCommit": "a884ded71acebf6d5b935c50e25d162ca1fa1565",
+        "pipeline": null,
+        "chatWorkflow": "passed",
+        "run": {},
+        "revisionId": "6cfdfc0f-f6f4-5a78-8803-282c55216ceb",
+        "reviewQualified": true,
+        "privateArtifactCount": 9,
+        "artifactHashes": {
+          "plate.step": "aaad78f28ff6a09862f515ef357530506c49818a852288e2987ada9d0d37844f",
+          "plate.glb": "836cfd595ec1f4bafb083dab5acdb4e98c050a85de99e96c81662fa9857acdc1",
+          "assembly.step": "625da0b5cba8c7d8820625af4682879d4c979325a1300d758878f508d9ab566a",
+          "assembly.glb": "cee38a66cf1b338a2dcf106dbb7a6fb99799980f3e9a580ee1e90bd3bb975a1c",
+          "assembly.json": "d2da4725992c968e632cb2b206c94ae87616ca45403fbf958733362b577b2312",
+          "preview.glb": "36a008c7a542559435fbd2364b744a8ce32b11fd0758f14d56a76ffe12484667",
+          "bom.json": "420f8878f25cc0038b9d88c9e6b931745fad67a78fb73870d910c05ffcf164de",
+          "bom-flat.csv": "a41505fc97ef96200f7ebdd10559b34e1c44ae6b58055f05191abcac53b67e7e",
+          "bom-structured.csv": "01ebbf2c6f8c977739ba4941823e313ae0fa838d0947c0b4363a7b654d518682"
+        },
+        "independentGeometry": {
+          "passed": true,
+          "solidChecks": 60,
+          "plateDimensionsMm": [
+            8,
+            8,
+            3
+          ],
+          "holeDiameterMm": 2,
+          "occurrenceCentersMatch": true,
+          "maxSymmetricDifferenceMm3": 0.0,
+          "downloadedStepVolumeErrorMm3": 3.637978807091713e-12
+        },
+        "anonymousAccessRejected": true,
+        "otherOwnerAccessRejected": true
+      },
+      "browser": {
+        "flatQuantity": 60,
+        "structuredQuantity": 60,
+        "fileButtons": 8,
+        "errors": 0
+      }
+    },
+    "scope": "Repeated-part native assembly and draft BOM qualification; no engineering drawing generator or industry-wide CAD parity."
+  }
+}

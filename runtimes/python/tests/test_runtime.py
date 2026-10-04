@@ -6,7 +6,7 @@ import cadquery as cq
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parents[1]))
-from forma_runtime import build, validate, properties, calculate, module_at
+from forma_runtime import build, validate, properties, calculate, module_at, mesh_of
 
 
 def fixture(tmp_path, kind="solid", source=None):
@@ -63,6 +63,39 @@ def test_open_surface_is_valid_only_when_declared():
     assert properties(surface, "surface")["faces"] == 1
     with pytest.raises(ValueError, match="closed solid"):
         properties(surface, "solid")
+
+
+def test_preview_meshing_preserves_exact_inspection_shape():
+    from geometry_inspection import component_facts
+    from requirements_check import check_requirements
+
+    shape = cq.Workplane("XY").box(8, 8, 3).faces(">Z").workplane().hole(2).val()
+    before = component_facts(shape, {})["boundsMm"]
+    mesh = mesh_of(shape, "#aabbcc")
+    assert len(mesh.faces) > 0
+    assert component_facts(shape, {})["boundsMm"] == pytest.approx(before, abs=1e-8)
+    check = check_requirements({"plate": shape}, {"rootComponentId": "plate"}, [{
+        "id": "size", "description": "Exact plate size after preview generation",
+        "kind": "dimensions", "dimensions": [8, 8, 3], "tolerance": 1e-6}])[0]
+    assert check["status"] == "passed", check
+
+
+def test_step_inspection_and_requirement_sizes_agree_after_preview(tmp_path):
+    source = "import cadquery as cq\ndef build(p,d): return cq.Workplane('XY').box(8,8,3).faces('>Z').workplane().hole(2)\n"
+    workspace, output, manifest = fixture(tmp_path, source=source)
+    build(workspace, output)
+    (output / "manifest.json").write_text(json.dumps(manifest))
+    (output / "requirements.json").write_text(json.dumps([{
+        "id": "size", "description": "8 x 8 x 3 mm",
+        "kind": "dimensions", "dimensions": [8, 8, 3], "tolerance": 1e-6}]))
+    verified = tmp_path / "verified"
+    verified.mkdir()
+    validate(output, verified)
+    report = json.loads((verified / "report.json").read_text())
+    assert report["components"]["plate"]["dimensions"] == pytest.approx([8, 8, 3], abs=1e-6)
+    assert report["inspection"]["components"]["plate"]["boundsMm"] == pytest.approx(
+        report["components"]["plate"]["bounds"], abs=1e-6)
+    assert report["requirements"][0]["status"] == "passed", report["requirements"]
 
 
 def test_assembly_constraint_solver():
@@ -154,10 +187,81 @@ def test_assembly_export_and_instance_placements(tmp_path):
     assert set(scene.graph.nodes_geometry) == {"left", "right"}
     assert scene.extents.tolist() == pytest.approx([100, 20, 5])
     assert (verified / "pair.step").read_bytes() == (output / "pair.step").read_bytes()
+    bom = json.loads((verified / "bom.json").read_text(encoding="utf-8"))
+    assert bom["flat"][0]["quantity"] == 2
     manifest["instances"][2]["frame"]["position"][0] = 80
     (output / "manifest.json").write_text(json.dumps(manifest))
     with pytest.raises(ValueError, match="placements"):
         validate(output, verified)
+
+
+def test_internal_placement_change_cannot_hide_behind_unchanged_bounds(tmp_path):
+    workspace, output, manifest = fixture(tmp_path)
+    (workspace / "assemblies").mkdir()
+    (workspace / "assemblies/triple.py").write_text(
+        "import cadquery as cq\ndef build(p,d):\n"
+        " a=cq.Assembly(name='triple')\n"
+        " for i,x in enumerate((0,60,120)): a.add(d['plate'],name=f'item_{i}',loc=cq.Location(cq.Vector(x,0,0)))\n"
+        " return a\n")
+    manifest["components"].append({"id": "triple", "name": "Triple", "source": "assemblies/triple.py",
+        "kind": "assembly", "dependencies": ["plate"], "parameters": {}, "color": "#b8c9a5"})
+    manifest["rootComponentId"] = "triple"
+    manifest["instances"] = [{"id": f"item_{i}", "definitionId": "plate", "parentId": None,
+        "name": str(i), "frame": {"position": [x, 0, 0], "rotation": [0, 0, 0]}}
+        for i, x in enumerate((0, 60, 120))]
+    (workspace / "manifest.json").write_text(json.dumps(manifest))
+    build(workspace, output)
+    manifest["instances"][1]["frame"]["position"][0] += 5
+    (output / "manifest.json").write_text(json.dumps(manifest))
+    verified = tmp_path / "verified"
+    verified.mkdir()
+    with pytest.raises(ValueError, match="occurrence item_1"):
+        validate(output, verified)
+
+
+def test_native_build_step_preview_and_bom_share_accepted_state(tmp_path, monkeypatch):
+    import os
+    import assembly_state
+    import forma_runtime
+    if not os.getenv("FORMA_NATIVE_TEST_BINARY"):
+        pytest.skip("Native runtime integration needs the qualified binary")
+    binary = Path(os.environ["FORMA_NATIVE_TEST_BINARY"])
+    actual_support = forma_runtime.trusted_support
+    actual_accept = assembly_state.accepted_state
+    monkeypatch.setattr(assembly_state, "accepted_state", lambda manifest, output:
+        actual_accept(manifest, output, executable=binary))
+    monkeypatch.setattr(forma_runtime, "trusted_support", lambda name:
+        assembly_state if name == "assembly_state" else actual_support(name))
+    workspace, output, manifest = fixture(tmp_path)
+    (workspace / "assemblies").mkdir()
+    (workspace / "assemblies/pair.py").write_text(
+        "import cadquery as cq\ndef build(p,d):\n"
+        " return cq.Assembly(name='pair').add(d['plate'],name='base').add(d['plate'],name='lid')\n")
+    manifest["components"].append({"id": "pair", "name": "Pair", "source": "assemblies/pair.py",
+        "kind": "assembly", "dependencies": ["plate"], "parameters": {}, "color": "#b8c9a5"})
+    manifest["rootComponentId"] = "pair"
+    manifest["instances"] = [{"id": iid, "definitionId": "plate", "parentId": None,
+        "name": iid, "frame": {"position": [0, 0, z], "rotation": [0, 0, 0]}}
+        for iid, z in (("base", 0), ("lid", 30))]
+    manifest["references"] = [{"id": "top", "componentId": "plate", "kind": "mate_frame",
+        "frame": {"position": [0, 0, 5], "rotation": [0, 0, 0]}},
+        {"id": "bottom", "componentId": "plate", "kind": "mate_frame",
+        "frame": {"position": [0, 0, -5], "rotation": [0, 0, 0]}}]
+    manifest["joints"] = [{"id": "mate", "kind": "fixed", "referenceA": "top", "referenceB": "bottom",
+        "occurrenceA": "base", "occurrenceB": "lid"}]
+    manifest["nativeAssembly"] = {"solver": "ondsel", "groundedInstances": ["base"], "allowedDof": 0, "motion": None}
+    (workspace / "manifest.json").write_text(json.dumps(manifest))
+    build(workspace, output)
+    (output / "manifest.json").write_text(json.dumps(manifest))
+    verified = tmp_path / "verified"
+    verified.mkdir()
+    validate(output, verified)
+    report = json.loads((verified / "report.json").read_text(encoding="utf-8"))
+    assert report["nativeAssembly"]["degreesOfFreedom"] == 0
+    assert report["assemblyPlacement"]["mode"] == "xde_identity_and_solid_multiset"
+    assert report["components"]["pair"]["dimensions"][2] == pytest.approx(15)
+    assert report["bom"]["flat"][0]["quantity"] == 2
+    assert (verified / "assembly.json").is_file()
 
 
 def test_scientific_runtime_units_and_independent_check(tmp_path):

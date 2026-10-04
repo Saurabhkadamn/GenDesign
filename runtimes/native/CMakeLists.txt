@@ -1,0 +1,57 @@
+cmake_minimum_required(VERSION 3.24)
+project(FormaAssembly LANGUAGES CXX)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+include(FetchContent)
+
+set(FORMA_ONDSEL_COMMIT "4be80eef02a3486cda0d78f3ccbb308d207a9639")
+set(FORMA_ONDSEL_SOURCE_DIR "" CACHE PATH "Optional checked-out pinned source")
+set(FORMA_ONDSEL_LIBRARY "" CACHE FILEPATH "Optional qualification library from that source")
+set(FORMA_JSON_INCLUDE_DIR "" CACHE PATH "Optional verified nlohmann/json single-header directory")
+if(NOT FORMA_JSON_INCLUDE_DIR)
+  set(FORMA_JSON_INCLUDE_DIR "${CMAKE_BINARY_DIR}/json")
+  file(MAKE_DIRECTORY "${FORMA_JSON_INCLUDE_DIR}")
+  file(DOWNLOAD "https://github.com/nlohmann/json/releases/download/v3.12.0/json.hpp"
+    "${FORMA_JSON_INCLUDE_DIR}/json.hpp"
+    EXPECTED_HASH SHA256=aaf127c04cb31c406e5b04a63f1ae89369fccde6d8fa7cdda1ed4f32dfc5de63
+    TLS_VERIFY ON)
+endif()
+file(SHA256 "${FORMA_JSON_INCLUDE_DIR}/json.hpp" FORMA_JSON_SHA)
+if(NOT FORMA_JSON_SHA STREQUAL "aaf127c04cb31c406e5b04a63f1ae89369fccde6d8fa7cdda1ed4f32dfc5de63")
+  message(FATAL_ERROR "JSON dependency hash mismatch")
+endif()
+if(NOT FORMA_ONDSEL_SOURCE_DIR)
+  FetchContent_Declare(ondsel GIT_REPOSITORY https://github.com/FreeCAD/OndselSolver.git
+    GIT_TAG ${FORMA_ONDSEL_COMMIT} GIT_SHALLOW FALSE)
+  FetchContent_MakeAvailable(ondsel)
+  set(FORMA_ONDSEL_SOURCE_DIR "${ondsel_SOURCE_DIR}")
+elseif(NOT FORMA_ONDSEL_LIBRARY)
+  add_subdirectory("${FORMA_ONDSEL_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/ondsel")
+endif()
+find_package(Git REQUIRED)
+execute_process(COMMAND "${GIT_EXECUTABLE}" -C "${FORMA_ONDSEL_SOURCE_DIR}" rev-parse HEAD
+  OUTPUT_VARIABLE FORMA_SOURCE_COMMIT OUTPUT_STRIP_TRAILING_WHITESPACE
+  RESULT_VARIABLE FORMA_GIT_RESULT)
+if(NOT FORMA_GIT_RESULT EQUAL 0 OR NOT FORMA_SOURCE_COMMIT STREQUAL FORMA_ONDSEL_COMMIT)
+  message(FATAL_ERROR "Ondsel source must be the reviewed pinned commit")
+endif()
+if(FORMA_ONDSEL_LIBRARY)
+  add_library(OndselSolver UNKNOWN IMPORTED)
+  set_target_properties(OndselSolver PROPERTIES IMPORTED_LOCATION "${FORMA_ONDSEL_LIBRARY}")
+else()
+  # Upstream has input-consuming expressions in assertions. Retain them in
+  # every configuration; a process failure is handled by the parent worker.
+  if(MSVC)
+    target_compile_options(OndselSolver PRIVATE /UNDEBUG)
+  else()
+    target_compile_options(OndselSolver PRIVATE -UNDEBUG)
+  endif()
+endif()
+add_executable(forma-assembly assembly_bridge.cpp)
+target_include_directories(forma-assembly PRIVATE "${FORMA_ONDSEL_SOURCE_DIR}/OndselSolver" "${FORMA_JSON_INCLUDE_DIR}")
+target_compile_definitions(forma-assembly PRIVATE _USE_MATH_DEFINES FORMA_ONDSEL_COMMIT="${FORMA_ONDSEL_COMMIT}")
+target_link_libraries(forma-assembly PRIVATE OndselSolver)
+set_target_properties(forma-assembly PROPERTIES INSTALL_RPATH "$ORIGIN/lib;$ORIGIN/lib64")
+install(TARGETS forma-assembly RUNTIME DESTINATION .)
+install(FILES "${FORMA_ONDSEL_SOURCE_DIR}/LICENSE" DESTINATION notices RENAME OndselSolver-LICENSE)
+

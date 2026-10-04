@@ -88,6 +88,11 @@ def check_requirements(shapes, manifest, requirements):
             expected = requirement["dimensions"]
             passed = all(near(a, b) for a, b in zip(actual, expected))
             item["evidence"] = {"expectedMm": expected, "measuredMm": actual}
+        elif kind == "max_dimensions":
+            actual = [box.xlen, box.ylen, box.zlen]
+            maximum = requirement["dimensions"]
+            passed = all(a <= b + tolerance for a, b in zip(actual, maximum))
+            item["evidence"] = {"maximumMm": maximum, "measuredMm": actual}
         elif kind == "center":
             actual = [(box.xmin + box.xmax) / 2, (box.ymin + box.ymax) / 2, (box.zmin + box.zmax) / 2]
             expected = requirement["center"]

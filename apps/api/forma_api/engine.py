@@ -13,7 +13,8 @@ from .contracts import AppSettings, CalculationResult, Snapshot, TERMINAL
 from .execution import ExecutionFailure, SandboxExpired, build_error, digest, executor, identity
 from .prompts import VERSION as PROMPT_VERSION, system_prompt
 from .requirements import design_work_requested, merge_requirements
-from .tools import model_tools, parse_tool
+from .assembly_requirements import check_assembly_preservation, normalize_assembly_requirements
+from .tools import model_tools, parameter_patch, parse_tool, updated_manifest
 
 
 class Pause(Exception):
@@ -61,12 +62,18 @@ async def authorize_ambiguous_retry(run_id: str) -> None:
     path when a workflow interruption leaves their ledger entry ambiguous.
     Completed calls and other external operations remain immutable.
     """
-    await db.rest("run_operations", "PATCH", params={
+    operations = await db.rest("run_operations", params={
         "run_id": f"eq.{run_id}", "kind": "in.(model,calculate)",
         "status": "in.(started,ambiguous,failed)",
-    }, body={"status": "failed", "result": {"category": "user_retry_authorized",
-        "diagnostic": "The user explicitly continued after an uncertain model or deterministic calculation operation."},
-        "updated_at": repo.utcnow()})
+    })
+    for item in operations or []:
+        previous = item.get("result") if isinstance(item.get("result"), dict) else {}
+        await db.update("run_operations", {"status": "failed", "result": {
+            "category": "user_retry_authorized",
+            "diagnostic": "The user explicitly continued after an uncertain model or deterministic calculation operation.",
+            "previous_category": previous.get("category"),
+            "previous_diagnostic": previous.get("diagnostic"),
+        }, "updated_at": repo.utcnow()}, run_id=run_id, operation_key=item["operation_key"])
 
 
 async def authorize_ambiguous_model_retry(run_id: str) -> None:
@@ -117,40 +124,61 @@ async def replace_expired_sandbox(run, cp):
         try:
             await release_sandbox(old)
         except Exception:
-            # The expired sandbox is isolated by name. Its platform lifetime
-            # remains the cleanup backstop if the control plane cannot retire it.
+            # The session is already known to be stopped. Its lifetime is the
+            # cleanup backstop if the provider cannot destroy it now.
             pass
-    cp["sandbox"] = f"forma-{UUID(run['id']).hex}-{uuid4().hex[:12]}"
+    cp["sandbox"] = f"forma-{UUID(str(run['id'])).hex}-cad-{uuid4().hex[:8]}"
+    cp["sandboxReady"] = False
 
 
 async def ensure_sandbox(run, cp, limits):
-    if cp.get("sandboxReady"):
+    # A graph checkpoint can outlive its Vercel Sandbox. Do not trust the
+    # persisted ready flag or a completed create operation without a live probe.
+    for _ in range(2):
+        if cp.get("sandboxReady"):
+            try:
+                await executor().is_running(cp["sandbox"])
+                return
+            except SandboxExpired:
+                await replace_expired_sandbox(run, cp)
+        name = cp["sandbox"]
+        started = time.time_ns()
+
+        async def create():
+            if settings().executor == "vercel" and settings().resource_budgets_enabled:
+                reserved = await db.rpc("reserve_execution", {"p_run": run["id"], "p_key": name,
+                    "p_seconds": 1800, "p_budget": limits.monthlySandboxSeconds})
+                if not reserved:
+                    raise Pause("The monthly CAD execution budget is exhausted. Review the limit in Settings.")
+            return {"name": await executor().create(name)}
+
+        prepared = await operation(run, f"sandbox:{name}", "sandbox_prepare", create, idempotent=True)
+        cp["sandbox"] = prepared["name"]
         try:
             await executor().is_running(cp["sandbox"])
-            return
         except SandboxExpired:
             await replace_expired_sandbox(run, cp)
-            await repo.event(run["id"], "The previous build environment expired; preparing a fresh one for the saved design.", stage="preparation")
-    cp["sandbox"] = cp.get("sandbox") or f"forma-{UUID(run['id']).hex}-{uuid4().hex[:12]}"
-    name = cp["sandbox"]
-    started = time.time_ns()
-
-    async def create():
-        if settings().executor == "vercel" and settings().resource_budgets_enabled:
-            reserved = await db.rpc("reserve_execution", {"p_run": run["id"], "p_key": name,
-                "p_seconds": 1800, "p_budget": limits.monthlySandboxSeconds})
-            if not reserved:
-                raise Pause("The monthly CAD execution budget is exhausted. Review the limit in Settings.")
-        return {"name": await executor().create(name)}
-
-    await operation(run, f"sandbox:{name}", "sandbox_prepare", create, idempotent=True)
-    cp["sandboxReady"] = True
-    await tracing.record(run, f"prepare:{name}", "Sandbox preparation", started, outputs={"sandbox": name})
-    await repo.event(run["id"], "Build environment ready for this run.", stage="preparation", elapsed_ms=(time.time_ns()-started)/1e6)
+            continue
+        cp["sandboxReady"] = True
+        await tracing.record(run, f"prepare:{name}", "Sandbox preparation", started, outputs={"sandbox": cp["sandbox"]})
+        await repo.event(run["id"], "Build environment ready for this run.", stage="preparation", elapsed_ms=(time.time_ns()-started)/1e6)
+        return
+    raise Pause("The new build environment expired during preparation. Continue to try a fresh environment.")
 
 
 async def model_turn(run, cp, limits):
     config = await models.configuration(cp["role"])
+    operation_key = f"model:{cp['sequence']}"
+    previous = await db.one("run_operations", {
+        "run_id": f"eq.{run['id']}", "operation_key": f"eq.{operation_key}"}, required=False)
+    explicit_retry = bool(previous and previous.get("status") == "failed"
+                          and (previous.get("result") or {}).get("category") == "user_retry_authorized")
+    if explicit_retry:
+        # A timeout may have consumed the complete hosted invocation window.
+        # Continue is an explicit user decision, so use the configured
+        # same-endpoint fallback for the fresh invocation instead of repeating
+        # the timed-out primary model.
+        config = models.retry_config(config)
     history = cp["history"][cp["role"]]
     context = {"manifest": cp["snapshot"]["manifest"], "files": list(cp["snapshot"]["files"]),
                "requirements": cp["requirements"], "selectedIds": run["selected_ids"],
@@ -165,7 +193,7 @@ async def model_turn(run, cp, limits):
         return await models.turn(config, messages, model_tools(cp["role"]), max_tokens=None)
 
     try:
-        result = await operation(run, f"model:{sequence}", "model", call)
+        result = await operation(run, operation_key, "model", call)
     except Pause:
         recorded = await db.one("run_operations", {"run_id": f"eq.{run['id']}", "operation_key": f"eq.model:{sequence}"}, required=False)
         await tracing.record(run, f"model:{sequence}", f"{cp['role']} model call", started,
@@ -201,6 +229,7 @@ async def model_turn(run, cp, limits):
 
 async def build_candidate(run, cp, limits, key):
     snapshot = Snapshot.model_validate(cp["snapshot"]).model_dump()
+    cp["requirements"] = normalize_assembly_requirements(cp["requirements"], snapshot["manifest"])
     expected = identity(snapshot, cp["requirements"])
     validated = cp.get("validated") or {}
     if validated.get("identity") == expected:
@@ -268,6 +297,15 @@ async def build_candidate(run, cp, limits, key):
         report = json.loads(await executor().read(validator, "report.json"))
         if report.get("identity") != expected:
             raise ExecutionFailure("Validation identity mismatch")
+        if any(item["kind"] == "assembly_preservation" for item in cp["requirements"]):
+            base_id = run.get("base_revision_id")
+            base = None
+            if base_id:
+                # Restrict the trusted baseline to this run's owned project.
+                await repo.owned_project(run["project_id"], run["owner_id"])
+                await db.one("revisions", {"id": f"eq.{base_id}", "project_id": f"eq.{run['project_id']}"})
+                base = await repo.load_snapshot(base_id)
+            report = check_assembly_preservation(report, snapshot, cp["requirements"], base, base_id)
         # Requirement measurements are advisory evidence for the human reviewer.
         # The build and artifact identity/format checks above remain mandatory,
         # but an unsupported or failed measurement must not hide a usable draft.
@@ -280,7 +318,9 @@ async def build_candidate(run, cp, limits, key):
             await db.insert("artifact_staging", {"storage_path": storage_path, "run_id": run["id"],
                 "project_id": run["project_id"], "bytes": len(content)}, conflict="storage_path")
             await db.storage(f"object/cad-private/{db.object_path(storage_path)}", "POST", content=content,
-                content_type="model/gltf-binary" if artifact["kind"] == "glb" else "application/step")
+                content_type={"glb": "model/gltf-binary", "step": "application/step",
+                              "json": "application/json", "csv": "text/csv"}.get(
+                    artifact["name"].rsplit(".", 1)[-1], "application/octet-stream"))
             artifacts.append({**artifact, "storagePath": storage_path})
         cp["validated"] = {"identity": expected, "report": report, "artifacts": artifacts}
         cp.pop("lastFailedCandidate", None)
@@ -317,7 +357,10 @@ async def execute_tool(run, cp, call, app_settings, worker):
         return {"content": snapshot["files"].get(value["path"])}
     if name == "search_files":
         return {"matches": [{"path": p, "line": i+1, "text": line[:300]} for p, code in snapshot["files"].items() for i, line in enumerate(code.splitlines()) if value["query"] in line][:100]}
-    if name == "apply_changes":
+    if name in {"apply_changes", "update_parameters"}:
+        if name == "update_parameters":
+            parsed = parameter_patch(snapshot["manifest"], parsed)
+            value = parsed.model_dump()
         if cp["role"] == "engineering" and (value["manifest"] is not None or any(not p.startswith("calculations/") for p in value["files"])):
             raise ValueError("Engineering can edit only calculations/ files and cannot modify the manifest.")
         if cp["role"] == "cad" and any(p.startswith("calculations/") for p in value["files"]):
@@ -325,7 +368,7 @@ async def execute_tool(run, cp, call, app_settings, worker):
         files = {**snapshot["files"], **value["files"]}
         for path in value.get("deletePaths", []):
             files.pop(path, None)
-        candidate = Snapshot.model_validate({"manifest": value["manifest"] or snapshot["manifest"], "files": files}).model_dump()
+        candidate = Snapshot.model_validate({"manifest": updated_manifest(snapshot["manifest"], parsed), "files": files}).model_dump()
         if not app_settings.surfacingEnabled and any(c["kind"] == "surface" for c in candidate["manifest"]["components"]):
             raise ValueError("Surface modeling is disabled by the administrator.")
         cp["snapshot"] = candidate

@@ -1,0 +1,9 @@
+{
+  "reviewDate": "2026-10-01",
+  "workerSha256": "1863aae42da1b10bb201c12f1ec391c803afce87073f315f3ad2db28577186ce",
+  "scope": "Existing configured hosted snapshot; small probes only",
+  "runtimeIdentity": "forma-589e9c454b63f77f",
+  "noModelCalls": true,
+  "infrastructureErrorType": "SandboxApiError",
+  "infrastructureHttpStatus": 403
+}

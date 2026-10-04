@@ -188,7 +188,10 @@ export function AdminPanel() {
                         baseUrl: data.get('baseUrl'),
                         modelId: data.get('modelId'),
                         maxTokens: data.get('maxTokens') ? Number(data.get('maxTokens')) : null,
-                        apiKey: data.get('apiKey'),
+                        apiKeys: data.getAll('apiKeys')
+                          .map(String)
+                          .map((key) => key.trim())
+                          .filter(Boolean),
                       });
                       form.reset();
                     }, 'Connection saved. Test it before activation.');
@@ -228,7 +231,7 @@ export function AdminPanel() {
                   <label>
                     API key
                     <input
-                      name="apiKey"
+                      name="apiKeys"
                       type="password"
                       autoComplete="new-password"
                       placeholder={model ? 'Leave blank to keep the saved key' : 'Enter the provider API key'}
@@ -236,6 +239,13 @@ export function AdminPanel() {
                       minLength={10}
                     />
                   </label>
+                  {[2, 3].map((number) => (
+                    <label key={number}>
+                      Optional fallback key {number - 1}
+                      <input name="apiKeys" type="password" autoComplete="new-password" minLength={10} />
+                    </label>
+                  ))}
+                  <p className="muted-copy">Google AI Studio can try the fallback keys in order when a key reaches its rate limit.</p>
                   <label>
                     Max output tokens
                     <input

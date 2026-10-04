@@ -8,7 +8,12 @@
     },
     "api": {
       "root": "apps/api",
-      "entrypoint": "pyproject.toml"
+      "entrypoint": "pyproject.toml",
+      "functions": {
+        "**/*": {
+          "maxDuration": 300
+        }
+      }
     }
   },
   "rewrites": [

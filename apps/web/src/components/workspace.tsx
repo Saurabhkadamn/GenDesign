@@ -62,12 +62,13 @@ import {
   type RunEvent,
 } from '@forma/core';
 import { AdminPanel } from './admin-panel';
+import { BomPanel, type BomDocument } from './bom-panel';
 
 const CadViewer = dynamic(() => import('./cad-viewer').then((m) => m.CadViewer), {
   ssr: false,
   loading: () => <div className="viewer-loading">Opening 3D viewer…</div>,
 });
-type Modal = 'projects' | 'history' | 'settings' | 'feedback' | 'help' | null;
+type Modal = 'projects' | 'history' | 'settings' | 'feedback' | 'help' | 'bom' | null;
 type ReviewFindingView = {
   id: string;
   statement: string;
@@ -89,6 +90,12 @@ type InspectionConfigurationView = {
   }>;
 };
 type InspectionView = { configurations?: InspectionConfigurationView[] };
+type NativeAssemblyView = {
+  degreesOfFreedom: number;
+  solvedFrames: number;
+  maxPositionResidualMm: number;
+  maxAngularResidualRad: number;
+};
 export function IconButton({
   label,
   children,
@@ -153,6 +160,13 @@ export function Workspace({
   const revision = state?.revisions.find((r) => r.id === project?.current_revision_id);
   const designReview = revision?.validation?.review as ReviewView | undefined;
   const geometryInspection = revision?.validation?.inspection as InspectionView | undefined;
+  const bomEvidence = revision?.validation?.bom;
+  const billOfMaterials = bomEvidence && Array.isArray(bomEvidence.flat)
+    && Array.isArray(bomEvidence.structured) && Array.isArray(bomEvidence.issues)
+    ? bomEvidence as BomDocument : undefined;
+  const assemblyEvidence = revision?.validation?.nativeAssembly;
+  const nativeAssembly = assemblyEvidence && typeof assemblyEvidence.solvedFrames === 'number'
+    ? assemblyEvidence as NativeAssemblyView : undefined;
   const asBuiltInspection = geometryInspection?.configurations?.find((item) => item.id === 'as_built');
   const manifest = revision?.manifest ?? emptyManifest;
   // A waiting_input run is still the current conversation. Treating it as
@@ -453,7 +467,7 @@ export function Workspace({
             </button>
             <button role="tab" aria-selected={tab === 'files'} onClick={() => setTab('files')}>
               <FileBox size={14} />
-              Files<span>{currentArtifacts.filter((a) => a.kind === 'step').length || ''}</span>
+              Files<span>{currentArtifacts.filter((a) => a.name !== 'preview.glb').length || ''}</span>
             </button>
           </div>
           <div className="tree-scroll">
@@ -515,14 +529,20 @@ export function Workspace({
             ) : (
               <>
                 <div className="tree-label">GENERATED FILES</div>
+                {billOfMaterials ? (
+                  <button className="file-row" onClick={() => setModal('bom')}>
+                    <Layers3 size={18} /><span>Bill of materials<small>Parts and assembly quantities</small></span>
+                    <ArrowUpRight size={13} />
+                  </button>
+                ) : null}
                 {currentArtifacts
-                  .filter((a) => a.kind === 'step')
+                  .filter((a) => a.name !== 'preview.glb')
                   .map((a) => (
                     <button className="file-row" key={a.id} onClick={() => void download(a)}>
                       <FileBox size={18} />
                       <span>
                         {a.name}
-                        <small>{(a.bytes / 1024).toFixed(1)} KB · STEP</small>
+                        <small>{(a.bytes / 1024).toFixed(1)} KB · {a.name.split('.').at(-1)?.toUpperCase()}</small>
                       </span>
                       <ArrowDownToLine size={13} />
                     </button>
@@ -975,6 +995,16 @@ export function Workspace({
                 </details>
               ) : null}
               {revision?.validation && (
+                <div className="assembly-checks">
+                  {nativeAssembly ? <p>
+                    Assembly checks: {nativeAssembly.degreesOfFreedom} remaining degrees of freedom,
+                    {' '}{nativeAssembly.solvedFrames} checked {nativeAssembly.solvedFrames === 1 ? 'state' : 'motion samples'}.
+                    {' '}Maximum mate position error: {nativeAssembly.maxPositionResidualMm.toExponential(2)} mm.
+                    {nativeAssembly.solvedFrames > 1 ? ' Sampled motion does not establish collision-free travel or load capacity.' : ''}
+                  </p> : null}
+                </div>
+              )}
+              {revision?.validation && (
                 <details className="activity requirement-checks">
                   <summary><ShieldCheck size={14} /> Automated evidence</summary>
                   {revision.validation.requirements.map((check) => (
@@ -1165,7 +1195,7 @@ export function Workspace({
             }
           }}
         >
-          <DialogContent className={modal === 'settings' ? 'settings-dialog' : 'workspace-dialog'}>
+          <DialogContent className={modal === 'settings' ? 'settings-dialog' : modal === 'bom' ? 'bom-dialog' : 'workspace-dialog'}>
             <DialogHeader>
               <DialogTitle>
                 {
@@ -1175,6 +1205,7 @@ export function Workspace({
                     settings: 'Workspace settings',
                     feedback: 'A note from the workbench',
                     help: 'A little guidance',
+                    bom: 'Bill of materials',
                   }[modal ?? 'help']
                 }
               </DialogTitle>
@@ -1186,10 +1217,12 @@ export function Workspace({
                     settings: 'Configure the tools behind your workspace.',
                     feedback: 'Your feedback stays attached to this design revision.',
                     help: 'You describe the intent. Forma handles the workspace.',
+                    bom: 'Part quantities from this revision’s validated assembly inventory.',
                   }[modal ?? 'help']
                 }
               </DialogDescription>
             </DialogHeader>
+            {modal === 'bom' ? <BomPanel document={billOfMaterials} /> : null}
             {modal === 'projects' && (
               <div className="project-dialog-body">
                 <div className="search-field">

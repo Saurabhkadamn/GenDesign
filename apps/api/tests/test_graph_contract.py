@@ -1,7 +1,8 @@
 import pytest
 
 from forma_api.contracts import ResumeRequest
-from forma_api.graphs.design import ReviewResult, build_graph, phase_route, triage_route
+from forma_api.graphs.design import ReviewResult, build_graph, checkpoint_view, phase_route, triage_route
+from forma_api.requirements import explicit_requirements, merge_requirements
 
 
 @pytest.mark.parametrize("route", ["clarify", "analyze", "cad", "answer"])
@@ -43,3 +44,31 @@ def test_reviewer_contract_keeps_evidence_and_repair_instruction():
     })
     assert result.action == "repair"
     assert result.findings[0].status == "observed_mismatch"
+
+
+def test_assembly_envelope_is_an_upper_bound_without_a_single_plate_check():
+    request = """Design a scissor assembly with a base/mounting plate.
+Components:
+1. Base plate — fixed inside the door.
+2. Guide rail — two instances.
+Overall envelope (fits inside a door cavity): 400 x 300 x 60 mm.
+"""
+    values = explicit_requirements(request)
+    assert [(item["id"], item["kind"]) for item in values] == [
+        ("request_dimensions", "max_dimensions")]
+    assert values[0]["dimensions"] == (400.0, 300.0, 60.0)
+    supplied = [{"id": "model_size", "kind": "dimensions",
+        "dimensions": [400.0, 300.0, 60.0]}]
+    assert merge_requirements(request, supplied) == values
+    legacy = [{"id": "request_dimensions", "kind": "dimensions",
+        "dimensions": [400.0, 300.0, 60.0]},
+        {"id": "request_solid", "kind": "solid_count", "count": 1}]
+    assert checkpoint_view({"original_request": request, "requirements": legacy}, {})[
+        "requirements"] == values
+
+
+def test_exact_single_plate_still_requires_exact_dimensions_and_one_solid():
+    values = explicit_requirements(
+        "Design an aluminum mounting plate, 80 × 50 × 6 mm, centered at the origin.")
+    assert {(item["id"], item["kind"]) for item in values} >= {
+        ("request_dimensions", "dimensions"), ("request_solid", "solid_count")}

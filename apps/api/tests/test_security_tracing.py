@@ -110,3 +110,63 @@ def test_public_demo_follow_up_limit_is_checked_before_dispatch(monkeypatch):
             headers={"Origin": "http://localhost:3000"})
     assert response.status_code == 429
     assert "follow-up limit" in response.json()["error"]
+
+def test_admin_can_save_encrypted_ordered_gemini_keys(monkeypatch):
+    from fastapi.testclient import TestClient
+    from forma_api import api
+    from forma_api.main import app
+
+    monkeypatch.setattr(security, "settings", lambda: replace(
+        settings(), encryption_key=base64.b64encode(bytes(range(32))).decode()))
+    saved = []
+
+    async def profile(*args, **kwargs):
+        return {"id": "admin", "role": "admin"}
+
+    async def one(*args, **kwargs):
+        return None
+
+    async def insert(table, row, **kwargs):
+        saved.append(row)
+        return [row]
+
+    monkeypatch.setattr(api, "require_profile", profile)
+    monkeypatch.setattr(api.db, "one", one)
+    monkeypatch.setattr(api.db, "insert", insert)
+    keys = ["AQ.primary-private-key", "AQ.backup-two-private-key", "AQ.backup-three-private-key"]
+    with TestClient(app) as client:
+        response = client.post("/api/admin/models", headers={"Origin": "http://localhost:3000"}, json={
+            "role": "coordinator", "provider": "openai_compatible",
+            "baseUrl": "https://generativelanguage.googleapis.com/v1beta/openai",
+            "modelId": "gemini-3.7-flash", "apiKeys": keys,
+        })
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}
+    assert security.decrypt_secret_set(saved[0]["encrypted_key"], "coordinator") == keys
+    assert all(key not in saved[0]["encrypted_key"] for key in keys)
+    assert saved[0]["key_hint"].endswith(keys[0][-4:])
+
+
+def test_admin_rejects_multiple_keys_for_non_gemini_endpoint(monkeypatch):
+    from fastapi.testclient import TestClient
+    from forma_api import api
+    from forma_api.main import app
+
+    async def profile(*args, **kwargs):
+        return {"id": "admin", "role": "admin"}
+
+    async def one(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(api, "require_profile", profile)
+    monkeypatch.setattr(api.db, "one", one)
+    with TestClient(app) as client:
+        response = client.post("/api/admin/models", headers={"Origin": "http://localhost:3000"}, json={
+            "role": "cad", "provider": "openai_compatible",
+            "baseUrl": "https://integrate.api.nvidia.com/v1", "modelId": "model/name",
+            "apiKeys": ["first-private-key", "second-private-key"],
+        })
+
+    assert response.status_code == 400
+    assert "Google AI Studio" in response.json()["error"]

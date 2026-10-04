@@ -2133,6 +2133,18 @@
 }
 
 /* Persistent workspace control; mobile opens a drawer below the top bar. */
+.bom-dialog { width: min(960px, calc(100vw - 32px)); max-width: 960px; max-height: 85vh; overflow: auto; }
+.bom-status, .bom-note { color: #4a5944; font-size: 13px; line-height: 1.6; }
+.bom-issues { padding: 12px; margin: 12px 0; border: 1px solid #d0bf93; border-radius: 8px; background: #faf5e8; font-size: 13px; line-height: 1.5; }
+.bom-modes { display: flex; gap: 8px; margin: 16px 0; }
+.bom-modes button { padding: 8px 12px; border: 1px solid #89967f; border-radius: 6px; font-size: 13px; }
+.bom-modes button[aria-pressed="true"] { background: #e4ecd9; color: #30482d; }
+.bom-table-scroll { overflow: auto; max-height: 50vh; border: 1px solid #c4ccbe; border-radius: 6px; }
+.bom-table-scroll table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.bom-table-scroll caption { padding: 10px; text-align: left; color: #4a5944; }
+.bom-table-scroll th { text-align: left; background: #f1f5eb; white-space: nowrap; }
+.bom-table-scroll th, .bom-table-scroll td { padding: 10px 12px; border-bottom: 1px solid #dce1d7; }
+.bom-unassigned { color: #806625; }
 .workspace-toggle { display: inline-flex; align-items: center; gap: 7px; flex-shrink: 0; min-height: 36px; padding: 7px 10px; border: 1px solid #83917a; border-radius: 7px; color: #354c36; background: #f1f5eb; font-size: 12px; font-weight: 550; }
 .workspace-toggle:hover { background: #e4ecd9; }
 .topbar, .project-sidebar, .chat-panel, .design-toolbar { border-color: #c4ccbe; }

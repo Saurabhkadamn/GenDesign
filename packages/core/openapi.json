@@ -252,7 +252,9 @@
             "enum": [
               "step",
               "glb",
-              "plot"
+              "plot",
+              "bom",
+              "assembly"
             ],
             "title": "Kind",
             "type": "string"
@@ -553,6 +555,28 @@
               }
             ],
             "default": null
+          },
+          "partMetadata": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PartMetadata"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "bomBehavior": {
+            "default": "normal",
+            "enum": [
+              "normal",
+              "purchased",
+              "phantom",
+              "reference"
+            ],
+            "title": "Bombehavior",
+            "type": "string"
           }
         },
         "required": [
@@ -563,7 +587,9 @@
           "dependencies",
           "parameters",
           "color",
-          "material"
+          "material",
+          "partMetadata",
+          "bomBehavior"
         ],
         "title": "Component",
         "type": "object"
@@ -753,6 +779,11 @@
           },
           "frame": {
             "$ref": "#/components/schemas/Frame"
+          },
+          "bomExclude": {
+            "default": false,
+            "title": "Bomexclude",
+            "type": "boolean"
           }
         },
         "required": [
@@ -760,7 +791,8 @@
           "definitionId",
           "parentId",
           "name",
-          "frame"
+          "frame",
+          "bomExclude"
         ],
         "title": "Instance",
         "type": "object"
@@ -826,6 +858,32 @@
             "maxLength": 500,
             "title": "Description",
             "type": "string"
+          },
+          "occurrenceA": {
+            "anyOf": [
+              {
+                "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Occurrencea"
+          },
+          "occurrenceB": {
+            "anyOf": [
+              {
+                "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Occurrenceb"
           }
         },
         "required": [
@@ -836,7 +894,9 @@
           "lowerLimit",
           "upperLimit",
           "unit",
-          "description"
+          "description",
+          "occurrenceA",
+          "occurrenceB"
         ],
         "title": "JointSpec",
         "type": "object"
@@ -916,6 +976,17 @@
             "maxItems": 4000,
             "title": "Featureoperations",
             "type": "array"
+          },
+          "nativeAssembly": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NativeAssemblySpec"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           }
         },
         "required": [
@@ -927,7 +998,8 @@
           "references",
           "joints",
           "configurations",
-          "featureOperations"
+          "featureOperations",
+          "nativeAssembly"
         ],
         "title": "Manifest",
         "type": "object"
@@ -1092,6 +1164,132 @@
         "title": "ModelOptions",
         "type": "object"
       },
+      "MotionDriver": {
+        "additionalProperties": false,
+        "description": "Numeric linear driver: radians for revolute, millimetres for slider.",
+        "properties": {
+          "jointId": {
+            "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$",
+            "title": "Jointid",
+            "type": "string"
+          },
+          "start": {
+            "title": "Start",
+            "type": "number"
+          },
+          "end": {
+            "title": "End",
+            "type": "number"
+          },
+          "durationSeconds": {
+            "default": 1,
+            "exclusiveMinimum": 0,
+            "maximum": 60,
+            "title": "Durationseconds",
+            "type": "number"
+          },
+          "steps": {
+            "default": 60,
+            "maximum": 240,
+            "minimum": 2,
+            "title": "Steps",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "jointId",
+          "start",
+          "end",
+          "durationSeconds",
+          "steps"
+        ],
+        "title": "MotionDriver",
+        "type": "object"
+      },
+      "NativeAssemblySpec": {
+        "additionalProperties": false,
+        "properties": {
+          "solver": {
+            "const": "ondsel",
+            "default": "ondsel",
+            "title": "Solver",
+            "type": "string"
+          },
+          "groundedInstances": {
+            "items": {
+              "pattern": "^[a-zA-Z][a-zA-Z0-9_-]{0,63}$",
+              "type": "string"
+            },
+            "maxItems": 1000,
+            "minItems": 1,
+            "title": "Groundedinstances",
+            "type": "array"
+          },
+          "allowedDof": {
+            "default": 0,
+            "maximum": 600,
+            "minimum": 0,
+            "title": "Alloweddof",
+            "type": "integer"
+          },
+          "motion": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MotionDriver"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "solver",
+          "groundedInstances",
+          "allowedDof",
+          "motion"
+        ],
+        "title": "NativeAssemblySpec",
+        "type": "object"
+      },
+      "PartMetadata": {
+        "additionalProperties": false,
+        "properties": {
+          "partNumber": {
+            "default": "",
+            "maxLength": 100,
+            "title": "Partnumber",
+            "type": "string"
+          },
+          "revision": {
+            "default": "",
+            "maxLength": 40,
+            "title": "Revision",
+            "type": "string"
+          },
+          "variant": {
+            "default": "",
+            "maxLength": 100,
+            "title": "Variant",
+            "type": "string"
+          },
+          "description": {
+            "default": "",
+            "maxLength": 500,
+            "title": "Description",
+            "type": "string"
+          }
+        },
+        "required": [
+          "partNumber",
+          "revision",
+          "variant",
+          "description"
+        ],
+        "title": "PartMetadata",
+        "type": "object"
+      },
       "Profile": {
         "properties": {
           "id": {
@@ -1183,8 +1381,19 @@
         "additionalProperties": false,
         "properties": {
           "value": {
-            "title": "Value",
-            "type": "number"
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "maxLength": 1000,
+                "type": "string"
+              }
+            ],
+            "title": "Value"
           },
           "unit": {
             "title": "Unit",
@@ -1577,6 +1786,17 @@
             "maxLength": 500,
             "title": "Description",
             "type": "string"
+          },
+          "frame": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Frame"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           }
         },
         "required": [
@@ -1586,7 +1806,8 @@
           "origin",
           "direction",
           "radiusMm",
-          "description"
+          "description",
+          "frame"
         ],
         "title": "SemanticReference",
         "type": "object"
@@ -1684,6 +1905,21 @@
           "review": {
             "additionalProperties": true,
             "title": "Review",
+            "type": "object"
+          },
+          "bom": {
+            "additionalProperties": true,
+            "title": "Bom",
+            "type": "object"
+          },
+          "nativeAssembly": {
+            "additionalProperties": true,
+            "title": "Nativeassembly",
+            "type": "object"
+          },
+          "assemblyPlacement": {
+            "additionalProperties": true,
+            "title": "Assemblyplacement",
             "type": "object"
           }
         },
@@ -1836,7 +2072,7 @@
         "properties": {
           "maxModelCalls": {
             "default": 24,
-            "maximum": 60,
+            "maximum": 120,
             "minimum": 1,
             "title": "Maxmodelcalls",
             "type": "integer"

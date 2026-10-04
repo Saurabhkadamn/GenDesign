@@ -1,5 +1,6 @@
 """Credential envelopes compatible with the previous server; cookie sessions."""
 import base64
+import json
 import os
 import time
 
@@ -11,6 +12,7 @@ from .config import settings
 
 ACCESS = "forma_access"
 REFRESH = "forma_refresh"
+KEYSET_PREFIX = "forma-keyset:v1:"
 
 
 def encrypt_secret(value: str, role: str) -> str:
@@ -27,6 +29,23 @@ def decrypt_secret(value: str, role: str) -> str:
     key = base64.b64decode(settings().encryption_key, validate=True)
     decode = lambda v: base64.b64decode(v, validate=True)
     return AESGCM(key).decrypt(decode(nonce), decode(ciphertext) + decode(tag), f"forma:model:{role}:v1".encode()).decode()
+
+
+def encrypt_secret_set(values: list[str], role: str) -> str:
+    """Encrypt an ordered provider-key set using the existing role-bound envelope."""
+    return encrypt_secret(KEYSET_PREFIX + json.dumps(values, separators=(",", ":")), role)
+
+
+def decrypt_secret_set(value: str, role: str) -> list[str]:
+    """Read a key set while retaining compatibility with legacy single-key rows."""
+    plaintext = decrypt_secret(value, role)
+    if not plaintext.startswith(KEYSET_PREFIX):
+        return [plaintext]
+    values = json.loads(plaintext[len(KEYSET_PREFIX):])
+    if (not isinstance(values, list) or not 1 <= len(values) <= 3
+            or any(not isinstance(item, str) or not item for item in values)):
+        raise ValueError("Invalid encrypted provider key set")
+    return values
 
 
 def set_session(response: Response, session: dict):

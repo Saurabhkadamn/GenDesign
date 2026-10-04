@@ -44,6 +44,13 @@ class MaterialSpec(Contract):
     densityKgM3: float | None = Field(default=None, gt=0, le=100_000)
 
 
+class PartMetadata(Contract):
+    partNumber: str = Field(default="", max_length=100)
+    revision: str = Field(default="", max_length=40)
+    variant: str = Field(default="", max_length=100)
+    description: str = Field(default="", max_length=500)
+
+
 class SemanticReference(Contract):
     """Stable, code-authored geometry reference in component-local coordinates.
 
@@ -58,6 +65,7 @@ class SemanticReference(Contract):
     direction: Vector | None = None
     radiusMm: float | None = Field(default=None, gt=0)
     description: str = Field(default="", max_length=500)
+    frame: Frame | None = None
 
 
 class JointSpec(Contract):
@@ -75,6 +83,24 @@ class JointSpec(Contract):
     upperLimit: float | None = None
     unit: str = Field(default="", max_length=32)
     description: str = Field(default="", max_length=500)
+    occurrenceA: SafeId | None = None
+    occurrenceB: SafeId | None = None
+
+
+class MotionDriver(Contract):
+    """Numeric linear driver: radians for revolute, millimetres for slider."""
+    jointId: SafeId
+    start: float
+    end: float
+    durationSeconds: float = Field(default=1, gt=0, le=60)
+    steps: int = Field(default=60, ge=2, le=240)
+
+
+class NativeAssemblySpec(Contract):
+    solver: Literal["ondsel"] = "ondsel"
+    groundedInstances: list[SafeId] = Field(min_length=1, max_length=1000)
+    allowedDof: int = Field(default=0, ge=0, le=600)
+    motion: MotionDriver | None = None
 
 
 class ConfigurationFrame(Contract):
@@ -107,6 +133,8 @@ class Component(Contract):
     parameters: dict[str, Parameter] = Field(default_factory=dict, max_length=200)
     color: str = Field(default="#b9c4ad", pattern=r"^#[0-9a-fA-F]{6}$")
     material: MaterialSpec | None = None
+    partMetadata: PartMetadata | None = None
+    bomBehavior: Literal["normal", "purchased", "phantom", "reference"] = "normal"
 
     @field_validator("source")
     @classmethod
@@ -124,6 +152,7 @@ class Instance(Contract):
     parentId: SafeId | None = None
     name: str = Field(min_length=1, max_length=100)
     frame: Frame
+    bomExclude: bool = False
 
 
 class Manifest(Contract):
@@ -136,6 +165,7 @@ class Manifest(Contract):
     joints: list[JointSpec] = Field(default_factory=list, max_length=2000)
     configurations: list[ConfigurationSpec] = Field(default_factory=list, max_length=200)
     featureOperations: list[FeatureOperation] = Field(default_factory=list, max_length=4000)
+    nativeAssembly: NativeAssemblySpec | None = None
 
 
 class Snapshot(Contract):
@@ -214,6 +244,42 @@ class Snapshot(Contract):
         for item in self.manifest.featureOperations:
             if item.componentId not in definitions:
                 raise ValueError("Feature operation references an unknown component.")
+        native = self.manifest.nativeAssembly
+        if native is not None:
+            parents = {i.parentId for i in instances.values() if i.parentId is not None}
+            physical = {iid for iid, i in instances.items() if iid not in parents
+                        and definitions[i.definitionId].kind != "surface"}
+            root_definition = definitions.get(self.manifest.rootComponentId)
+            if not physical or root_definition is None or root_definition.kind != "assembly":
+                raise ValueError("Native solving requires an assembly root and physical occurrences.")
+            if len(set(native.groundedInstances)) != len(native.groundedInstances):
+                raise ValueError("Native grounding repeats an occurrence.")
+            if not set(native.groundedInstances).issubset(physical):
+                raise ValueError("Grounding must name physical leaf occurrences.")
+            if len(physical - set(native.groundedInstances)) > 100:
+                raise ValueError("Native DOF qualification supports at most 100 movable occurrences.")
+            for joint in joints.values():
+                if joint.kind not in {"fixed", "revolute", "slider", "spherical", "cylindrical"}:
+                    raise ValueError("This joint kind has not been qualified for native solving.")
+                for occurrence, reference in ((joint.occurrenceA, joint.referenceA),
+                                               (joint.occurrenceB, joint.referenceB)):
+                    if occurrence not in physical:
+                        raise ValueError("Native joints require occurrence-specific physical endpoints.")
+                    ref = references[reference]
+                    if ref.componentId != instances[occurrence].definitionId or ref.frame is None:
+                        raise ValueError("Native endpoints require a matching component-local reference frame.")
+                if joint.occurrenceA == joint.occurrenceB:
+                    raise ValueError("A native joint cannot connect an occurrence to itself.")
+                if joint.lowerLimit is not None or joint.upperLimit is not None:
+                    raise ValueError("Native joint limits have not yet been qualified; do not silently activate them.")
+            if native.motion is not None:
+                motion = native.motion
+                if motion.jointId not in joints or joints[motion.jointId].kind not in {"revolute", "slider"}:
+                    raise ValueError("Motion requires one qualified revolute or slider joint.")
+                if native.allowedDof != 1:
+                    raise ValueError("A single-driver mechanism must declare one allowed DOF.")
+                if joints[motion.jointId].kind == "revolute" and abs(motion.end - motion.start) / motion.steps >= 1.5:
+                    raise ValueError("Increase motion samples to avoid ambiguous angular winding.")
         return self
 
 
@@ -286,7 +352,7 @@ class Requirement(Contract):
     """Numeric expectations are coordinator-owned, never mutable by generated CAD code."""
     id: SafeId
     description: str = Field(min_length=1, max_length=500)
-    kind: Literal["dimensions", "center", "solid_count", "through_holes", "corner_radius", "unverified"]
+    kind: Literal["dimensions", "max_dimensions", "center", "solid_count", "through_holes", "corner_radius", "assembly_preservation", "unverified"]
     componentId: SafeId | None = None
     axis: Literal["X", "Y", "Z"] = "Z"
     dimensions: Vector | None = None
@@ -299,9 +365,10 @@ class Requirement(Contract):
 
     @model_validator(mode="after")
     def values_for_kind(self):
-        required = {"dimensions": [self.dimensions], "center": [self.center],
+        required = {"dimensions": [self.dimensions], "max_dimensions": [self.dimensions],
+                    "center": [self.center],
                     "solid_count": [self.count], "through_holes": [self.diameter, self.count],
-                    "corner_radius": [self.radius, self.count], "unverified": []}[self.kind]
+                    "corner_radius": [self.radius, self.count], "assembly_preservation": [], "unverified": []}[self.kind]
         if any(x is None for x in required):
             raise ValueError("Requirement is missing expected values.")
         if self.kind == "through_holes" and len(self.positions) != self.count:
@@ -365,6 +432,9 @@ class ValidationReport(BaseModel):
     allRequirementsVerified: bool
     inspection: dict[str, Any] = Field(default_factory=dict)
     review: dict[str, Any] = Field(default_factory=dict)
+    bom: dict[str, Any] = Field(default_factory=dict)
+    nativeAssembly: dict[str, Any] = Field(default_factory=dict)
+    assemblyPlacement: dict[str, Any] = Field(default_factory=dict)
 
 
 class Revision(BaseModel):
@@ -411,7 +481,7 @@ class Artifact(BaseModel):
     revision_id: str
     component_id: str | None
     name: str
-    kind: Literal["step", "glb", "plot"]
+    kind: Literal["step", "glb", "plot", "bom", "assembly"]
     bytes: int
     storage_path: str
 

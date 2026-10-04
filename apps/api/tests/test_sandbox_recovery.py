@@ -17,7 +17,9 @@ async def test_ready_checkpoint_recreates_expired_sandbox(monkeypatch):
 
     class FakeExecutor:
         async def is_running(self, name):
-            raise SandboxExpired("stopped")
+            if name == "expired":
+                raise SandboxExpired("stopped")
+            return True
 
         async def create(self, name):
             created.append(name)

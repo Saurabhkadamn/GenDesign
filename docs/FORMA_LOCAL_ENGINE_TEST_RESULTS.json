@@ -1,0 +1,520 @@
+{
+  "reviewDate": "2026-10-01",
+  "platform": "Windows-11-10.0.26200-SP0",
+  "python": "3.12.14 (main, Aug 25 2026, 14:01:42) [MSC v.1944 64 bit (AMD64)]",
+  "pythonExecutable": "D:\\v1\\tmp\\forma-cad-audit-env\\Scripts\\python.exe",
+  "versions": {
+    "cadquery": "2.8.0",
+    "cadquery-ocp": "7.9.3.1.1",
+    "cadquery-ocp-proxy": "7.9.3.1.1",
+    "casadi": "3.6.7",
+    "nlopt": "2.11.0",
+    "vtk": "9.6.2",
+    "psutil": "7.2.2"
+  },
+  "scope": "Reviewed synthetic local fixtures; no hosted deployment or production certification",
+  "cases": {
+    "bspline_surface_and_step": {
+      "case": "bspline_surface_and_step",
+      "versions": {
+        "cadquery": "2.8.0",
+        "cadquery-ocp": "7.9.3.1.1",
+        "cadquery-ocp-proxy": "7.9.3.1.1",
+        "casadi": "3.6.7",
+        "nlopt": "2.11.0",
+        "vtk": "9.6.2",
+        "psutil": "7.2.2"
+      },
+      "status": "passed",
+      "measurements": {
+        "parameterVariants": 4,
+        "heightMm": [
+          1.6000001999999993,
+          3.2000001999999994,
+          6.400000199999997,
+          9.600000199999997
+        ],
+        "maxStepAreaErrorMm2": 6.821210263296962e-13,
+        "limit": "One smooth patch; no seam continuity or Class-A quality claim"
+      },
+      "operationSecondsIncludingImports": 27.43028760002926,
+      "peakWorkingSetMiB": 365.5078125,
+      "process": {
+        "exitCode": 0,
+        "timedOut": false,
+        "stdout": "{\"case\": \"bspline_surface_and_step\", \"status\": \"passed\"}\n",
+        "stderr": "",
+        "elapsedSeconds": 28.674890799913555,
+        "timeoutSeconds": 90
+      },
+      "harnessSha256": "c240ceeeec98b99435e04e493fd0b4afbdc1bfb514c7c0f88a7f015dbea88164"
+    },
+    "rational_nurbs_and_step": {
+      "case": "rational_nurbs_and_step",
+      "versions": {
+        "cadquery": "2.8.0",
+        "cadquery-ocp": "7.9.3.1.1",
+        "cadquery-ocp-proxy": "7.9.3.1.1",
+        "casadi": "3.6.7",
+        "nlopt": "2.11.0",
+        "vtk": "9.6.2",
+        "psutil": "7.2.2"
+      },
+      "status": "passed",
+      "measurements": {
+        "rationalPatchFound": true,
+        "accurateVolumeMm3": 4188.790269132559,
+        "analyticVolumeErrorMm3": 6.434616807382554e-05,
+        "maxSampledRadiusErrorMm": 3.47455397786689e-12,
+        "radialSamples": 441,
+        "defaultVolumeMm3": 4186.9582517923955,
+        "defaultVolumeErrorPercent": 0.043734656175954796,
+        "defaultStepRoundtripVolumeErrorMm3": 8.703864295966923e-10,
+        "finding": "Explicit property integration tolerance is needed; valid spline geometry alone does not guarantee accurate default mass properties"
+      },
+      "operationSecondsIncludingImports": 3.436023799935356,
+      "peakWorkingSetMiB": 333.3671875,
+      "harnessSha256": "a7a7884d4243766abca790ae7f852895c2157d04e1c7c1464c1158c9291ead1e",
+      "process": {
+        "exitCode": 0,
+        "timedOut": false,
+        "stdout": "{\"case\": \"rational_nurbs_and_step\", \"status\": \"passed\"}\n",
+        "stderr": "",
+        "elapsedSeconds": 4.48049450002145,
+        "timeoutSeconds": 90
+      }
+    },
+    "static_two_part_mate": {
+      "case": "static_two_part_mate",
+      "versions": {
+        "cadquery": "2.8.0",
+        "cadquery-ocp": "7.9.3.1.1",
+        "cadquery-ocp-proxy": "7.9.3.1.1",
+        "casadi": "3.6.7",
+        "nlopt": "2.11.0",
+        "vtk": "9.6.2",
+        "psutil": "7.2.2"
+      },
+      "status": "passed",
+      "measurements": {
+        "positionResidualMm": 8.881784197001252e-16,
+        "solver": {
+          "success": true,
+          "return_status": "Solve_Succeeded",
+          "iter_count": 6
+        }
+      },
+      "operationSecondsIncludingImports": 4.079812100040726,
+      "peakWorkingSetMiB": 335.70703125,
+      "process": {
+        "exitCode": 0,
+        "timedOut": false,
+        "stdout": "{\"case\": \"static_two_part_mate\", \"status\": \"passed\"}\n",
+        "stderr": "",
+        "elapsedSeconds": 4.943852900061756,
+        "timeoutSeconds": 90
+      },
+      "harnessSha256": "c240ceeeec98b99435e04e493fd0b4afbdc1bfb514c7c0f88a7f015dbea88164"
+    },
+    "conflicting_mates": {
+      "case": "conflicting_mates",
+      "versions": {
+        "cadquery": "2.8.0",
+        "cadquery-ocp": "7.9.3.1.1",
+        "cadquery-ocp-proxy": "7.9.3.1.1",
+        "casadi": "3.6.7",
+        "nlopt": "2.11.0",
+        "vtk": "9.6.2",
+        "psutil": "7.2.2"
+      },
+      "status": "passed",
+      "measurements": {
+        "solverRejected": false,
+        "solver": {
+          "success": true,
+          "return_status": "Solve_Succeeded",
+          "iter_count": 0
+        },
+        "mateResidualMm": 8.0,
+        "fixedPositionResidualMm": 0.0,
+        "finding": "Solver returning is insufficient; an independent residual gate is required"
+      },
+      "operationSecondsIncludingImports": 3.643564600031823,
+      "peakWorkingSetMiB": 333.92578125,
+      "process": {
+        "exitCode": 0,
+        "timedOut": false,
+        "stdout": "{\"case\": \"conflicting_mates\", \"status\": \"passed\"}\n",
+        "stderr": "",
+        "elapsedSeconds": 4.7389762999955565,
+        "timeoutSeconds": 90
+      },
+      "harnessSha256": "c240ceeeec98b99435e04e493fd0b4afbdc1bfb514c7c0f88a7f015dbea88164"
+    },
+    "underconstrained_mate": {
+      "case": "underconstrained_mate",
+      "versions": {
+        "cadquery": "2.8.0",
+        "cadquery-ocp": "7.9.3.1.1",
+        "cadquery-ocp-proxy": "7.9.3.1.1",
+        "casadi": "3.6.7",
+        "nlopt": "2.11.0",
+        "vtk": "9.6.2",
+        "psutil": "7.2.2"
+      },
+      "status": "passed",
+      "measurements": {
+        "solutions": [
+          {
+            "startAngleDeg": 15,
+            "positionMm": [
+              0.0,
+              0.0,
+              10.0
+            ],
+            "rotationDeg": [
+              2.5961562926778483,
+              1.9097580164372756,
+              17.327166627278697
+            ],
+            "solver": {
+              "success": true,
+              "return_status": "Solve_Succeeded",
+              "iter_count": 0
+            }
+          },
+          {
+            "startAngleDeg": 45,
+            "positionMm": [
+              0.0,
+              0.0,
+              10.0
+            ],
+            "rotationDeg": [
+              2.89175072049962,
+              1.132370856368165,
+              47.23770159272648
+            ],
+            "solver": {
+              "success": true,
+              "return_status": "Solve_Succeeded",
+              "iter_count": 0
+            }
+          }
+        ],
+        "rotationDifferenceDeg": 29.910534965447784,
+        "finding": "Unspecified rotation remains free; Forma must distinguish intended DOF from missing mates"
+      },
+      "operationSecondsIncludingImports": 3.1764281999785453,
+      "peakWorkingSetMiB": 333.1953125,
+      "process": {
+        "exitCode": 0,
+        "timedOut": false,
+        "stdout": "{\"case\": \"underconstrained_mate\", \"status\": \"passed\"}\n",
+        "stderr": "",
+        "elapsedSeconds": 4.149609199957922,
+        "timeoutSeconds": 90
+      },
+      "harnessSha256": "c240ceeeec98b99435e04e493fd0b4afbdc1bfb514c7c0f88a7f015dbea88164"
+    },
+    "dimension_edits_and_references": {
+      "case": "dimension_edits_and_references",
+      "versions": {
+        "cadquery": "2.8.0",
+        "cadquery-ocp": "7.9.3.1.1",
+        "cadquery-ocp-proxy": "7.9.3.1.1",
+        "casadi": "3.6.7",
+        "nlopt": "2.11.0",
+        "vtk": "9.6.2",
+        "psutil": "7.2.2"
+      },
+      "status": "passed",
+      "measurements": {
+        "dimensionEdits": 50,
+        "maxMateResidualMm": 1.9984014443252818e-15,
+        "lastFaceTypeBefore": "GeomAbs_SurfaceType.GeomAbs_Plane",
+        "lastFaceTypeAfter": "GeomAbs_SurfaceType.GeomAbs_Cylinder",
+        "numericLastFaceReferenceChangedMeaning": true,
+        "directionalTopSelectorWorksInThisFixture": true,
+        "oversizedFilletRejected": true,
+        "limit": "Reconstructed code recipes; not persistent topological naming or Forma automatic edit propagation"
+      },
+      "operationSecondsIncludingImports": 5.239375500008464,
+      "peakWorkingSetMiB": 354.640625,
+      "process": {
+        "exitCode": 0,
+        "timedOut": false,
+        "stdout": "{\"case\": \"dimension_edits_and_references\", \"status\": \"passed\"}\n",
+        "stderr": "",
+        "elapsedSeconds": 6.235198599984869,
+        "timeoutSeconds": 150
+      },
+      "harnessSha256": "c240ceeeec98b99435e04e493fd0b4afbdc1bfb514c7c0f88a7f015dbea88164"
+    },
+    "static_60_occurrences": {
+      "case": "static_60_occurrences",
+      "versions": {
+        "cadquery": "2.8.0",
+        "cadquery-ocp": "7.9.3.1.1",
+        "cadquery-ocp-proxy": "7.9.3.1.1",
+        "casadi": "3.6.7",
+        "nlopt": "2.11.0",
+        "vtk": "9.6.2",
+        "psutil": "7.2.2"
+      },
+      "status": "passed",
+      "measurements": {
+        "occurrences": 60,
+        "uniquePartDefinitions": 3,
+        "constraints": 119,
+        "solveSeconds": 0.6469438000349328,
+        "stepExportImportSeconds": 0.09854390006512403,
+        "stepBytes": 80847,
+        "maxPositionResidualMm": 5.721958498152797e-17,
+        "maxRotationResidualDeg": 7.655071007305153e-11,
+        "maxStepCenterResidualMm": 3.5534621874377044e-15,
+        "solver": {
+          "success": true,
+          "return_status": "Solved_To_Acceptable_Level",
+          "iter_count": 3
+        },
+        "limit": "Synthetic static poses with unary constraints; no closed-loop motion, contact, or large imported production geometry"
+      },
+      "operationSecondsIncludingImports": 4.864990199916065,
+      "peakWorkingSetMiB": 365.7734375,
+      "harnessSha256": "a7a7884d4243766abca790ae7f852895c2157d04e1c7c1464c1158c9291ead1e",
+      "process": {
+        "exitCode": 0,
+        "timedOut": false,
+        "stdout": "{\"case\": \"static_60_occurrences\", \"status\": \"passed\"}\n",
+        "stderr": "",
+        "elapsedSeconds": 5.880770599935204,
+        "timeoutSeconds": 150
+      }
+    },
+    "forma_runtime_negative_controls": {
+      "case": "forma_runtime_negative_controls",
+      "versions": {
+        "cadquery": "2.8.0",
+        "cadquery-ocp": "7.9.3.1.1",
+        "cadquery-ocp-proxy": "7.9.3.1.1",
+        "casadi": "3.6.7",
+        "nlopt": "2.11.0",
+        "vtk": "9.6.2",
+        "psutil": "7.2.2"
+      },
+      "status": "passed",
+      "measurements": {
+        "unsupportedJointDidNotBlockRuntimeBuild": true,
+        "internalInstanceDisplacementMm": 5,
+        "internalStepPreviewMismatchAccepted": true,
+        "outerExtentMismatchRejected": true,
+        "scope": "Direct runtime entrypoints, not API contract/authentication test",
+        "finding": "Manifest joint metadata is not centrally solved; bounds agreement does not prove every occurrence agrees"
+      },
+      "operationSecondsIncludingImports": 17.85942230001092,
+      "peakWorkingSetMiB": 380.16015625,
+      "process": {
+        "exitCode": 0,
+        "timedOut": false,
+        "stdout": "{\"case\": \"forma_runtime_negative_controls\", \"status\": \"passed\"}\n",
+        "stderr": "",
+        "elapsedSeconds": 18.937389299971983,
+        "timeoutSeconds": 90
+      },
+      "harnessSha256": "c240ceeeec98b99435e04e493fd0b4afbdc1bfb514c7c0f88a7f015dbea88164"
+    },
+    "forma_nested_60_occurrences": {
+      "case": "forma_nested_60_occurrences",
+      "versions": {
+        "cadquery": "2.8.0",
+        "cadquery-ocp": "7.9.3.1.1",
+        "cadquery-ocp-proxy": "7.9.3.1.1",
+        "casadi": "3.6.7",
+        "nlopt": "2.11.0",
+        "vtk": "9.6.2",
+        "psutil": "7.2.2"
+      },
+      "status": "passed",
+      "measurements": {
+        "occurrences": 60,
+        "subassemblies": 6,
+        "uniquePartDefinitions": 1,
+        "definitionCountIncludingAssemblies": 3,
+        "manifestInstanceCountIncludingGroups": 67,
+        "buildSeconds": 0.20731159998103976,
+        "validateMeshAndInspectSeconds": 3.530286699999124,
+        "pairEnumerationCount": 1770,
+        "inspectionErrors": 0,
+        "interferences": 0,
+        "maxStepCenterResidualMm": 1.6602269386349578e-17,
+        "maxPreviewPositionResidualMm": 1.1021821192326179e-14,
+        "previewBytes": 15648,
+        "rootStepBytes": 59092,
+        "limit": "Actual Forma runtime build/validation with nested placements; source explicitly places parts, no manifest-joint solve"
+      },
+      "operationSecondsIncludingImports": 14.108690300025046,
+      "peakWorkingSetMiB": 379.8828125,
+      "harnessSha256": "e605aa8ab41839ba32cbe26b1a4e62b6c2c4737cacf55061c7e3f14f664c5d99",
+      "process": {
+        "exitCode": 0,
+        "timedOut": false,
+        "stdout": "{\"case\": \"forma_nested_60_occurrences\", \"status\": \"passed\"}\n",
+        "stderr": "",
+        "elapsedSeconds": 15.711575200082734,
+        "timeoutSeconds": 150
+      }
+    }
+  },
+  "hashes": {
+    "scripts/audit_native_cad.py": "e605aa8ab41839ba32cbe26b1a4e62b6c2c4737cacf55061c7e3f14f664c5d99",
+    "runtimes/python/uv.lock": "8f91efe141a78bb757d44849010b843cdaff6b3461c6bad57066327726b1b0ab",
+    "runtimes/python/forma_runtime.py": "b504f78a27f3133e7bf3b4647d8030be39a945032c77d023b53aeeffdfe32b5c",
+    "runtimes/python/geometry_inspection.py": "eb096f34b3d71aefbc7b39bbbf65a9bb9dfa159823fb2eabbba633eb3fefbc2f"
+  },
+  "priorAttempts": [
+    {
+      "hashes": {
+        "scripts\\audit_native_cad.py": "c240ceeeec98b99435e04e493fd0b4afbdc1bfb514c7c0f88a7f015dbea88164",
+        "runtimes\\python\\uv.lock": "8f91efe141a78bb757d44849010b843cdaff6b3461c6bad57066327726b1b0ab",
+        "runtimes\\python\\forma_runtime.py": "b504f78a27f3133e7bf3b4647d8030be39a945032c77d023b53aeeffdfe32b5c",
+        "runtimes\\python\\geometry_inspection.py": "eb096f34b3d71aefbc7b39bbbf65a9bb9dfa159823fb2eabbba633eb3fefbc2f"
+      },
+      "cases": {
+        "rational_nurbs_and_step": {
+          "case": "rational_nurbs_and_step",
+          "versions": {
+            "cadquery": "2.8.0",
+            "cadquery-ocp": "7.9.3.1.1",
+            "cadquery-ocp-proxy": "7.9.3.1.1",
+            "casadi": "3.6.7",
+            "nlopt": "2.11.0",
+            "vtk": "9.6.2",
+            "psutil": "7.2.2"
+          },
+          "status": "failed",
+          "errorType": "AssertionError",
+          "error": "NURBS STEP volume mismatch",
+          "traceback": "Traceback (most recent call last):\n  File \"D:\\v1\\scripts\\audit_native_cad.py\", line 314, in worker\n    result.update(status=\"passed\", measurements=CASES[name](directory))\n                                                ^^^^^^^^^^^^^^^^^^^^^^\n  File \"D:\\v1\\scripts\\audit_native_cad.py\", line 92, in rational_nurbs\n    require(imported.isValid() and error < 1e-3, \"NURBS STEP volume mismatch\")\n  File \"D:\\v1\\scripts\\audit_native_cad.py\", line 28, in require\n    raise AssertionError(message)\nAssertionError: NURBS STEP volume mismatch\n",
+          "operationSecondsIncludingImports": 3.5207517999224365,
+          "peakWorkingSetMiB": 333.05078125,
+          "process": {
+            "exitCode": 0,
+            "timedOut": false,
+            "stdout": "{\"case\": \"rational_nurbs_and_step\", \"status\": \"failed\"}\n",
+            "stderr": "",
+            "elapsedSeconds": 4.573469099937938,
+            "timeoutSeconds": 90
+          },
+          "harnessSha256": "c240ceeeec98b99435e04e493fd0b4afbdc1bfb514c7c0f88a7f015dbea88164"
+        },
+        "static_60_occurrences": {
+          "case": "static_60_occurrences",
+          "versions": {
+            "cadquery": "2.8.0",
+            "cadquery-ocp": "7.9.3.1.1",
+            "cadquery-ocp-proxy": "7.9.3.1.1",
+            "casadi": "3.6.7",
+            "nlopt": "2.11.0",
+            "vtk": "9.6.2",
+            "psutil": "7.2.2"
+          },
+          "status": "failed",
+          "errorType": "AttributeError",
+          "error": "'Vertex' object has no attribute 'expandtabs'",
+          "traceback": "Traceback (most recent call last):\n  File \"D:\\v1\\scripts\\audit_native_cad.py\", line 314, in worker\n    result.update(status=\"passed\", measurements=CASES[name](directory))\n                                                ^^^^^^^^^^^^^^^^^^^^^^\n  File \"D:\\v1\\scripts\\audit_native_cad.py\", line 205, in assembly_60\n    assembly.constrain(f\"part{i}\", cq.Vertex.makeVertex(0, 0, 0), \"FixedPoint\", target)\n  File \"D:\\v1\\tmp\\forma-cad-audit-env\\Lib\\site-packages\\cadquery\\assembly.py\", line 427, in constrain\n    id2, s2 = self._query(q2)\n              ^^^^^^^^^^^^^^^\n  File \"D:\\v1\\tmp\\forma-cad-audit-env\\Lib\\site-packages\\cadquery\\assembly.py\", line 336, in _query\n    query = _grammar.parse_string(q, True)\n            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"D:\\v1\\tmp\\forma-cad-audit-env\\Lib\\site-packages\\pyparsing\\core.py\", line 1332, in parse_string\n    instring = instring.expandtabs()\n               ^^^^^^^^^^^^^^^^^^^\nAttributeError: 'Vertex' object has no attribute 'expandtabs'\n",
+          "operationSecondsIncludingImports": 3.240064200013876,
+          "peakWorkingSetMiB": 332.1015625,
+          "process": {
+            "exitCode": 0,
+            "timedOut": false,
+            "stdout": "{\"case\": \"static_60_occurrences\", \"status\": \"failed\"}\n",
+            "stderr": "",
+            "elapsedSeconds": 4.094753500074148,
+            "timeoutSeconds": 150
+          },
+          "harnessSha256": "c240ceeeec98b99435e04e493fd0b4afbdc1bfb514c7c0f88a7f015dbea88164"
+        }
+      },
+      "note": "Preserved before test-harness refinement; initial 60-part invocation used unsupported unary-shape argument dispatch; NURBS refined to distinguish property integration from geometry"
+    },
+    {
+      "hashes": {
+        "scripts/audit_native_cad.py": "a7a7884d4243766abca790ae7f852895c2157d04e1c7c1464c1158c9291ead1e",
+        "runtimes/python/uv.lock": "8f91efe141a78bb757d44849010b843cdaff6b3461c6bad57066327726b1b0ab",
+        "runtimes/python/forma_runtime.py": "b504f78a27f3133e7bf3b4647d8030be39a945032c77d023b53aeeffdfe32b5c",
+        "runtimes/python/geometry_inspection.py": "eb096f34b3d71aefbc7b39bbbf65a9bb9dfa159823fb2eabbba633eb3fefbc2f"
+      },
+      "cases": {},
+      "note": "Preserved before test-harness refinement; initial 60-part invocation used unsupported unary-shape argument dispatch; NURBS refined to distinguish property integration from geometry"
+    }
+  ],
+  "existingRuntimeTests": {
+    "exitCode": 0,
+    "timedOut": false,
+    "stdout": "..................                                                       [100%]\n- generated xml file: D:\\v1\\tmp\\forma-local-cad-audit\\existing-runtime-tests.xml -\n18 passed in 27.16s\n",
+    "stderr": "",
+    "elapsedSeconds": 28.96941020002123,
+    "timeoutSeconds": 180,
+    "testSourceHashes": {
+      "runtimes/python/tests/test_runtime.py": "ad8eb376c80ba2cade2837d6ffd2afe63a0eab0cd1a09593a7be133857acada0",
+      "runtimes/python/tests/test_geometry_inspection.py": "8c70021f1e824edfafc5cf99c67428ce271c8df683f8607f04debe9e436b92ab",
+      "runtimes/python/tests/test_requirements.py": "565817d3c56cd39fbe88c8024da485f1e64f4b0ff1a9e475e77df4f3cfabb2c8"
+    },
+    "counts": {
+      "tests": 18,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  },
+  "priorRuntimeSuiteAttempts": [
+    {
+      "exitCode": 2,
+      "timedOut": false,
+      "stdout": "ons.py:39: in xdg_path\n    home = Path(\"~\").expanduser() / directory\nC:\\Users\\SAURABH\\AppData\\Roaming\\uv\\python\\cpython-3.12.14-windows-x86_64-none\\Lib\\pathlib.py:1406: in expanduser\n    raise RuntimeError(\"Could not determine home directory.\")\nE   RuntimeError: Could not determine home directory.\n_____________ ERROR collecting tests/test_geometry_inspection.py ______________\nruntimes\\python\\tests\\test_geometry_inspection.py:4: in <module>\n    import cadquery as cq\ntmp\\forma-cad-audit-env\\Lib\\site-packages\\cadquery\\__init__.py:22: in <module>\n    from .occ_impl import exporters\ntmp\\forma-cad-audit-env\\Lib\\site-packages\\cadquery\\occ_impl\\exporters\\__init__.py:18: in <module>\n    from .dxf import exportDXF, DxfDocument\ntmp\\forma-cad-audit-env\\Lib\\site-packages\\cadquery\\occ_impl\\exporters\\dxf.py:16: in <module>\n    import ezdxf\ntmp\\forma-cad-audit-env\\Lib\\site-packages\\ezdxf\\__init__.py:26: in <module>\n    from ezdxf._options import options, config_files\ntmp\\forma-cad-audit-env\\Lib\\site-packages\\ezdxf\\_options.py:335: in <module>\n    options = Options()\ntmp\\forma-cad-audit-env\\Lib\\site-packages\\ezdxf\\_options.py:142: in __init__\n    paths = config_files()\ntmp\\forma-cad-audit-env\\Lib\\site-packages\\ezdxf\\_options.py:98: in config_files\n    paths = default_config_files()\ntmp\\forma-cad-audit-env\\Lib\\site-packages\\ezdxf\\_options.py:49: in default_config_files\n    config_home_path() / EZDXF_INI,\ntmp\\forma-cad-audit-env\\Lib\\site-packages\\ezdxf\\_options.py:44: in config_home_path\n    return xdg_path(XDG_CONFIG_HOME, CONFIG_DIRECTORY)\ntmp\\forma-cad-audit-env\\Lib\\site-packages\\ezdxf\\_options.py:39: in xdg_path\n    home = Path(\"~\").expanduser() / directory\nC:\\Users\\SAURABH\\AppData\\Roaming\\uv\\python\\cpython-3.12.14-windows-x86_64-none\\Lib\\pathlib.py:1406: in expanduser\n    raise RuntimeError(\"Could not determine home directory.\")\nE   RuntimeError: Could not determine home directory.\n_________________ ERROR collecting tests/test_requirements.py _________________\nruntimes\\python\\tests\\test_requirements.py:3: in <module>\n    import cadquery as cq\ntmp\\forma-cad-audit-env\\Lib\\site-packages\\cadquery\\__init__.py:22: in <module>\n    from .occ_impl import exporters\ntmp\\forma-cad-audit-env\\Lib\\site-packages\\cadquery\\occ_impl\\exporters\\__init__.py:18: in <module>\n    from .dxf import exportDXF, DxfDocument\ntmp\\forma-cad-audit-env\\Lib\\site-packages\\cadquery\\occ_impl\\exporters\\dxf.py:16: in <module>\n    import ezdxf\ntmp\\forma-cad-audit-env\\Lib\\site-packages\\ezdxf\\__init__.py:26: in <module>\n    from ezdxf._options import options, config_files\ntmp\\forma-cad-audit-env\\Lib\\site-packages\\ezdxf\\_options.py:335: in <module>\n    options = Options()\ntmp\\forma-cad-audit-env\\Lib\\site-packages\\ezdxf\\_options.py:142: in __init__\n    paths = config_files()\ntmp\\forma-cad-audit-env\\Lib\\site-packages\\ezdxf\\_options.py:98: in config_files\n    paths = default_config_files()\ntmp\\forma-cad-audit-env\\Lib\\site-packages\\ezdxf\\_options.py:49: in default_config_files\n    config_home_path() / EZDXF_INI,\ntmp\\forma-cad-audit-env\\Lib\\site-packages\\ezdxf\\_options.py:44: in config_home_path\n    return xdg_path(XDG_CONFIG_HOME, CONFIG_DIRECTORY)\ntmp\\forma-cad-audit-env\\Lib\\site-packages\\ezdxf\\_options.py:39: in xdg_path\n    home = Path(\"~\").expanduser() / directory\nC:\\Users\\SAURABH\\AppData\\Roaming\\uv\\python\\cpython-3.12.14-windows-x86_64-none\\Lib\\pathlib.py:1406: in expanduser\n    raise RuntimeError(\"Could not determine home directory.\")\nE   RuntimeError: Could not determine home directory.\n- generated xml file: D:\\v1\\tmp\\forma-local-cad-audit\\existing-runtime-tests.xml -\n=========================== short test summary info ===========================\nERROR runtimes\\python\\tests\\test_runtime.py - RuntimeError: Could not determi...\nERROR runtimes\\python\\tests\\test_geometry_inspection.py - RuntimeError: Could...\nERROR runtimes\\python\\tests\\test_requirements.py - RuntimeError: Could not de...\n!!!!!!!!!!!!!!!!!!! Interrupted: 3 errors during collection !!!!!!!!!!!!!!!!!!!\n3 errors in 3.96s\n",
+      "stderr": "",
+      "elapsedSeconds": 6.921669999952428,
+      "timeoutSeconds": 180,
+      "testSourceHashes": {
+        "runtimes/python/tests/test_runtime.py": "ad8eb376c80ba2cade2837d6ffd2afe63a0eab0cd1a09593a7be133857acada0",
+        "runtimes/python/tests/test_geometry_inspection.py": "8c70021f1e824edfafc5cf99c67428ce271c8df683f8607f04debe9e436b92ab",
+        "runtimes/python/tests/test_requirements.py": "565817d3c56cd39fbe88c8024da485f1e64f4b0ff1a9e475e77df4f3cfabb2c8"
+      }
+    }
+  ],
+  "finalHarnessSha256": "e6962013971feeab4a1c05f1f8fbcd6cb27387b57584223d2123690f3bc675f2",
+  "freecadPythonModulePresent": false,
+  "ondselBuildAttempt": {
+    "repository": "https://github.com/FreeCAD/OndselSolver",
+    "commit": "4be80eef02a3486cda0d78f3ccbb308d207a9639",
+    "status": "blocked_by_local_toolchain",
+    "configurationExitCode": 1,
+    "generator": "Visual Studio 16 2019 x64",
+    "compiler": "MSVC 19.29.30157",
+    "requestedOptions": {
+      "ONDSELSOLVER_BUILD_TESTS": "ON",
+      "ONDSELSOLVER_BUILD_EXE": "ON"
+    },
+    "cause": "CMake compiler identification could not link kernel32.lib; Windows SDK libraries missing",
+    "configurationLog": "tmp/ondsel-cad-audit-build/CMakeFiles/CMakeError.log",
+    "solverExecutionAttempted": false,
+    "formaIntegrationPresent": false
+  },
+  "engineeringAssessment": {
+    "readyForIndustryReplacement": false,
+    "nativeStaticGeometryAndAssemblyPrototypesSupported": true,
+    "criticalObservedGaps": [
+      {
+        "case": "conflicting_mates",
+        "finding": "Solve_Succeeded despite 8 mm unmet mate residual"
+      },
+      {
+        "case": "forma_runtime_negative_controls",
+        "finding": "5 mm internal STEP/preview disagreement accepted"
+      }
+    ],
+    "precisionFinding": "Rational sphere default volume error 0.0437%; explicit integration tolerance needed",
+    "scope": "Synthetic local engine and runtime fixtures; API, hosted environment and full mechanisms untested"
+  }
+}

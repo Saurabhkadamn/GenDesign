@@ -1,8 +1,9 @@
+from copy import deepcopy
 from typing import Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
-from .contracts import Contract, Manifest, Requirement, Role, SourcePath, safe_path
+from .contracts import Contract, Manifest, Parameter, Requirement, Role, SafeId, SourcePath, safe_path
 
 
 class Empty(Contract):
@@ -10,7 +11,11 @@ class Empty(Contract):
 
 
 class ReadFile(Contract):
-    path: str
+    # Empty paths were previously accepted by the model contract and only
+    # rejected later by ``safe_path``. That let providers spend a full model
+    # turn repeating ``read_file({path: ""})`` before the bounded retry guard
+    # could stop the run.
+    path: str = Field(min_length=1, max_length=180, pattern=r"^(?:parts|assemblies|calculations)/(?:[a-zA-Z0-9_-]+/)*[a-zA-Z0-9_-]+\.py$")
 
 
 class Search(Contract):
@@ -29,6 +34,54 @@ class ApplyChanges(Contract):
             return {item["path"]: item["content"] for item in value
                     if isinstance(item, dict) and "path" in item and "content" in item}
         return value
+
+
+def updated_manifest(previous: dict, change: ApplyChanges) -> dict:
+    """Preserve omitted top-level fields; explicit fields replace their values."""
+    if change.manifest is None:
+        return previous
+    return {**previous, **change.manifest.model_dump(include=change.manifest.model_fields_set)}
+
+
+class ParameterChange(Contract):
+    componentId: SafeId
+    parameter: str = Field(min_length=1, max_length=200)
+    value: Parameter = Field(description=(
+        "New value in the existing parameter's units and data type. Use numeric millimeters "
+        "for CAD dimensions, not a string containing units."
+    ))
+
+
+class UpdateParameters(Contract):
+    changes: list[ParameterChange] = Field(min_length=1, max_length=100)
+
+    @model_validator(mode="after")
+    def unique_targets(self):
+        targets = [(change.componentId, change.parameter) for change in self.changes]
+        if len(set(targets)) != len(targets):
+            raise ValueError("A parameter target cannot appear twice in one update.")
+        return self
+
+
+class ReviewResponse(Contract):
+    findingId: SafeId
+    explanation: str = Field(min_length=1, max_length=3000)
+    evidence: list[str] = Field(min_length=1, max_length=20)
+
+
+def parameter_patch(previous: dict, update: UpdateParameters) -> ApplyChanges:
+    """Translate a small parameter delta into the existing atomic edit path."""
+    components = deepcopy(previous["components"])
+    definitions = {component["id"]: component for component in components}
+    for change in update.changes:
+        component = definitions.get(change.componentId)
+        if component is None:
+            raise ValueError("The parameter update names an unknown component.")
+        parameters = component.get("parameters", {})
+        if change.parameter not in parameters:
+            raise ValueError("The parameter update names an unknown existing parameter. Use apply_changes to introduce new source parameters.")
+        parameters[change.parameter] = change.value
+    return ApplyChanges(files={}, manifest=Manifest.model_validate({"components": components}))
 
 
 class Build(Contract):
@@ -67,7 +120,9 @@ class RequestEngineering(Contract):
 SPECS = {
     "read_file": (ReadFile, "Read a private workspace source file before editing it."),
     "search_files": (Search, "Search private workspace files by literal text."),
-    "apply_changes": (ApplyChanges, "Atomically stage related files and an optional complete manifest. Does not execute code."),
+    "apply_changes": (ApplyChanges, "Atomically stage related files and optional manifest changes. Omitted top-level manifest fields are preserved; provided fields and arrays replace their values. Include complete entries in provided arrays. Does not execute code."),
+    "update_parameters": (UpdateParameters, "Atomically change existing named component parameters without rewriting source or assembly relationships. Read the component source first. New parameters require apply_changes. Rebuild and validate before publication."),
+    "respond_to_review": (ReviewResponse, "Read-only response when a specific repair finding contradicts current validated evidence. Return the unchanged validated candidate to its reviewer for reassessment once per finding. Does not edit, validate or publish geometry."),
     "build": (Build, "Build and validate the current CAD workspace. Use final=false for an intermediate assembly milestone, or final=true only when the requested design is represented."),
     "inspect_geometry": (Empty, "Inspect the current candidate's build report and optional requirement evidence."),
     "inspect_project": (Empty, "Inspect the current project, previous conversation, selected parts, revision, and verification evidence."),
@@ -81,7 +136,7 @@ SPECS = {
 }
 ROLE_TOOLS = {
     "coordinator": ("inspect_project", "read_file", "search_files", "delegate", "inspect_geometry", "publish_revision", "restore_revision", "ask_user", "finish"),
-    "cad": ("read_file", "search_files", "apply_changes", "build", "inspect_geometry", "request_engineering", "ask_user", "finish"),
+    "cad": ("read_file", "search_files", "apply_changes", "update_parameters", "respond_to_review", "build", "inspect_geometry", "request_engineering", "ask_user", "finish"),
     "engineering": ("read_file", "search_files", "apply_changes", "calculate", "inspect_geometry", "ask_user", "finish"),
 }
 
@@ -174,9 +229,10 @@ def portable_schema(schema: dict) -> dict:
     return expand(schema)
 
 
-def model_tools(role: Role) -> list[dict]:
+def model_tools(role: Role, *, review_response: bool = False) -> list[dict]:
     return [{"type": "function", "function": {"name": name, "description": SPECS[name][1],
-            "parameters": portable_schema(SPECS[name][0].model_json_schema())}} for name in ROLE_TOOLS[role]]
+            "parameters": portable_schema(SPECS[name][0].model_json_schema())}} for name in ROLE_TOOLS[role]
+            if name != "respond_to_review" or review_response]
 
 
 def parse_tool(role: Role, name: str, value: dict):

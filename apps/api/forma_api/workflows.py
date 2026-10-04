@@ -85,4 +85,9 @@ async def design_workflow(*, run_id: str, worker: str, resume: dict | None = Non
         print(f"Forma workflow interrupted for {run_id}: {diagnostic}", flush=True)
         await pause_interrupted(run_id=run_id, worker=worker, diagnostic=diagnostic)
         return {"runId": run_id, "state": "paused"}
-    return {"runId": run_id, "state": "bounded"}
+    # The workflow's transition cap is a scheduling boundary, not a terminal
+    # graph state. Clear its lease and expose Continue so the same LangGraph
+    # thread can be resumed by a fresh Workflow invocation.
+    await pause_interrupted(run_id=run_id, worker=worker,
+        diagnostic="The workflow transition limit was reached; Continue to resume the saved design.")
+    return {"runId": run_id, "state": "paused"}
