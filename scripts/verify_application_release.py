@@ -259,10 +259,17 @@ async def main(args):
                 assert revision["validation"]["bom"]["flat"][0]["quantity"] == 60
                 assert revision["validation"]["assemblyPlacement"]["solidChecks"] == 60
                 assert revision["validation"]["identity"]["runtime"] == runtime["runtimeVersion"]
-                dimensions = revision["validation"]["components"]["plate"]["dimensions"]
+                # The public ValidationReport omits runtime component summaries.
+                # Read the same owned immutable revision's raw validator report,
+                # then cross-check its identity and the public inspection bounds.
+                raw_revision = await db.one("revisions", {"id": "eq." + revision["id"],
+                    "project_id": "eq." + state["projectId"]})
+                assert raw_revision["validation"]["identity"] == revision["validation"]["identity"]
+                dimensions = raw_revision["validation"]["components"]["plate"]["dimensions"]
                 assert max(abs(a-b) for a,b in zip(dimensions, [8,8,3])) < 1e-6
                 bounds = revision["validation"]["inspection"]["components"]["plate"]["boundsMm"]
-                assert abs(bounds[5] - bounds[2] - 3) < 1e-6
+                assert max(abs(bounds[i+3] - bounds[i] - expected)
+                    for i, expected in enumerate([8, 8, 3])) < 1e-6
                 assert not any(check["status"] == "failed"
                     for check in revision["validation"].get("requirements", []))
                 state["chatMeasurementConsistency"] = "passed"
@@ -280,7 +287,15 @@ async def main(args):
                 state["chatArtifactHashes"] = downloaded
                 state["chatRevisionId"] = revision["id"]
                 state["chatReview"] = revision["validation"].get("review", {})
-                state["chatWorkflow"] = "passed"
+                state["chatGeometryWorkflow"] = "passed"
+                review = state["chatReview"]
+                state["chatReviewQualified"] = bool(review.get("action") == "publish" and not any(
+                    item.get("id") == "review_unavailable" or
+                    (item.get("status") == "observed_mismatch" and item.get("severity") == "error")
+                    for item in review.get("findings", [])))
+                state["chatWorkflow"] = "passed" if state["chatReviewQualified"] else "review_findings"
+                save()
+                assert state["chatReviewQualified"], "Published geometry passed, but the final AI review is not qualified"
         # An unauthenticated request must never obtain any signed private URL.
         async with httpx.AsyncClient(base_url=args.base_url, timeout=30,
                 headers={"x-vercel-protection-bypass": bypass} if bypass else {}) as anonymous:
