@@ -1,6 +1,26 @@
 # Forma native assembly and BOM release
 
-Goal: qualify native assembly technology, integrate assembly and deterministic BOM end to end, strengthen engineering reliability, verify local and hosted workflows, push reviewed source and publish the verified release. The goal remains active until every release gate below passes.
+Goal: qualify native assembly technology, integrate assembly and deterministic BOM end to end, strengthen engineering reliability, verify local and hosted workflows, push reviewed source and publish the verified release.
+
+## Current release — 2026-10-04 UTC
+
+The verified production candidate `dpl_5vYmF2sj2u45z8c168u7AMCdttV7`, source `7cc3b27fdb4fa7dd16809a33445a458ba45d96dd`, has been promoted to https://forma-cad-eosin.vercel.app. Production project settings were updated together to the qualified runtime `forma-b62c5048f2ceea82` / snapshot `snap_iKa7XXTQI3tq44gHu5TiEvUGsIj5`. The settings are sensitive and cannot be pulled back; both CLI updates succeeded. Original immutable deployment `dpl_E7ESYfMkaDXaDFTtU73LDv6E6tPP` is preserved for rollback. Stable URL checks and exact source integration into main remain the final gates at this checkpoint.
+
+Both actual AI workflows now pass clean final review and publication of the 4→3 mm change while preserving all 60 occurrences, 59 joints, grounding, references and part metadata. Production run `a4a07c44-432b-4909-b143-40e5c4fd77f6` succeeded at 14 model calls through source a884ded. Fresh preview run `8ae5990d-1ada-44e4-8467-965df6d5bd1e` succeeded at nine calls through source a37ca56, after asking for the missing thickness and accepting the saved answer. Source 7cc3b27 changes only verification code after a37ca56; application, package and runtime sources match. Actual read/download checks and browser qualification also pass through the final production candidate.
+
+All nine private artifacts downloaded successfully; anonymous access returns 401 and a separate account receives 404. Independent downloaded-STEP reopening checks all 60 solid geometries and placements, 8×8×3 mm dimensions, central Ø2 hole, analytic volumes and draft BOM quantity 60. Earlier refined preview/production 2/4 mm fixtures also pass. Fresh preview 4/3 mm outputs passed again. The final candidate browser rendered the 60-occurrence preview, eight file entries, both BOM layouts with quantity 60 and zero page errors; screenshot inspected.
+
+Local checks: **208 API tests**, **47 Windows runtime tests**, **47 actual Linux runtime tests**, zero runtime skips; 10 database tests, TypeScript, ESLint and production web build passed. The native image/source hash is unchanged by the final API fixes. The Linux builder is stopped. Saved provider connections and selected model were preserved. Production dependency audit has zero known advisories; 12 development advisories remain.
+
+The corrected API checks assembly preservation against the run's owned immutable baseline after fresh native/STEP validation. Parameter edits retain manifest state, accepted measurements inform model edits, genuine centre/hole checks remain independent, and cleared review state is persisted after a nested build. The older preview publication with a contradicted grounding finding remains explicitly unqualified for clean AI review. Production's overdue platform wait was woken once on its existing workflow; no replacement workflow was created.
+
+BOM: **Files → Bill of materials → Parts list / Assembly structure**. JSON and flat/structured CSV exports appear in Files. These are drafts for engineering review. **Engineering 2D drawings, dimensioned sheets and GD&T are not implemented in this release.** This repeated-plate qualification is not evidence of 60 distinct complex industrial parts or CATIA/SOLIDWORKS parity.
+
+Authoritative checkout: `C:\Users\SAURABH\.codex\worktrees\native-assembly-bom\v1`, branch `codex/native-assembly-bom`; PR https://github.com/Saurabhkadamn/GenDesign/pull/19. Preserve unrelated work in `D:\v1`. The expired automation remains deleted. Private evidence lives under ignored `D:\v1\test-results`; sanitized source/deployment/runtime and artifact hashes are in `FORMA_HOSTED_ASSEMBLY_ACCEPTANCE.json`.
+
+## Historical states before final qualification
+
+The entries below preserve prior failures, resumable checkpoints and superseded deployments. They do not describe current live jobs or the current release status.
 
 ## Current continuation — 2026-10-04 IST
 

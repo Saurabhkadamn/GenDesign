@@ -270,13 +270,26 @@
     "builderStopped": true,
     "parameterDeltaRefinement": {
       "date": "2026-10-04 IST",
-      "localApiTests": {"passed": 187, "durationSeconds": 9.27},
-      "focusedContractAndGraphTests": {"passed": 65},
+      "localApiTests": {
+        "passed": 187,
+        "durationSeconds": 9.27
+      },
+      "focusedContractAndGraphTests": {
+        "passed": 65
+      },
       "runtimeSourceUnchanged": true,
       "previewWorkflow": "pending",
       "productionWorkflow": "pending",
-      "priorPreviewStop": {"modelCalls": 8, "status": "paused", "reason": "Timeout followed by a malformed tool action on one explicit recovery"},
-      "priorProductionStop": {"modelCalls": 8, "status": "paused", "reason": "Malformed CAD tool action after confirmed checkpoint recovery"},
+      "priorPreviewStop": {
+        "modelCalls": 8,
+        "status": "paused",
+        "reason": "Timeout followed by a malformed tool action on one explicit recovery"
+      },
+      "priorProductionStop": {
+        "modelCalls": 8,
+        "status": "paused",
+        "reason": "Malformed CAD tool action after confirmed checkpoint recovery"
+      },
       "invalidActionsExecuted": false,
       "originalPublishedRevisionsPreserved": true,
       "scope": "Existing named parameter deltas use the atomic edit path, preserve source and assembly state, and require fresh validation before publication. Hosted qualification remains pending."
@@ -454,5 +467,208 @@
       "pageErrors": 0,
       "scope": "Actual authenticated refined production 4 mm fixture, both BOM layouts and private artifact API downloads"
     }
+  },
+  "currentQualification": "finalReleaseQualification20261004",
+  "finalReleaseQualification20261004": {
+    "releaseStatus": "candidate_promoted_main_integration_pending",
+    "candidateSource": "7cc3b27fdb4fa7dd16809a33445a458ba45d96dd",
+    "candidateDeploymentId": "dpl_5vYmF2sj2u45z8c168u7AMCdttV7",
+    "candidateUrl": "https://forma-c7upi4743-negens-projects.vercel.app",
+    "runtime": {
+      "snapshotId": "snap_iKa7XXTQI3tq44gHu5TiEvUGsIj5",
+      "version": "forma-b62c5048f2ceea82",
+      "sourceHash": "6c5a1926ef8dd687fb9bddbffe3d0916725e7ddd820f167c92589d9693ae47d3"
+    },
+    "tests": {
+      "apiPassed": 208,
+      "windowsRuntimePassed": 47,
+      "linuxRuntimePassed": 47,
+      "runtimeSkipped": 0
+    },
+    "productionWorkflow": {
+      "deployment": "https://forma-jeyi9mosy-negens-projects.vercel.app",
+      "workflowSourceCommit": "a884ded71acebf6d5b935c50e25d162ca1fa1565",
+      "pipeline": null,
+      "chatWorkflow": "passed",
+      "run": {
+        "id": "a4a07c44-432b-4909-b143-40e5c4fd77f6",
+        "status": "succeeded",
+        "model_calls": 14,
+        "updated_at": "2026-10-04T16:08:14.014304+00:00"
+      },
+      "revisionId": "6cfdfc0f-f6f4-5a78-8803-282c55216ceb",
+      "reviewQualified": true,
+      "privateArtifactCount": 9,
+      "artifactHashes": {
+        "plate.step": "aaad78f28ff6a09862f515ef357530506c49818a852288e2987ada9d0d37844f",
+        "plate.glb": "836cfd595ec1f4bafb083dab5acdb4e98c050a85de99e96c81662fa9857acdc1",
+        "assembly.step": "625da0b5cba8c7d8820625af4682879d4c979325a1300d758878f508d9ab566a",
+        "assembly.glb": "cee38a66cf1b338a2dcf106dbb7a6fb99799980f3e9a580ee1e90bd3bb975a1c",
+        "assembly.json": "d2da4725992c968e632cb2b206c94ae87616ca45403fbf958733362b577b2312",
+        "preview.glb": "36a008c7a542559435fbd2364b744a8ce32b11fd0758f14d56a76ffe12484667",
+        "bom.json": "420f8878f25cc0038b9d88c9e6b931745fad67a78fb73870d910c05ffcf164de",
+        "bom-flat.csv": "a41505fc97ef96200f7ebdd10559b34e1c44ae6b58055f05191abcac53b67e7e",
+        "bom-structured.csv": "01ebbf2c6f8c977739ba4941823e313ae0fa838d0947c0b4363a7b654d518682"
+      },
+      "independentGeometry": {
+        "passed": true,
+        "solidChecks": 60,
+        "plateDimensionsMm": [
+          8,
+          8,
+          3
+        ],
+        "holeDiameterMm": 2,
+        "occurrenceCentersMatch": true,
+        "maxSymmetricDifferenceMm3": 0.0,
+        "downloadedStepVolumeErrorMm3": 3.637978807091713e-12
+      },
+      "anonymousAccessRejected": true,
+      "otherOwnerAccessRejected": true
+    },
+    "freshPreviewWorkflow": {
+      "deployment": "https://forma-160kk0dit-negens-projects.vercel.app",
+      "workflowSourceCommit": "a37ca56e065b4bce72d6a527489982c3824a45fe",
+      "pipeline": "passed",
+      "chatWorkflow": "passed",
+      "run": {
+        "id": "8ae5990d-1ada-44e4-8467-965df6d5bd1e",
+        "status": "succeeded",
+        "model_calls": 9,
+        "updated_at": "2026-10-04T16:17:57.261998+00:00"
+      },
+      "revisionId": "6847e258-4f28-5859-9d20-dbf35910df9b",
+      "reviewQualified": true,
+      "privateArtifactCount": 9,
+      "artifactHashes": {
+        "plate.step": "c4c4fb811bc8fb42abf9c81008ba80210ca430a47b56478a52859452ff7b69f9",
+        "plate.glb": "836cfd595ec1f4bafb083dab5acdb4e98c050a85de99e96c81662fa9857acdc1",
+        "assembly.step": "3c7365515223499589347e06d89fcfc2be42162e4d19e02f71fdc41cc31569f3",
+        "assembly.glb": "cee38a66cf1b338a2dcf106dbb7a6fb99799980f3e9a580ee1e90bd3bb975a1c",
+        "assembly.json": "bdbfde276ccf19062cfd079872fcc7c733429782e784d133098ea3ea48f4b257",
+        "preview.glb": "36a008c7a542559435fbd2364b744a8ce32b11fd0758f14d56a76ffe12484667",
+        "bom.json": "fd85ed2f721858e4aba34e9e862a40f61ef591342a651b5f9860c009ba6ed251",
+        "bom-flat.csv": "a41505fc97ef96200f7ebdd10559b34e1c44ae6b58055f05191abcac53b67e7e",
+        "bom-structured.csv": "01ebbf2c6f8c977739ba4941823e313ae0fa838d0947c0b4363a7b654d518682"
+      },
+      "independentGeometry": {
+        "passed": true,
+        "solidChecks": 60,
+        "plateDimensionsMm": [
+          8,
+          8,
+          3
+        ],
+        "holeDiameterMm": 2,
+        "occurrenceCentersMatch": true,
+        "maxSymmetricDifferenceMm3": 0.0,
+        "downloadedStepVolumeErrorMm3": 3.637978807091713e-12
+      },
+      "anonymousAccessRejected": true,
+      "otherOwnerAccessRejected": true
+    },
+    "latestCandidateReads": {
+      "deployment": "https://forma-c7upi4743-negens-projects.vercel.app",
+      "workflowSourceCommit": "a884ded71acebf6d5b935c50e25d162ca1fa1565",
+      "pipeline": null,
+      "chatWorkflow": "passed",
+      "run": {},
+      "revisionId": "6cfdfc0f-f6f4-5a78-8803-282c55216ceb",
+      "reviewQualified": true,
+      "privateArtifactCount": 9,
+      "artifactHashes": {
+        "plate.step": "aaad78f28ff6a09862f515ef357530506c49818a852288e2987ada9d0d37844f",
+        "plate.glb": "836cfd595ec1f4bafb083dab5acdb4e98c050a85de99e96c81662fa9857acdc1",
+        "assembly.step": "625da0b5cba8c7d8820625af4682879d4c979325a1300d758878f508d9ab566a",
+        "assembly.glb": "cee38a66cf1b338a2dcf106dbb7a6fb99799980f3e9a580ee1e90bd3bb975a1c",
+        "assembly.json": "d2da4725992c968e632cb2b206c94ae87616ca45403fbf958733362b577b2312",
+        "preview.glb": "36a008c7a542559435fbd2364b744a8ce32b11fd0758f14d56a76ffe12484667",
+        "bom.json": "420f8878f25cc0038b9d88c9e6b931745fad67a78fb73870d910c05ffcf164de",
+        "bom-flat.csv": "a41505fc97ef96200f7ebdd10559b34e1c44ae6b58055f05191abcac53b67e7e",
+        "bom-structured.csv": "01ebbf2c6f8c977739ba4941823e313ae0fa838d0947c0b4363a7b654d518682"
+      },
+      "independentGeometry": {
+        "passed": true,
+        "solidChecks": 60,
+        "plateDimensionsMm": [
+          8,
+          8,
+          3
+        ],
+        "holeDiameterMm": 2,
+        "occurrenceCentersMatch": true,
+        "maxSymmetricDifferenceMm3": 0.0,
+        "downloadedStepVolumeErrorMm3": 3.637978807091713e-12
+      },
+      "anonymousAccessRejected": true,
+      "otherOwnerAccessRejected": true,
+      "applicationVerificationSource": "7cc3b27fdb4fa7dd16809a33445a458ba45d96dd",
+      "workflowQualificationDeployment": "https://forma-jeyi9mosy-negens-projects.vercel.app",
+      "browser": {
+        "flatQuantity": 60,
+        "structuredQuantity": 60,
+        "fileButtons": 8,
+        "errors": 0,
+        "screenshotInspected": true
+      }
+    },
+    "previousPreview": {
+      "runId": "f9f90fc9-41fd-4379-8c6e-03878483dba4",
+      "geometryPassed": true,
+      "reviewQualified": false,
+      "reason": "Retained a contradicted grounding finding from stale review state; publication preserved as historical evidence."
+    },
+    "productionSchedulerRecovery": {
+      "existingWorkflowId": "wrun_01M43SXZ1T2VPBAXMV1968FVPH",
+      "existingOverdueWaitWokenOnce": true,
+      "newWorkflowCreated": false
+    },
+    "stablePromotion": {
+      "url": "https://forma-cad-eosin.vercel.app",
+      "deploymentId": "dpl_5vYmF2sj2u45z8c168u7AMCdttV7",
+      "authenticatedReads": {
+        "deployment": "https://forma-cad-eosin.vercel.app",
+        "workflowSourceCommit": "a884ded71acebf6d5b935c50e25d162ca1fa1565",
+        "pipeline": null,
+        "chatWorkflow": "passed",
+        "run": {},
+        "revisionId": "6cfdfc0f-f6f4-5a78-8803-282c55216ceb",
+        "reviewQualified": true,
+        "privateArtifactCount": 9,
+        "artifactHashes": {
+          "plate.step": "aaad78f28ff6a09862f515ef357530506c49818a852288e2987ada9d0d37844f",
+          "plate.glb": "836cfd595ec1f4bafb083dab5acdb4e98c050a85de99e96c81662fa9857acdc1",
+          "assembly.step": "625da0b5cba8c7d8820625af4682879d4c979325a1300d758878f508d9ab566a",
+          "assembly.glb": "cee38a66cf1b338a2dcf106dbb7a6fb99799980f3e9a580ee1e90bd3bb975a1c",
+          "assembly.json": "d2da4725992c968e632cb2b206c94ae87616ca45403fbf958733362b577b2312",
+          "preview.glb": "36a008c7a542559435fbd2364b744a8ce32b11fd0758f14d56a76ffe12484667",
+          "bom.json": "420f8878f25cc0038b9d88c9e6b931745fad67a78fb73870d910c05ffcf164de",
+          "bom-flat.csv": "a41505fc97ef96200f7ebdd10559b34e1c44ae6b58055f05191abcac53b67e7e",
+          "bom-structured.csv": "01ebbf2c6f8c977739ba4941823e313ae0fa838d0947c0b4363a7b654d518682"
+        },
+        "independentGeometry": {
+          "passed": true,
+          "solidChecks": 60,
+          "plateDimensionsMm": [
+            8,
+            8,
+            3
+          ],
+          "holeDiameterMm": 2,
+          "occurrenceCentersMatch": true,
+          "maxSymmetricDifferenceMm3": 0.0,
+          "downloadedStepVolumeErrorMm3": 3.637978807091713e-12
+        },
+        "anonymousAccessRejected": true,
+        "otherOwnerAccessRejected": true
+      },
+      "browser": {
+        "flatQuantity": 60,
+        "structuredQuantity": 60,
+        "fileButtons": 8,
+        "errors": 0
+      }
+    },
+    "scope": "Repeated-part native assembly and draft BOM qualification; no engineering drawing generator or industry-wide CAD parity."
   }
 }

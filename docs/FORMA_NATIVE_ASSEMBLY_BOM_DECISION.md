@@ -39,8 +39,8 @@ OndselSolver's repository license is LGPL-2.1. The JSON header candidate is nloh
 
 Hosted build qualification is separate from Windows qualification. Install the locked Python dependencies and the Linux native library/binary in the CAD snapshot, preserve notices, attest their actual installed versions and hashes, and run the same positive and negative cases before promotion. Copying a lockfile or producing a website preview does not qualify the runtime.
 
-## Release remains incomplete
+## Qualified release scope
 
-The native adapter, degree-of-freedom checks, occurrence-level STEP gate, BOM exports/UI and actual hosted Linux installation are implemented and qualified. A 60-occurrence fixture passed native solving, independent STEP reopening, BOM aggregation and a thickness edit; contradictory grounding was rejected. See [hosted acceptance evidence](FORMA_HOSTED_ASSEMBLY_ACCEPTANCE.json).
+The native adapter, degree-of-freedom checks, occurrence-level STEP gate, BOM exports/UI and actual hosted Linux installation are implemented and qualified. Authenticated preview/production publication and nine private downloads passed. Clean AI workflows changed a repeated 60-occurrence plate assembly from 4 to 3 mm while preserving 59 joints and the complete owned baseline structure. Independent downloaded-STEP/BOM checks passed; contradictory grounding is rejected. The verified production candidate is promoted. See [hosted acceptance evidence](FORMA_HOSTED_ASSEMBLY_ACCEPTANCE.json).
 
-Authenticated application publication/downloads, preview and production verification, and source push remain release gates. This evidence does not establish industrial assembly scale or CATIA/SOLIDWORKS workflow parity. Track the authoritative next steps in [release progress](FORMA_ASSEMBLY_BOM_RELEASE_PROGRESS.md).
+This is limited assembly/BOM qualification with draft outputs, not industrial assembly scale or CATIA/SOLIDWORKS parity. There is no engineering drawing/GD&T generator. Final source integration and resulting main-deployment verification are tracked in [release progress](FORMA_ASSEMBLY_BOM_RELEASE_PROGRESS.md).
