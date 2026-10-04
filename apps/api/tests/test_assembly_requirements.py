@@ -117,6 +117,8 @@ async def test_saved_bad_binding_requires_fresh_build_without_geometry_or_model_
     assert result["phase"] == "validate"
     assert observed["requirements"][0]["kind"] == "assembly_preservation"
     assert observed["validation"] == {} and observed["review"] == {}
+    assert result["review"] == {} and result["review_history"] == []
+    assert result["review_fingerprint"] == "" and result["reviewed_candidate_hash"] == ""
     assert snapshot == before
 
 

@@ -1390,10 +1390,15 @@ async def cad_session(state: AgentState) -> dict:
     bound = normalize_assembly_requirements(state.get("requirements", []), snapshot["manifest"])
     if bound != state.get("requirements", []):
         await repo.event(state["run_id"], "Corrected an assembly requirement binding; rebuilding unchanged geometry against its owned base revision.", stage="validation")
-        return await build({**state, "requirements": bound, "validation": {}, "build_result": {},
-                            "review": {}, "review_history": [], "review_response": {},
-                            "pending_cad_call": {"id": "assembly-binding-rebuild", "name": "build", "input": {"final": True}},
-                            "build_final": True})
+        reset = {"requirements": bound, "validation": {}, "build_result": {},
+                 "review": {}, "review_history": [], "review_response": {}, "review_fingerprint": "",
+                 "reviewed_candidate_hash": ""}
+        result = await build({**state, **reset,
+                              "pending_cad_call": {"id": "assembly-binding-rebuild", "name": "build", "input": {"final": True}},
+                              "build_final": True})
+        # Nested node calls do not persist their input state in LangGraph.
+        # Return the resets as updates, while preserving the fresh build result.
+        return {**reset, **result}
     history = state.get("cad_history") or [{
         "role": "user", "content": state.get("clarified_request") or state["original_request"]
     }]
