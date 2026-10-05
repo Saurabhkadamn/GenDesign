@@ -1,6 +1,6 @@
 # Forma engineering drawings release
 
-Authoritative worktree: `C:\Users\SAURABH\.codex\worktrees\native-assembly-bom\v1`; branch `codex/engineering-drawings`, based on released `dc3a22c`. Preserve unrelated original-checkout work in `D:\v1`.
+Authoritative worktree: `C:\Users\SAURABH\.codex\worktrees\native-assembly-bom\v1`. Implementation PR #20 (`codex/engineering-drawings`) is merged; release evidence continues on `codex/drawing-release-evidence`. Preserve unrelated original-checkout work in `D:\v1`.
 
 ## Current checkpoint — 5 October 2026
 
@@ -22,7 +22,16 @@ Negative run `7566e0fa-b59f-47ec-9dee-ce439f326a3f` rejected a missing bore refe
 
 The actual browser preserved edits across tabs/sheets and disabled stale exports. Browser-submitted regeneration `49bce13f-00df-4a30-b5ec-e58ebe8705b8` passed and published revision `ed8c095d-13ae-54b5-afd5-364b35aa6d38`; the saved title, native geometry, three sheets, exports and BOM survived regeneration. The PDF button works. Desktop focus and 390 px mobile layout were inspected; no uncaught browser errors. Existing Three.js deprecation/context-lost console messages appeared during viewport changes. Private receipts, downloads and screenshots: ignored `D:\v1\test-results\drawing-hosted-acceptance`. `scripts/verify_drawing_release.py` retains submission/run identity before polling and verifies the hosted acceptance cases.
 
-**Public production promotion is pending at this checkpoint.** The stable URL still serves the qualified assembly/BOM release `dpl_DVKNbNP82CMwGgUCNbSBJrHUQkwd`, main `dc3a22c`; retain it as rollback. Remaining release gates: integrate PR #20, pair the qualified production runtime settings, verify the main build and stable URL after publication.
+**Verified live:** [Forma](https://forma-cad-eosin.vercel.app). PR #20 merged as main `3b4c31f2e0efd59c10923e0fd720913315c4b5bd`; production deployment `dpl_1A352aEbNqVUJQmRg1Mtje2mzD5z` is READY and owns the stable URL. Production and preview runtime settings pair the qualified image/version above. The Vercel commit check passes. Retain previous assembly/BOM deployment `dpl_DVKNbNP82CMwGgUCNbSBJrHUQkwd`, runtime `forma-b62c5048f2ceea82` / `snap_iKa7XXTQI3tq44gHu5TiEvUGsIj5`, as rollback.
+
+Final production browser-submitted run `8feed74e-07c3-4f6b-9bc2-493a23d6db09` passed the complete native durable job and published revision `7222f0b6-7b94-5f7a-9f54-e8705c281d43`: three sheets, nine verified private vector exports, analytic dimensions, 60-occurrence BOM/placement evidence, zero model calls. Private access, request idempotency/conflict/stale/malformed checks and stable authenticated reads pass again on the public site. No uncaught browser errors. Exact production receipts/downloads/screenshots are under ignored `D:\v1\test-results\drawing-stable-acceptance`; the verified release/rollback receipt is `D:\v1\test-results\drawing-verified-release.json`. Follow-up documentation commits do not change the qualified application or runtime sources.
+
+## Where to use it
+
+- Open an accepted project and choose **Drawings** in the center workspace. Choose a part or the root assembly and **Generate drawing**. Use **New sheet** for another target.
+- Edit sheet settings, measured dimension definitions, datums and geometric-tolerance frames, then **Regenerate sheet** to apply them. Unsaved edits retain the old preview label and disable that sheet's exports.
+- Download **SVG**, **PDF** or **DXF** from the drawing panel. Files also lists the revision's drawing artifacts.
+- Open **Files → Bill of materials** for **Parts list / Assembly structure** and CSV/JSON exports. For an assembly sheet, enable **Include assembly parts list** to generate BOM rows and balloons.
 
 ## Engineering boundary
 

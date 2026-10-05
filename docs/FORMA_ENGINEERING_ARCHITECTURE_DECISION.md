@@ -6,6 +6,8 @@ Implementation update: a pinned native Ondsel adapter, independent DOF/residual 
 
 ## Decision
 
+Engineering drawing update (2026-10-05): native OCCT drawing views/sections, measured dimensions, engineer-authored GD&T, root-assembly BOM balloons and private SVG/PDF/DXF exports are now implemented and verified on the public production site. The typed document and direct durable drawing job use independently reopened accepted STEP; no model call or part source execution is required. See [drawing release evidence and usage](FORMA_DRAWING_RELEASE_PROGRESS.md). This is the documented drafting subset with explicit reference failure gates, not full industry CAD or standards equivalence.
+
 **Keep CadQuery/OpenCascade and Python. Strengthen the engineering document, assembly integration and independent validation before expanding the feature list.** The initial recommendation was to evaluate OndselSolver behind a separate adapter; the implementation update above records the qualified selection.
 
 The local tests demonstrate useful native geometry and static assembly capabilities. They also reproduce cases where solver success and valid STEP geometry do not establish a correct engineering assembly. Changing the orchestration language would not fix those cases.
