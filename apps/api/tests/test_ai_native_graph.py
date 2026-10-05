@@ -799,6 +799,25 @@ def test_numbered_component_inventory_for_incremental_assembly():
     assert design.requested_component_labels("Create a single 80 x 50 mm plate.") == []
 
 
+def test_quantity_marked_mechanical_inventory_counts_distinct_part_types():
+    request = """Design Task: External Gear Pump
+## Components (~27 instances)
+Gear housing (1, die-cast Al), front cover (1, with seal bore), rear cover (1),
+drive gear-shaft (1), driven gear-shaft (1), bushings (4), lip seal 16x28x7 (1),
+O-rings ISO 3601 (2), M8x50 socket head screws ISO 4762 (6) + washers (6),
+dowel pins ISO 2338 dia 6 (2), key DIN 6885 5x5x20 (1).
+
+## Assembly Requirements
+1. Both gears fit in the housing.
+"""
+    assert design.requested_component_labels(request) == [
+        "Gear housing", "front cover", "rear cover", "drive gear-shaft",
+        "driven gear-shaft", "bushings", "lip seal 16x28x7", "O-rings ISO 3601",
+        "M8x50 socket head screws ISO 4762", "washers", "dowel pins ISO 2338 dia 6",
+        "key DIN 6885 5x5x20",
+    ]
+
+
 @pytest.mark.asyncio
 async def test_first_multi_component_cad_turn_exposes_incremental_milestone(monkeypatch, graph_mocks):
     request = """Design Task: mechanism

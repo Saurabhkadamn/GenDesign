@@ -27,3 +27,16 @@ Private receipts: `D:/v1/test-results/pump-linux-20261005`, `pump-diagnostic-acc
 ## Acceptance boundary
 
 Submit the exact original brief in a new private project after live verification. Its request SHA-256 is `b197af0c4a608dbb7e2a0cc921c3fa899ce2217e5144d07842ac30ef3716c3e3`. Do not silently modify tolerances: axial clearance is **0.060–0.090 mm**, failing the specified **0.040–0.080 mm** range. A new run is not accepted merely because it starts or publishes a draft. Three-state STEP, involute/backlash/interference, 27 independent occurrences, calculations, measured comparisons, tolerance chains, standards, DFM and mass still require their own evidence. Pressure sealing, ripple, wear, cavitation and efficiency remain unverified.
+
+## Fresh hosted pump rerun and harness defects
+
+The unchanged request was submitted to a fresh private Forma project on the verified live deployment on 2026-10-05 (`f19c858c-fd80-4442-9ed9-bb858436fc75`; run `06298abe-c3b0-4aa0-b986-e1de6ebfee9a`). The first four attempts found invalid gear B-reps, an invalid housing through-cut, and an exported solid inventory mismatch. Attempt 7 exposed a valid-but-wrong figure-eight cavity: its driven gear overlapped housing by 16,460.915 mm³. A separate, source-free local fixture reproduced this failure mode. Separately cutting each bore from a valid cylinder fixed the cavity; attempt 8 reported 0.050 mm nominal clearance from each gear to housing and no interference in the three-part as-built check. Attempt 9 found and repaired a draft-extrusion sketch error; attempt 10 passed geometry integrity on that same three-part milestone.
+
+The complete run then paused when the configured Baseten endpoint rejected the next model request with HTTP 402 and `please check your current payment status`. Admin metadata confirms that coordinator model is `deepseek-ai/DeepSeek-V4.1-Flash` at `inference.baseten.co`; Forma has no configured alternate model role. The run has 60 model calls and no published revision or artifacts. The private candidate is retained; the full pump acceptance remains incomplete until that provider account can make requests and the run can continue.
+
+The test independently reproduced two API defects and their fixes are in the code below:
+
+- Quantity-marked mechanical component lists were parsed as numbered acceptance paragraphs instead of part types. The parser now reads either numbered lists or comma-separated names with quantity tuples; a regression fixture extracts the 12 required types from the pump brief.
+- Triage normalization widened a stated 0.010 mm limit to 0.050 mm. It now preserves the submitted tolerance; numerical kernel resolution belongs in measurement comparison, not in the user’s design limit.
+
+After these two changes, all API tests pass (**235 passed**). This does not resume the hosted run, validate the missing hardware or cover geometry, resolve the failing axial tolerance chain, certify sampled gear flanks as exact involutes, or produce the three required STEP files. Detailed private evidence is in `D:/v1/test-results/designs/external-gear-pump-rerun-20261005`.
