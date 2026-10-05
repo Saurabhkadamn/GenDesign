@@ -8,6 +8,7 @@ class AgentState(TypedDict, total=False):
     owner_id: str
     base_revision_id: str | None
     original_request: str
+    drawing_request: dict[str, Any] | None
     clarified_request: str
     selected_ids: list[str]
     project_context: dict[str, Any]

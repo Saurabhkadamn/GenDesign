@@ -3,10 +3,12 @@ import argparse
 import asyncio
 import hashlib
 import json
-from pathlib import Path
+import re
+import subprocess
 import sys
 import traceback
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
 import httpx
 from dotenv import dotenv_values
@@ -18,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 RUNTIME = ROOT / "runtimes/python"
 SOURCES = ["uv.lock", "pyproject.toml", "forma_runtime.py", "requirements_check.py",
            "geometry_inspection.py", "control.py", "assembly_state.py", "native_assembly.py",
-           "bom.py", "runtime_identity.py"]
+           "bom.py", "drawings.py", "drawing_export.py", "runtime_identity.py"]
 JSON_HASH = "aaf127c04cb31c406e5b04a63f1ae89369fccde6d8fa7cdda1ed4f32dfc5de63"
 
 
@@ -63,18 +65,45 @@ async def main(args):
             state.update(name=args.name, status="building")
             save()
         async def command(stage, executable, arguments, *, cwd="/", env=None, limit=900):
-            if stage in state["completed"]: return
+            if stage in state["completed"]:
+                return
             print("Image stage: " + stage, flush=True)
-            result = await box.run_process(executable, arguments, cwd=cwd, env=env, sudo=True,
-                kill_after=limit, capture_output=True)
-            log = result.stdout + result.stderr
+            remote_log = "/tmp/forma-qualification-" + stage + ".log"
+            pending = state.get("pendingCommand")
+            if pending:
+                if pending["stage"] != stage or pending["sessionId"] != box.current_session_id:
+                    raise RuntimeError("Pending command does not match this build stage/session")
+                process = await box.get_process(pending["id"])
+            else:
+                # Keep output in a file: a stalled streaming observer must not
+                # hide a terminal command or cause it to be replayed on resume.
+                wrapper = (
+                    "import subprocess,sys; "
+                    "f=open(sys.argv[1],'wb'); "
+                    "r=subprocess.run(sys.argv[2:],stdout=f,stderr=subprocess.STDOUT); "
+                    "f.close(); sys.exit(r.returncode)"
+                )
+                process = await box.create_process("/usr/bin/python3",
+                    ["-c", wrapper, remote_log, executable, *arguments],
+                    cwd=cwd, env=env, sudo=True, kill_after=limit,
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                state["pendingCommand"] = {"stage": stage, "id": process.id,
+                    "sessionId": box.current_session_id}
+                save()
+            while process.returncode is None:
+                try:
+                    process = await asyncio.wait_for(box.get_process(process.id, wait=True), 45)
+                except TimeoutError:
+                    print("Image stage still being observed: " + stage, flush=True)
+            log = await box.fs.read_text(remote_log, cwd="/")
             (report_dir / (stage + ".log")).write_text(log, encoding="utf-8")
-            if result.returncode:
-                state.update(status="failed", failedStage=stage, exitCode=result.returncode)
+            if process.returncode:
+                state.update(status="failed", failedStage=stage, exitCode=process.returncode)
                 save()
                 print(log[-2500:], flush=True)
                 raise RuntimeError("Image stage failed: " + stage)
             state["completed"].append(stage)
+            state.pop("pendingCommand", None)
             save()
         try:
             # A previously qualified base can retain its build tree. Reset
@@ -118,8 +147,9 @@ async def main(args):
                 raise RuntimeError("Native release qualification requires zero skipped or failed tests")
             await command("root-ownership", "chown", ["-R", "root:root", "/opt/forma"])
             await command("attest", "/opt/forma/.venv/bin/python", ["-I", "/opt/forma/runtime_identity.py", "attest"])
-            probe = await box.run_process("/opt/forma/.venv/bin/python", ["-I", "/opt/forma/control.py", "prepare"], cwd="/", sudo=True, capture_output=True, check=True)
-            prepared = json.loads(probe.stdout)
+            await command("supervisor-prepare", "/opt/forma/.venv/bin/python",
+                ["-I", "/opt/forma/control.py", "prepare"])
+            prepared = json.loads((report_dir / "supervisor-prepare.log").read_text())
             if not prepared["ready"]: raise RuntimeError("Supervisor is not ready")
             (report_dir / "engine-identity.json").write_bytes(await box.fs.read_bytes("/opt/forma/native/engine-identity.json", cwd="/"))
             saved = await box.snapshot()
@@ -153,8 +183,13 @@ def arguments():
 if __name__ == "__main__":
     try:
         asyncio.run(main(arguments()))
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 - print only safe status codes and source locations
         print("Snapshot qualification did not complete: " + type(error).__name__, file=sys.stderr)
+        if isinstance(getattr(error, "status_code", None), int):
+            print("Sandbox response status: " + str(error.status_code), file=sys.stderr)
+        code = getattr(error, "code", None)
+        if isinstance(code, str) and re.fullmatch(r"[A-Za-z0-9_.-]{1,80}", code):
+            print("Sandbox response code: " + code, file=sys.stderr)
         for frame in traceback.extract_tb(error.__traceback__):
             print(f"  {frame.filename}:{frame.lineno} {frame.name}", file=sys.stderr)
         raise SystemExit(1)

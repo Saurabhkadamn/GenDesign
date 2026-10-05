@@ -2166,6 +2166,50 @@ def phase_route(state: AgentState) -> str:
     return state.get("phase", "final")
 
 
+async def drawing_prepare(state: AgentState) -> dict:
+    from ..services.drawings import drawing_candidate
+    run = await run_row(state)
+    snapshot = await drawing_candidate(run, state['drawing_request']['sheets'])
+    candidate_hash = digest(snapshot)
+    await run_service.save_candidate(run['id'], snapshot, candidate_hash)
+    return {'phase':'drawing_build','candidate_hash':candidate_hash,'requirements':[],
+            'candidate_summary':'Revision-linked engineering drawing drafts',
+            'model_calls':0,'started_ns':time.time_ns(),'attempts':0,'repairs':0,'build_final':True}
+
+
+async def drawing_build(state: AgentState) -> dict:
+    from ..services.drawings import build_drawing_candidate
+    run = await run_row(state)
+    snapshot = await run_service.load_candidate(state['run_id'])
+    cp = checkpoint_view(state,snapshot)
+    config = await app_settings()
+    async def generate():
+        report = await build_drawing_candidate(run,cp,config.limits)
+        return {'report':report,'checkpoint':sync_checkpoint(cp)}
+    result = await operation(run,'graph:drawing-build','drawing_build',generate)
+    report = result['report']
+    updates = result['checkpoint']
+    if report.get('ok') is False:
+        return {**updates,'phase':'final','terminal_status':'failed',
+                'final_message':'Drawing generation failed. '+report['error']['guidance']}
+    document=report.get('drawings') or {}
+    expected={sheet['id']:sheet['componentId'] for sheet in snapshot['manifest']['drawings']}
+    actual={sheet['id']:sheet['componentId'] for sheet in document.get('sheets',[])}
+    if not expected or actual!=expected or document.get('identity')!=report.get('identity'):
+        return {**updates,'phase':'final','terminal_status':'failed',
+                'final_message':'Drawing validation did not return the requested revision-bound sheets. No revision was published.'}
+    issues = [issue for sheet in document['sheets'] for issue in sheet['issues']]
+    if issues:
+        return {**updates,'phase':'final','terminal_status':'failed',
+                'final_message':'Drawing export blocked: '+'; '.join(f"{i['id']}: {i['message']}" for i in issues[:12])}
+    files={artifact['name'] for artifact in report.get('artifacts',[]) if artifact['kind']=='drawing'}
+    required={f'drawing-{identifier}.{extension}' for identifier in expected for extension in ('svg','pdf','dxf')}
+    if not required.issubset(files):
+        return {**updates,'phase':'final','terminal_status':'failed',
+                'final_message':'Drawing validation did not produce every requested SVG, PDF and DXF export. No revision was published.'}
+    return {**updates,'phase':'publish','review':{'summary':'Native views and measured dimensions generated from the accepted STEP revision. GD&T intent requires engineering review.'}}
+
+
 def build_graph(checkpointer):
     graph = StateGraph(AgentState)
     for name, node in (("coordinator", coordinator), ("coordinator_session", coordinator_session),
@@ -2173,9 +2217,13 @@ def build_graph(checkpointer):
         ("clarification", clarification), ("cad_session", cad_session),
         ("cad_question", cad_question), ("engineering_analysis", engineering_analysis),
         ("approval", approval), ("build", build), ("validate", validate),
-        ("review_session", review_session), ("publish", publish), ("final", final)):
+        ("review_session", review_session), ("publish", publish), ("final", final),
+        ("drawing_prepare",drawing_prepare),("drawing_build",drawing_build)):
         graph.add_node(name, node)
-    graph.add_edge(START, "coordinator")
+    graph.add_conditional_edges(START, lambda state: 'drawing_prepare' if state.get('drawing_request') else 'coordinator',
+                                {'drawing_prepare':'drawing_prepare','coordinator':'coordinator'})
+    graph.add_edge('drawing_prepare','drawing_build')
+    graph.add_conditional_edges('drawing_build',phase_route,{'publish':'publish','final':'final'})
     graph.add_edge("coordinator", "coordinator_session")
     graph.add_conditional_edges("coordinator_session", phase_route, {
         "coordinator_session": "coordinator_session", "coordinator_question": "coordinator_question",

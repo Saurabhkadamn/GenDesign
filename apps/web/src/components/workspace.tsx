@@ -37,6 +37,7 @@ import {
   Move3D,
   MousePointer2,
   RotateCcw,
+  FilePenLine,
 } from 'lucide-react';
 import { MessageResponse } from '@/components/ai-elements/message';
 import {
@@ -63,6 +64,10 @@ import {
 } from '@forma/core';
 import { AdminPanel } from './admin-panel';
 import { BomPanel, type BomDocument } from './bom-panel';
+import type { DrawingDocument } from './drawing-panel';
+const DrawingPanel = dynamic(() => import('./drawing-panel').then((m) => m.DrawingPanel), {
+  loading: () => <div className="viewer-loading">Opening drawings…</div>,
+});
 
 const CadViewer = dynamic(() => import('./cad-viewer').then((m) => m.CadViewer), {
   ssr: false,
@@ -140,13 +145,17 @@ export function Workspace({
   const [submitting, setSubmitting] = useState(false);
   const [loading, setLoading] = useState(false);
   const [tab, setTab] = useState<'model' | 'files'>('model');
-  const [viewerTab, setViewerTab] = useState<'preview' | 'calculations'>('preview');
+  const [viewerTab, setViewerTab] = useState<'preview' | 'calculations' | 'drawings'>('preview');
+  const [drawingFocus, setDrawingFocus] = useState(false);
+  const [drawingDirty, setDrawingDirty] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
   const [hidden, setHidden] = useState<string[]>([]);
   const [grid, setGrid] = useState(true);
   const [wireframe, setWireframe] = useState(false);
   const [fitVersion, setFitVersion] = useState(0);
-  const [sidebar, setSidebar] = useState(() => typeof window === 'undefined' || !window.matchMedia('(max-width: 900px)').matches);
+  const [sidebar, setSidebar] = useState(
+    () => typeof window === 'undefined' || !window.matchMedia('(max-width: 900px)').matches,
+  );
   const [mobilePanel, setMobilePanel] = useState<'preview' | 'chat'>('preview');
   const [projectQuery, setProjectQuery] = useState('');
   const [newName, setNewName] = useState('');
@@ -161,25 +170,40 @@ export function Workspace({
   const designReview = revision?.validation?.review as ReviewView | undefined;
   const geometryInspection = revision?.validation?.inspection as InspectionView | undefined;
   const bomEvidence = revision?.validation?.bom;
-  const billOfMaterials = bomEvidence && Array.isArray(bomEvidence.flat)
-    && Array.isArray(bomEvidence.structured) && Array.isArray(bomEvidence.issues)
-    ? bomEvidence as BomDocument : undefined;
+  const billOfMaterials =
+    bomEvidence &&
+    Array.isArray(bomEvidence.flat) &&
+    Array.isArray(bomEvidence.structured) &&
+    Array.isArray(bomEvidence.issues)
+      ? (bomEvidence as BomDocument)
+      : undefined;
+  const drawingEvidence = revision?.validation?.drawings;
+  const drawingDocument =
+    drawingEvidence && Array.isArray(drawingEvidence.sheets)
+      ? (drawingEvidence as DrawingDocument)
+      : undefined;
   const assemblyEvidence = revision?.validation?.nativeAssembly;
-  const nativeAssembly = assemblyEvidence && typeof assemblyEvidence.solvedFrames === 'number'
-    ? assemblyEvidence as NativeAssemblyView : undefined;
-  const asBuiltInspection = geometryInspection?.configurations?.find((item) => item.id === 'as_built');
+  const nativeAssembly =
+    assemblyEvidence && typeof assemblyEvidence.solvedFrames === 'number'
+      ? (assemblyEvidence as NativeAssemblyView)
+      : undefined;
+  const asBuiltInspection = geometryInspection?.configurations?.find(
+    (item) => item.id === 'as_built',
+  );
   const manifest = revision?.manifest ?? emptyManifest;
   // A waiting_input run is still the current conversation. Treating it as
   // terminal here made the composer start a brand new run instead of sending
   // the answer/approval back to the paused LangGraph thread.
-  const run = state?.runs.find((r) =>
-    r.status === 'queued' || r.status === 'running' || r.status === 'waiting_input',
+  const run = state?.runs.find(
+    (r) => r.status === 'queued' || r.status === 'running' || r.status === 'waiting_input',
   );
   const waitingInput = run?.status === 'waiting_input' ? run : null;
   const activeRunId = run?.id;
   const paused = state?.runs[0]?.status === 'paused' ? state.runs[0] : null;
   const pausedMessage = paused
-    ? state?.messages.filter((message) => message.run_id === paused.id && message.role === 'assistant').at(-1)?.content ?? ''
+    ? (state?.messages
+        .filter((message) => message.run_id === paused.id && message.role === 'assistant')
+        .at(-1)?.content ?? '')
     : '';
   const pausedRequestUncertain = /uncertain|timed out|ambiguous/i.test(pausedMessage);
   const currentArtifacts =
@@ -263,7 +287,9 @@ export function Workspace({
     let stopped = false;
     let connected = false;
     const events = new EventSource(`/api/runs/${activeRunId}/events`);
-    events.onopen = () => { connected = true; };
+    events.onopen = () => {
+      connected = true;
+    };
     events.onerror = () => {
       connected = false;
       // EventSource retries in the browser, but a terminal event can be lost
@@ -276,11 +302,21 @@ export function Workspace({
     };
     events.addEventListener('progress', (event) => {
       const row = JSON.parse((event as MessageEvent).data) as RunEvent;
-      setState((current) => current && current.project.id === id
-        ? { ...current, events: [...current.events.filter((e) => e.id !== row.id), row].sort((a, b) => a.id - b.id).slice(-100) }
-        : current);
+      setState((current) =>
+        current && current.project.id === id
+          ? {
+              ...current,
+              events: [...current.events.filter((e) => e.id !== row.id), row]
+                .sort((a, b) => a.id - b.id)
+                .slice(-100),
+            }
+          : current,
+      );
     });
-    events.addEventListener('terminal', () => { events.close(); void refresh(id); });
+    events.addEventListener('terminal', () => {
+      events.close();
+      void refresh(id);
+    });
     let timer: ReturnType<typeof setTimeout>;
     const poll = async () => {
       try {
@@ -313,7 +349,8 @@ export function Workspace({
   }, []);
 
   async function submit(message = draft) {
-    if (!configured || submitting || (run && run.status !== 'waiting_input') || !message.trim()) return;
+    if (!configured || submitting || (run && run.status !== 'waiting_input') || !message.trim())
+      return;
     setSubmitting(true);
     setError('');
     try {
@@ -400,13 +437,20 @@ export function Workspace({
 
   return (
     <TooltipProvider>
-      <main className={`workspace ${!sidebar ? 'sidebar-collapsed' : ''} mobile-${mobilePanel}`}>
+      <main
+        className={`workspace ${!sidebar ? 'sidebar-collapsed' : ''} ${viewerTab === 'drawings' && drawingFocus ? 'drawing-focused' : ''} mobile-${mobilePanel}`}
+      >
         <header className="topbar">
           <Link className="brand" href="/" aria-label="Forma home">
             <span className="forma-symbol">f</span>forma<span className="wordmark-dot">.</span>
           </Link>
           <div className="header-divider" />
-          <button className="workspace-toggle" aria-expanded={sidebar} aria-controls="workspace-sidebar" onClick={() => setSidebar((visible) => !visible)}>
+          <button
+            className="workspace-toggle"
+            aria-expanded={sidebar}
+            aria-controls="workspace-sidebar"
+            onClick={() => setSidebar((visible) => !visible)}
+          >
             <Layers3 size={16} />
             <span>{sidebar ? 'Hide workspace' : 'Show workspace'}</span>
           </button>
@@ -420,15 +464,19 @@ export function Workspace({
             Private workspace
           </span>
           <div className="topbar-spacer" />
-          <span className={`save-status ${run ? 'working' : ''}`}>
+          <span
+            className={`save-status ${run ? 'working' : ''} ${drawingDirty && !run ? 'unsaved' : ''}`}
+          >
             <span />
             {run
               ? 'Working on your design'
-              : revision
-                ? 'All changes saved'
-                : configured
-                  ? 'Ready when you are'
-                  : 'Setup required'}
+              : drawingDirty
+                ? 'Unsaved drawing edits'
+                : revision
+                  ? 'All changes saved'
+                  : configured
+                    ? 'Ready when you are'
+                    : 'Setup required'}
           </span>
           <button className="subtle-btn history-button" onClick={() => setModal('history')}>
             <History size={15} />
@@ -451,7 +499,11 @@ export function Workspace({
             {profile?.display_name.slice(0, 1).toUpperCase() ?? 'S'}
           </button>
         </header>
-        <aside className="project-sidebar" id="workspace-sidebar" aria-label="Workspace files and structure">
+        <aside
+          className="project-sidebar"
+          id="workspace-sidebar"
+          aria-label="Workspace files and structure"
+        >
           <div className="sidebar-heading">
             <span>WORKSPACE</span>
           </div>
@@ -467,7 +519,8 @@ export function Workspace({
             </button>
             <button role="tab" aria-selected={tab === 'files'} onClick={() => setTab('files')}>
               <FileBox size={14} />
-              Files<span>{currentArtifacts.filter((a) => a.name !== 'preview.glb').length || ''}</span>
+              Files
+              <span>{currentArtifacts.filter((a) => a.name !== 'preview.glb').length || ''}</span>
             </button>
           </div>
           <div className="tree-scroll">
@@ -529,9 +582,24 @@ export function Workspace({
             ) : (
               <>
                 <div className="tree-label">GENERATED FILES</div>
+                <button className="file-row" onClick={() => setViewerTab('drawings')}>
+                  <FilePenLine size={18} />
+                  <span>
+                    Engineering drawings
+                    <small>
+                      {drawingDocument?.sheets.length
+                        ? `${drawingDocument.sheets.length} revision-linked sheets`
+                        : 'Create sheets from your model'}
+                    </small>
+                  </span>
+                  <ArrowUpRight size={13} />
+                </button>
                 {billOfMaterials ? (
                   <button className="file-row" onClick={() => setModal('bom')}>
-                    <Layers3 size={18} /><span>Bill of materials<small>Parts and assembly quantities</small></span>
+                    <Layers3 size={18} />
+                    <span>
+                      Bill of materials<small>Parts and assembly quantities</small>
+                    </span>
                     <ArrowUpRight size={13} />
                   </button>
                 ) : null}
@@ -542,7 +610,10 @@ export function Workspace({
                       <FileBox size={18} />
                       <span>
                         {a.name}
-                        <small>{(a.bytes / 1024).toFixed(1)} KB · {a.name.split('.').at(-1)?.toUpperCase()}</small>
+                        <small>
+                          {(a.bytes / 1024).toFixed(1)} KB ·{' '}
+                          {a.name.split('.').at(-1)?.toUpperCase()}
+                        </small>
                       </span>
                       <ArrowDownToLine size={13} />
                     </button>
@@ -643,6 +714,16 @@ export function Workspace({
                 Calculations
                 {state?.calculations.length ? <span>{state.calculations.length}</span> : null}
               </button>
+              <button
+                className={viewerTab === 'drawings' ? 'active' : ''}
+                onClick={() => setViewerTab('drawings')}
+              >
+                <FilePenLine size={15} />
+                Drawings
+                {drawingDocument?.sheets.length ? (
+                  <span>{drawingDocument.sheets.length}</span>
+                ) : null}
+              </button>
             </div>
             <div className="toolbar-right">
               <span className="units-chip">mm</span>
@@ -652,9 +733,19 @@ export function Workspace({
                 </button>
               )}
               <IconButton
-                label="Fit model to view"
-                disabled={!preview}
-                onClick={() => setFitVersion((v) => v + 1)}
+                label={
+                  viewerTab === 'drawings'
+                    ? drawingFocus
+                      ? 'Show design conversation'
+                      : 'Focus drawing workspace'
+                    : 'Fit model to view'
+                }
+                disabled={viewerTab !== 'drawings' && !preview}
+                onClick={() =>
+                  viewerTab === 'drawings'
+                    ? setDrawingFocus((value) => !value)
+                    : setFitVersion((v) => v + 1)
+                }
               >
                 <Maximize size={15} />
               </IconButton>
@@ -770,13 +861,15 @@ export function Workspace({
                 </span>
                 <span>
                   {manifest.components.length} components <span className="footer-dot">·</span>{' '}
-                  {revision ? (revision.validation?.allRequirementsVerified
-                    ? 'CAD draft · automated checks passed'
-                    : 'CAD draft · review requirements') : 'No geometry yet'}
+                  {revision
+                    ? revision.validation?.allRequirementsVerified
+                      ? 'CAD draft · automated checks passed'
+                      : 'CAD draft · review requirements'
+                    : 'No geometry yet'}
                 </span>
               </div>
             </div>
-          ) : (
+          ) : viewerTab === 'calculations' ? (
             <div className="calculations-view">
               <div className="section-intro">
                 <span className="eyebrow">ENGINEERING NOTEBOOK</span>
@@ -851,7 +944,31 @@ export function Workspace({
                 </div>
               )}
             </div>
-          )}
+          ) : null}
+          <div
+            className={`drawing-panel-host ${viewerTab === 'drawings' ? '' : 'is-hidden'}`}
+            aria-hidden={viewerTab !== 'drawings'}
+          >
+            <DrawingPanel
+              key={revision?.id ?? 'empty'}
+              manifest={manifest}
+              document={drawingDocument}
+              revisionId={revision?.id}
+              busy={Boolean(run)}
+              artifacts={currentArtifacts}
+              onDirtyChange={setDrawingDirty}
+              onDownload={download}
+              onGenerate={async (sheets, key) => {
+                if (!project || !revision) return;
+                await post(`projects/${project.id}/drawings`, {
+                  baseRevisionId: revision.id,
+                  idempotencyKey: key,
+                  sheets,
+                });
+                await refresh(project.id);
+              }}
+            />
+          </div>
         </section>
         <section className="chat-panel" aria-label="Design conversation">
           <div className="chat-heading">
@@ -974,8 +1091,8 @@ export function Workspace({
                 <div className="run-waiting" role="status">
                   <CircleHelp size={15} />
                   <span>
-                    Forma is waiting for one design decision. Reply to the question above;
-                    if it is an engineering proposal, you can also type <strong>approve</strong>.
+                    Forma is waiting for one design decision. Reply to the question above; if it is
+                    an engineering proposal, you can also type <strong>approve</strong>.
                   </span>
                 </div>
               )}
@@ -996,33 +1113,58 @@ export function Workspace({
               ) : null}
               {revision?.validation && (
                 <div className="assembly-checks">
-                  {nativeAssembly ? <p>
-                    Assembly checks: {nativeAssembly.degreesOfFreedom} remaining degrees of freedom,
-                    {' '}{nativeAssembly.solvedFrames} checked {nativeAssembly.solvedFrames === 1 ? 'state' : 'motion samples'}.
-                    {' '}Maximum mate position error: {nativeAssembly.maxPositionResidualMm.toExponential(2)} mm.
-                    {nativeAssembly.solvedFrames > 1 ? ' Sampled motion does not establish collision-free travel or load capacity.' : ''}
-                  </p> : null}
+                  {nativeAssembly ? (
+                    <p>
+                      Assembly checks: {nativeAssembly.degreesOfFreedom} remaining degrees of
+                      freedom, {nativeAssembly.solvedFrames} checked{' '}
+                      {nativeAssembly.solvedFrames === 1 ? 'state' : 'motion samples'}. Maximum mate
+                      position error: {nativeAssembly.maxPositionResidualMm.toExponential(2)} mm.
+                      {nativeAssembly.solvedFrames > 1
+                        ? ' Sampled motion does not establish collision-free travel or load capacity.'
+                        : ''}
+                    </p>
+                  ) : null}
                 </div>
               )}
               {revision?.validation && (
                 <details className="activity requirement-checks">
-                  <summary><ShieldCheck size={14} /> Automated evidence</summary>
+                  <summary>
+                    <ShieldCheck size={14} /> Automated evidence
+                  </summary>
                   {revision.validation.requirements.map((check) => (
-                    <p key={check.id}><strong>{check.status === 'passed' ? '✓ Verified' : check.status === 'failed' ? 'Failed' : 'Unverified'}</strong> · {check.description}</p>
+                    <p key={check.id}>
+                      <strong>
+                        {check.status === 'passed'
+                          ? '✓ Verified'
+                          : check.status === 'failed'
+                            ? 'Failed'
+                            : 'Unverified'}
+                      </strong>{' '}
+                      · {check.description}
+                    </p>
                   ))}
-                  {!revision.validation.allRequirementsVerified && <p>These measurements are advisory. Review the draft before use; unsupported requirements were not checked automatically.</p>}
+                  {!revision.validation.allRequirementsVerified && (
+                    <p>
+                      These measurements are advisory. Review the draft before use; unsupported
+                      requirements were not checked automatically.
+                    </p>
+                  )}
                 </details>
               )}
               {designReview?.summary && (
                 <details className="activity design-review" open>
-                  <summary><ShieldCheck size={14} /> Independent design review</summary>
+                  <summary>
+                    <ShieldCheck size={14} /> Independent design review
+                  </summary>
                   <p className="review-summary">{designReview.summary}</p>
                   {designReview.findings?.map((finding) => (
                     <div className={`review-finding ${finding.severity}`} key={finding.id}>
                       <strong>{finding.status.replaceAll('_', ' ')}</strong>
                       <span>{finding.statement}</span>
                       <p>{finding.explanation}</p>
-                      {finding.evidence?.length ? <small>{finding.evidence.join(' · ')}</small> : null}
+                      {finding.evidence?.length ? (
+                        <small>{finding.evidence.join(' · ')}</small>
+                      ) : null}
                     </div>
                   ))}
                 </details>
@@ -1035,9 +1177,11 @@ export function Workspace({
                   </summary>
                   {asBuiltInspection.boundsMm?.length === 6 && (
                     <p>
-                      Envelope: {(asBuiltInspection.boundsMm[3] - asBuiltInspection.boundsMm[0]).toFixed(2)} ×{' '}
+                      Envelope:{' '}
+                      {(asBuiltInspection.boundsMm[3] - asBuiltInspection.boundsMm[0]).toFixed(2)} ×{' '}
                       {(asBuiltInspection.boundsMm[4] - asBuiltInspection.boundsMm[1]).toFixed(2)} ×{' '}
-                      {(asBuiltInspection.boundsMm[5] - asBuiltInspection.boundsMm[2]).toFixed(2)} mm
+                      {(asBuiltInspection.boundsMm[5] - asBuiltInspection.boundsMm[2]).toFixed(2)}{' '}
+                      mm
                     </p>
                   )}
                   {typeof asBuiltInspection.massKg === 'number' && (
@@ -1046,7 +1190,8 @@ export function Workspace({
                   {asBuiltInspection.interferences?.length ? (
                     asBuiltInspection.interferences.map((item) => (
                       <p key={item.instances.join(':')}>
-                        <strong>Overlap</strong> · {item.instances.join(' ↔ ')} · {item.volumeMm3.toFixed(2)} mm³
+                        <strong>Overlap</strong> · {item.instances.join(' ↔ ')} ·{' '}
+                        {item.volumeMm3.toFixed(2)} mm³
                         {typeof item.percentOfSmaller === 'number'
                           ? ` (${item.percentOfSmaller.toFixed(1)}% of smaller part)`
                           : ''}
@@ -1082,22 +1227,31 @@ export function Workspace({
                 </button>
               </div>
             )}
-            {paused && (
-              pausedRequestUncertain ? (
+            {paused &&
+              (pausedRequestUncertain ? (
                 <div className="resume-stack">
-                  <p className="resume-hint">The previous model request timed out. Start a fresh run so Forma does not repeat an uncertain billable request.</p>
-                  <button className="resume-btn" onClick={() => void restartPaused()} disabled={submitting}>
+                  <p className="resume-hint">
+                    The previous model request timed out. Start a fresh run so Forma does not repeat
+                    an uncertain billable request.
+                  </p>
+                  <button
+                    className="resume-btn"
+                    onClick={() => void restartPaused()}
+                    disabled={submitting}
+                  >
                     <RotateCcw size={14} />
                     Start fresh run
                   </button>
                 </div>
               ) : (
-                <button className="resume-btn" onClick={() => void runAction('continue', paused.id)}>
+                <button
+                  className="resume-btn"
+                  onClick={() => void runAction('continue', paused.id)}
+                >
                   <RotateCcw size={14} />
                   Continue saved work
                 </button>
-              )
-            )}
+              ))}
             <form
               className="composer"
               onSubmit={(e) => {
@@ -1195,7 +1349,15 @@ export function Workspace({
             }
           }}
         >
-          <DialogContent className={modal === 'settings' ? 'settings-dialog' : modal === 'bom' ? 'bom-dialog' : 'workspace-dialog'}>
+          <DialogContent
+            className={
+              modal === 'settings'
+                ? 'settings-dialog'
+                : modal === 'bom'
+                  ? 'bom-dialog'
+                  : 'workspace-dialog'
+            }
+          >
             <DialogHeader>
               <DialogTitle>
                 {

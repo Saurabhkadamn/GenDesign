@@ -176,6 +176,45 @@
         }
       }
     },
+    "/api/projects/{project_id}/drawings": {
+      "post": {
+        "summary": "Submit Drawings",
+        "operationId": "submit_drawings_api_projects__project_id__drawings_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DrawingSubmission"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/admin/models": {
       "get": {
         "summary": "Get Models",
@@ -254,7 +293,8 @@
               "glb",
               "plot",
               "bom",
-              "assembly"
+              "assembly",
+              "drawing"
             ],
             "title": "Kind",
             "type": "string"
@@ -651,6 +691,531 @@
         "title": "ConfigurationSpec",
         "type": "object"
       },
+      "DatumSpec": {
+        "additionalProperties": false,
+        "properties": {
+          "label": {
+            "pattern": "^[A-Z]{1,2}$",
+            "title": "Label",
+            "type": "string"
+          },
+          "viewId": {
+            "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$",
+            "title": "Viewid",
+            "type": "string"
+          },
+          "reference": {
+            "$ref": "#/components/schemas/DrawingReference"
+          },
+          "offset": {
+            "default": [
+              -14,
+              12
+            ],
+            "maxItems": 2,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "maximum": 60,
+                "minimum": -60,
+                "type": "number"
+              },
+              {
+                "maximum": 60,
+                "minimum": -60,
+                "type": "number"
+              }
+            ],
+            "title": "Offset",
+            "type": "array"
+          }
+        },
+        "required": [
+          "label",
+          "viewId",
+          "reference",
+          "offset"
+        ],
+        "title": "DatumSpec",
+        "type": "object"
+      },
+      "DimensionSpec": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "viewId": {
+            "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$",
+            "title": "Viewid",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "extent",
+              "diameter",
+              "radius",
+              "distance",
+              "angle"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "axis": {
+            "default": "X",
+            "enum": [
+              "X",
+              "Y",
+              "Z"
+            ],
+            "title": "Axis",
+            "type": "string"
+          },
+          "reference": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DrawingReference"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "secondReference": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DrawingReference"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "upperTolerance": {
+            "anyOf": [
+              {
+                "maximum": 100,
+                "minimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Uppertolerance"
+          },
+          "lowerTolerance": {
+            "anyOf": [
+              {
+                "maximum": 100,
+                "minimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Lowertolerance"
+          },
+          "basic": {
+            "default": false,
+            "title": "Basic",
+            "type": "boolean"
+          },
+          "offsetMm": {
+            "default": 10,
+            "maximum": 60,
+            "minimum": 5,
+            "title": "Offsetmm",
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "viewId",
+          "kind",
+          "axis",
+          "reference",
+          "secondReference",
+          "upperTolerance",
+          "lowerTolerance",
+          "basic",
+          "offsetMm"
+        ],
+        "title": "DimensionSpec",
+        "type": "object"
+      },
+      "DrawingReference": {
+        "additionalProperties": false,
+        "description": "Resolve by geometry, never a transient face/edge index.",
+        "properties": {
+          "kind": {
+            "enum": [
+              "plane",
+              "cylinder"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "origin": {
+            "maxItems": 3,
+            "minItems": 3,
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "title": "Origin",
+            "type": "array"
+          },
+          "direction": {
+            "maxItems": 3,
+            "minItems": 3,
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "title": "Direction",
+            "type": "array"
+          },
+          "toleranceMm": {
+            "default": 0.001,
+            "exclusiveMinimum": 0,
+            "maximum": 0.01,
+            "title": "Tolerancemm",
+            "type": "number"
+          }
+        },
+        "required": [
+          "kind",
+          "origin",
+          "direction",
+          "toleranceMm"
+        ],
+        "title": "DrawingReference",
+        "type": "object"
+      },
+      "DrawingSheetSpec": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "componentId": {
+            "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$",
+            "title": "Componentid",
+            "type": "string"
+          },
+          "title": {
+            "default": "Engineering drawing",
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          },
+          "paper": {
+            "default": "A3",
+            "enum": [
+              "A4",
+              "A3"
+            ],
+            "title": "Paper",
+            "type": "string"
+          },
+          "projection": {
+            "default": "third_angle",
+            "enum": [
+              "first_angle",
+              "third_angle"
+            ],
+            "title": "Projection",
+            "type": "string"
+          },
+          "standard": {
+            "default": "ISO",
+            "enum": [
+              "ASME",
+              "ISO"
+            ],
+            "title": "Standard",
+            "type": "string"
+          },
+          "scale": {
+            "anyOf": [
+              {
+                "maximum": 100,
+                "minimum": 0.001,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Scale"
+          },
+          "views": {
+            "items": {
+              "$ref": "#/components/schemas/DrawingView"
+            },
+            "maxItems": 8,
+            "minItems": 1,
+            "title": "Views",
+            "type": "array"
+          },
+          "autoDimensions": {
+            "default": true,
+            "title": "Autodimensions",
+            "type": "boolean"
+          },
+          "dimensions": {
+            "items": {
+              "$ref": "#/components/schemas/DimensionSpec"
+            },
+            "maxItems": 100,
+            "title": "Dimensions",
+            "type": "array"
+          },
+          "datums": {
+            "items": {
+              "$ref": "#/components/schemas/DatumSpec"
+            },
+            "maxItems": 20,
+            "title": "Datums",
+            "type": "array"
+          },
+          "controls": {
+            "items": {
+              "$ref": "#/components/schemas/FeatureControlFrame"
+            },
+            "maxItems": 100,
+            "title": "Controls",
+            "type": "array"
+          },
+          "notes": {
+            "items": {
+              "maxLength": 300,
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Notes",
+            "type": "array"
+          },
+          "includeBom": {
+            "default": false,
+            "title": "Includebom",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "componentId",
+          "title",
+          "paper",
+          "projection",
+          "standard",
+          "scale",
+          "views",
+          "autoDimensions",
+          "dimensions",
+          "datums",
+          "controls",
+          "notes",
+          "includeBom"
+        ],
+        "title": "DrawingSheetSpec",
+        "type": "object"
+      },
+      "DrawingSubmission": {
+        "properties": {
+          "runId": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Runid"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "runId"
+        ],
+        "title": "DrawingSubmission"
+      },
+      "DrawingView": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "front",
+              "top",
+              "right",
+              "isometric",
+              "section"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "sectionAxis": {
+            "default": "Y",
+            "enum": [
+              "X",
+              "Y",
+              "Z"
+            ],
+            "title": "Sectionaxis",
+            "type": "string"
+          },
+          "sectionOffsetMm": {
+            "default": 0,
+            "title": "Sectionoffsetmm",
+            "type": "number"
+          },
+          "hiddenLines": {
+            "default": true,
+            "title": "Hiddenlines",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "sectionAxis",
+          "sectionOffsetMm",
+          "hiddenLines"
+        ],
+        "title": "DrawingView",
+        "type": "object"
+      },
+      "FeatureControlFrame": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "viewId": {
+            "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$",
+            "title": "Viewid",
+            "type": "string"
+          },
+          "characteristic": {
+            "enum": [
+              "flatness",
+              "straightness",
+              "circularity",
+              "cylindricity",
+              "parallelism",
+              "perpendicularity",
+              "angularity",
+              "position",
+              "profile_surface",
+              "profile_line",
+              "circular_runout",
+              "total_runout"
+            ],
+            "title": "Characteristic",
+            "type": "string"
+          },
+          "reference": {
+            "$ref": "#/components/schemas/DrawingReference"
+          },
+          "toleranceMm": {
+            "exclusiveMinimum": 0,
+            "maximum": 100,
+            "title": "Tolerancemm",
+            "type": "number"
+          },
+          "datums": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 3,
+            "title": "Datums",
+            "type": "array"
+          },
+          "zone": {
+            "default": "linear",
+            "enum": [
+              "diameter",
+              "linear"
+            ],
+            "title": "Zone",
+            "type": "string"
+          },
+          "materialCondition": {
+            "default": "none",
+            "enum": [
+              "none",
+              "MMC",
+              "LMC"
+            ],
+            "title": "Materialcondition",
+            "type": "string"
+          },
+          "offset": {
+            "default": [
+              12,
+              -12
+            ],
+            "maxItems": 2,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "maximum": 60,
+                "minimum": -60,
+                "type": "number"
+              },
+              {
+                "maximum": 60,
+                "minimum": -60,
+                "type": "number"
+              }
+            ],
+            "title": "Offset",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "viewId",
+          "characteristic",
+          "reference",
+          "toleranceMm",
+          "datums",
+          "zone",
+          "materialCondition",
+          "offset"
+        ],
+        "title": "FeatureControlFrame",
+        "type": "object"
+      },
       "FeatureOperation": {
         "additionalProperties": false,
         "description": "Auditable modeling intent emitted by generated source.",
@@ -987,6 +1552,14 @@
               }
             ],
             "default": null
+          },
+          "drawings": {
+            "items": {
+              "$ref": "#/components/schemas/DrawingSheetSpec"
+            },
+            "maxItems": 50,
+            "title": "Drawings",
+            "type": "array"
           }
         },
         "required": [
@@ -999,7 +1572,8 @@
           "joints",
           "configurations",
           "featureOperations",
-          "nativeAssembly"
+          "nativeAssembly",
+          "drawings"
         ],
         "title": "Manifest",
         "type": "object"
@@ -1920,6 +2494,11 @@
           "assemblyPlacement": {
             "additionalProperties": true,
             "title": "Assemblyplacement",
+            "type": "object"
+          },
+          "drawings": {
+            "additionalProperties": true,
+            "title": "Drawings",
             "type": "object"
           }
         },

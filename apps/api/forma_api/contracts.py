@@ -6,6 +6,7 @@ from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from .drawing_contracts import DrawingSheetSpec
 
 Role = Literal["coordinator", "cad", "engineering"]
 RunStatus = Literal["queued", "running", "waiting_input", "paused", "succeeded", "failed", "cancelled"]
@@ -166,6 +167,7 @@ class Manifest(Contract):
     configurations: list[ConfigurationSpec] = Field(default_factory=list, max_length=200)
     featureOperations: list[FeatureOperation] = Field(default_factory=list, max_length=4000)
     nativeAssembly: NativeAssemblySpec | None = None
+    drawings: list[DrawingSheetSpec] = Field(default_factory=list, max_length=50)
 
 
 class Snapshot(Contract):
@@ -181,6 +183,10 @@ class Snapshot(Contract):
         if len(self.model_dump_json().encode()) > 2_000_000:
             raise ValueError("Workspace source exceeds 2 MB.")
         definitions = {c.id: c for c in self.manifest.components}
+        if len({sheet.id for sheet in self.manifest.drawings}) != len(self.manifest.drawings):
+            raise ValueError("Duplicate drawing sheet ID.")
+        if any(sheet.componentId not in definitions for sheet in self.manifest.drawings):
+            raise ValueError("Drawing sheet references an unknown component.")
         if len(definitions) != len(self.manifest.components):
             raise ValueError("Duplicate component ID.")
         visited, visiting = set(), set()
@@ -435,6 +441,7 @@ class ValidationReport(BaseModel):
     bom: dict[str, Any] = Field(default_factory=dict)
     nativeAssembly: dict[str, Any] = Field(default_factory=dict)
     assemblyPlacement: dict[str, Any] = Field(default_factory=dict)
+    drawings: dict[str, Any] = Field(default_factory=dict)
 
 
 class Revision(BaseModel):
@@ -481,7 +488,7 @@ class Artifact(BaseModel):
     revision_id: str
     component_id: str | None
     name: str
-    kind: Literal["step", "glb", "plot", "bom", "assembly"]
+    kind: Literal["step", "glb", "plot", "bom", "assembly", "drawing"]
     bytes: int
     storage_path: str
 

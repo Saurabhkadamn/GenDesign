@@ -10,7 +10,7 @@ import sys
 ENGINE_COMMIT = "4be80eef02a3486cda0d78f3ccbb308d207a9639"
 FILES = ("uv.lock", "pyproject.toml", "forma_runtime.py", "requirements_check.py",
          "geometry_inspection.py", "control.py", "assembly_state.py", "native_assembly.py",
-         "bom.py", "runtime_identity.py", "native/engine-identity.json")
+         "bom.py", "drawings.py", "drawing_export.py", "runtime_identity.py", "native/engine-identity.json")
 
 
 def sha(path):
