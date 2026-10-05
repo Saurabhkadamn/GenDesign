@@ -357,14 +357,14 @@ def test_cad_flattens_invalid_model_parent_edges_without_losing_instances():
     assert normalized["instances"][1]["parentId"] == "base"
 
 
-def test_triage_clamps_model_tolerance_to_runtime_precision_floor():
+def test_triage_preserves_requested_sub_hundredth_dimension_tolerance():
     from forma_api.graphs.design import TriageRequirement, normalize_triage_requirements
 
     result = normalize_triage_requirements([TriageRequirement(
         id="plate", kind="dimensions", dimensions=[100, 60, 6], tolerance=0.001,
         description="Plate dimensions",
     )])
-    assert result[0]["tolerance"] == 0.05
+    assert result[0]["tolerance"] == 0.001
 
 
 def test_complex_requests_keep_distinct_model_hole_patterns():

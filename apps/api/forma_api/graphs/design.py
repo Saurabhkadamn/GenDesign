@@ -115,11 +115,11 @@ def normalize_triage_requirements(items: list[TriageRequirement]) -> list[dict]:
                 r"\b(?:max(?:imum)?|at most|within|upper bound|envelope)\b|<=|≤",
                 payload["description"], re.I):
             payload["kind"] = "max_dimensions"
-        # CadQuery/OpenCascade measurements have a small numerical tolerance;
-        # a model must not turn that runtime precision into a false geometry
-        # failure by inventing a sub-0.05 mm requirement tolerance.  The
-        # measured OpenCascade envelope drift is about 0.014 mm at 200 mm.
-        payload["tolerance"] = max(float(payload.get("tolerance", 0.02)), 0.05)
+        # This is the design acceptance tolerance, not the kernel's numerical
+        # resolution. Preserve it exactly; geometry comparison code must
+        # account for kernel precision separately and must never widen a user's
+        # engineering limit here.
+        payload["tolerance"] = float(payload.get("tolerance", 0.02))
         # Keep the coordinate convention explicit for non-Z interfaces. The
         # engineering model often names a frame interface without emitting an
         # axis; a vertical frame bolt hole is normal to Y in Forma's datum.
@@ -1324,16 +1324,25 @@ async def record_review_result(state: AgentState, review: dict, snapshot: dict,
 
 
 def requested_component_labels(request: str) -> list[str]:
-    """Read an explicit numbered Components section without guessing parts.
+    """Read numbered items or quantity-marked part types from Components.
 
-    This is only a staging/publication guard, not a geometry validator. Briefs
-    without a numbered component inventory keep the existing CAD path.
+    Quantity lists such as ``Gear housing (1, cast Al), bushings (4)`` are a
+    common mechanical-design format. Extract the name immediately before each
+    quantity tuple while ignoring the comma-separated notes inside the tuple.
+    This is a staging/publication guard, not a geometry validator.
     """
     section = re.search(r"(?im)^\s*(?:#{1,6}\s*)?components(?:\s*\([^\n]*\))?\s*:?\s*$", request)
     if not section:
         return []
-    labels = []
-    for line in request[section.end():].splitlines():
+    remaining = request[section.end():]
+    following_heading = re.search(
+        r"(?im)^\s*(?:#{1,6}\s*)?(?:assembly requirements|final requirement|objective|key dimensions|3d design features|2d drawing features)\b.*$",
+        remaining,
+    )
+    if following_heading:
+        remaining = remaining[:following_heading.start()]
+    labels: list[str] = []
+    for line in remaining.splitlines():
         match = re.match(r"^\s*(\d{1,3})[.)]\s+(.+)$", line)
         if match:
             if int(match.group(1)) != len(labels) + 1:
@@ -1342,6 +1351,13 @@ def requested_component_labels(request: str) -> list[str]:
             labels.append(label.strip().strip("* ")[:120])
         elif labels and line.strip() and not line[:1].isspace():
             break
+    if labels:
+        return labels
+    quantity_item = re.compile(r"([^,()\n]+?)\s*\(\s*(\d+)\s*(?:,|\))")
+    for match in quantity_item.finditer(remaining):
+        label = match.group(1).strip().strip("* +")
+        if label:
+            labels.append(label[:120])
     return labels
 
 
