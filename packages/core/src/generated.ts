@@ -106,6 +106,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/projects/{project_id}/drawings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Submit Drawings */
+        post: operations["submit_drawings_api_projects__project_id__drawings_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/models": {
         parameters: {
             query?: never;
@@ -160,7 +177,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "step" | "glb" | "plot" | "bom" | "assembly";
+            kind: "step" | "glb" | "plot" | "bom" | "assembly" | "drawing";
             /** Bytes */
             bytes: number;
             /** Storage Path */
@@ -286,6 +303,224 @@ export interface components {
              * @default
              */
             description: string;
+        };
+        /** DatumSpec */
+        DatumSpec: {
+            /** Label */
+            label: string;
+            /** Viewid */
+            viewId: string;
+            reference: components["schemas"]["DrawingReference"];
+            /**
+             * Offset
+             * @default [
+             *       -14,
+             *       12
+             *     ]
+             */
+            offset: [
+                number,
+                number
+            ];
+        };
+        /** DimensionSpec */
+        DimensionSpec: {
+            /** Id */
+            id: string;
+            /** Viewid */
+            viewId: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "extent" | "diameter" | "radius" | "distance" | "angle";
+            /**
+             * Axis
+             * @default X
+             * @enum {string}
+             */
+            axis: "X" | "Y" | "Z";
+            /** @default null */
+            reference: components["schemas"]["DrawingReference"] | null;
+            /** @default null */
+            secondReference: components["schemas"]["DrawingReference"] | null;
+            /**
+             * Uppertolerance
+             * @default null
+             */
+            upperTolerance: number | null;
+            /**
+             * Lowertolerance
+             * @default null
+             */
+            lowerTolerance: number | null;
+            /**
+             * Basic
+             * @default false
+             */
+            basic: boolean;
+            /**
+             * Offsetmm
+             * @default 10
+             */
+            offsetMm: number;
+        };
+        /**
+         * DrawingReference
+         * @description Resolve by geometry, never a transient face/edge index.
+         */
+        DrawingReference: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "plane" | "cylinder";
+            /** Origin */
+            origin: [
+                number,
+                number,
+                number
+            ];
+            /** Direction */
+            direction: [
+                number,
+                number,
+                number
+            ];
+            /**
+             * Tolerancemm
+             * @default 0.001
+             */
+            toleranceMm: number;
+        };
+        /** DrawingSheetSpec */
+        DrawingSheetSpec: {
+            /** Id */
+            id: string;
+            /** Componentid */
+            componentId: string;
+            /**
+             * Title
+             * @default Engineering drawing
+             */
+            title: string;
+            /**
+             * Paper
+             * @default A3
+             * @enum {string}
+             */
+            paper: "A4" | "A3";
+            /**
+             * Projection
+             * @default third_angle
+             * @enum {string}
+             */
+            projection: "first_angle" | "third_angle";
+            /**
+             * Standard
+             * @default ISO
+             * @enum {string}
+             */
+            standard: "ASME" | "ISO";
+            /**
+             * Scale
+             * @default null
+             */
+            scale: number | null;
+            /** Views */
+            views: components["schemas"]["DrawingView"][];
+            /**
+             * Autodimensions
+             * @default true
+             */
+            autoDimensions: boolean;
+            /** Dimensions */
+            dimensions: components["schemas"]["DimensionSpec"][];
+            /** Datums */
+            datums: components["schemas"]["DatumSpec"][];
+            /** Controls */
+            controls: components["schemas"]["FeatureControlFrame"][];
+            /** Notes */
+            notes: string[];
+            /**
+             * Includebom
+             * @default false
+             */
+            includeBom: boolean;
+        };
+        /** DrawingSubmission */
+        DrawingSubmission: {
+            /**
+             * Runid
+             * Format: uuid
+             */
+            runId: string;
+        };
+        /** DrawingView */
+        DrawingView: {
+            /** Id */
+            id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "front" | "top" | "right" | "isometric" | "section";
+            /**
+             * Sectionaxis
+             * @default Y
+             * @enum {string}
+             */
+            sectionAxis: "X" | "Y" | "Z";
+            /**
+             * Sectionoffsetmm
+             * @default 0
+             */
+            sectionOffsetMm: number;
+            /**
+             * Hiddenlines
+             * @default true
+             */
+            hiddenLines: boolean;
+        };
+        /** FeatureControlFrame */
+        FeatureControlFrame: {
+            /** Id */
+            id: string;
+            /** Viewid */
+            viewId: string;
+            /**
+             * Characteristic
+             * @enum {string}
+             */
+            characteristic: "flatness" | "straightness" | "circularity" | "cylindricity" | "parallelism" | "perpendicularity" | "angularity" | "position" | "profile_surface" | "profile_line" | "circular_runout" | "total_runout";
+            reference: components["schemas"]["DrawingReference"];
+            /** Tolerancemm */
+            toleranceMm: number;
+            /** Datums */
+            datums: string[];
+            /**
+             * Zone
+             * @default linear
+             * @enum {string}
+             */
+            zone: "diameter" | "linear";
+            /**
+             * Materialcondition
+             * @default none
+             * @enum {string}
+             */
+            materialCondition: "none" | "MMC" | "LMC";
+            /**
+             * Offset
+             * @default [
+             *       12,
+             *       -12
+             *     ]
+             */
+            offset: [
+                number,
+                number
+            ];
         };
         /**
          * FeatureOperation
@@ -424,6 +659,8 @@ export interface components {
             featureOperations: components["schemas"]["FeatureOperation"][];
             /** @default null */
             nativeAssembly: components["schemas"]["NativeAssemblySpec"] | null;
+            /** Drawings */
+            drawings: components["schemas"]["DrawingSheetSpec"][];
         };
         /**
          * MaterialSpec
@@ -789,6 +1026,10 @@ export interface components {
             assemblyPlacement?: {
                 [key: string]: unknown;
             };
+            /** Drawings */
+            drawings?: {
+                [key: string]: unknown;
+            };
         };
         /** WorkspaceState */
         WorkspaceState: {
@@ -1044,6 +1285,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Run"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    submit_drawings_api_projects__project_id__drawings_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DrawingSubmission"];
                 };
             };
             /** @description Validation Error */

@@ -32,7 +32,7 @@ async def operation(run, key, kind, callback, *, idempotent=False):
         old and old["status"] == "failed"
         and (old.get("result") or {}).get("category") in {
             "rate_limit", "overloaded", "tool_protocol", "user_retry_authorized"}
-        and kind in {"model", "calculate"}
+        and kind in {"model", "calculate", "drawing_build"}
     )
     if old and not idempotent:
         if old["status"] == "started":
@@ -63,14 +63,14 @@ async def authorize_ambiguous_retry(run_id: str) -> None:
     Completed calls and other external operations remain immutable.
     """
     operations = await db.rest("run_operations", params={
-        "run_id": f"eq.{run_id}", "kind": "in.(model,calculate)",
+        "run_id": f"eq.{run_id}", "kind": "in.(model,calculate,drawing_build)",
         "status": "in.(started,ambiguous,failed)",
     })
     for item in operations or []:
         previous = item.get("result") if isinstance(item.get("result"), dict) else {}
         await db.update("run_operations", {"status": "failed", "result": {
             "category": "user_retry_authorized",
-            "diagnostic": "The user explicitly continued after an uncertain model or deterministic calculation operation.",
+            "diagnostic": "The user explicitly continued after an uncertain model or deterministic engineering operation.",
             "previous_category": previous.get("category"),
             "previous_diagnostic": previous.get("diagnostic"),
         }, "updated_at": repo.utcnow()}, run_id=run_id, operation_key=item["operation_key"])
@@ -278,6 +278,12 @@ async def build_candidate(run, cp, limits, key):
         raise Pause("The CAD process timed out or could not be cleaned up. Its environment was discarded. Continue to create a fresh one.")
     if receipt["exitCode"]:
         return await reject_candidate(run, cp, expected, build_error(receipt, "build"), limits)
+    return await validate_step_candidate(run, cp, snapshot, metadata, step_files, limits, key)
+
+
+async def validate_step_candidate(run, cp, snapshot, metadata, step_files, limits, key):
+    """Shared fresh STEP gate for CAD builds and source-free drawing generation."""
+    expected = identity(snapshot, cp["requirements"])
     # One fresh validator for this candidate; no Python source or builder memory crosses over.
     validator = cp["validator"]
     started = time.time_ns()
@@ -292,7 +298,7 @@ async def build_candidate(run, cp, limits, key):
         receipt = await executor().execute(validator, "validate", limits.commandTimeoutSeconds)
         if receipt.get("identity") != expected or not receipt["clean"]:
             raise ExecutionFailure("Validator identity or cleanup check failed")
-        if receipt["exitCode"]:
+        if receipt["exitCode"] or receipt.get("timedOut"):
             return await reject_candidate(run, cp, expected, build_error(receipt, "validation"), limits)
         report = json.loads(await executor().read(validator, "report.json"))
         if report.get("identity") != expected:
@@ -319,7 +325,8 @@ async def build_candidate(run, cp, limits, key):
                 "project_id": run["project_id"], "bytes": len(content)}, conflict="storage_path")
             await db.storage(f"object/cad-private/{db.object_path(storage_path)}", "POST", content=content,
                 content_type={"glb": "model/gltf-binary", "step": "application/step",
-                              "json": "application/json", "csv": "text/csv"}.get(
+                              "json": "application/json", "csv": "text/csv", "svg": "image/svg+xml",
+                              "pdf": "application/pdf", "dxf": "image/vnd.dxf"}.get(
                     artifact["name"].rsplit(".", 1)[-1], "application/octet-stream"))
             artifacts.append({**artifact, "storagePath": storage_path})
         cp["validated"] = {"identity": expected, "report": report, "artifacts": artifacts}

@@ -131,7 +131,7 @@ async def test_explicit_continue_authorizes_failed_model_http_retry_only(monkeyp
     monkeypatch.setattr(engine.db, "update", update)
     await engine.authorize_ambiguous_retry("run")
     _, kwargs = calls[0]
-    assert kwargs["params"]["kind"] == "in.(model,calculate)"
+    assert kwargs["params"]["kind"] == "in.(model,calculate,drawing_build)"
     assert kwargs["params"]["status"] == "in.(started,ambiguous,failed)"
     assert updates[0][0][1]["result"]["category"] == "user_retry_authorized"
     assert updates[0][0][1]["result"]["previous_category"] == "timeout"

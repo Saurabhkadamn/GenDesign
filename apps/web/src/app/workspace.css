@@ -2133,6 +2133,303 @@
 }
 
 /* Persistent workspace control; mobile opens a drawer below the top bar. */
+.drawing-workspace {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  background: #f1f3ed;
+  padding: 22px;
+}
+.drawing-panel-host {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+.drawing-panel-host.is-hidden {
+  display: none;
+}
+.save-status.unsaved {
+  color: #8a5a16;
+}
+.save-status.unsaved > span {
+  background: #cf8b27;
+}
+.drawing-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+.drawing-heading h2 {
+  font-size: 24px;
+  margin: 7px 0;
+  color: #263d2e;
+  letter-spacing: -0.7px;
+}
+.drawing-heading p {
+  color: #657162;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.drawing-primary {
+  display: inline-flex;
+  gap: 7px;
+  align-items: center;
+  background: #35583e;
+  color: white;
+  padding: 11px 14px;
+  border-radius: 7px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.drawing-primary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.drawing-sheetbar {
+  display: flex;
+  gap: 12px;
+  align-items: end;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+.drawing-sheetbar label,
+.drawing-inspector label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 11px;
+  color: #4b5d4f;
+}
+.drawing-sheetbar select,
+.drawing-inspector input,
+.drawing-inspector select,
+.drawing-inspector textarea {
+  background: #fffefa;
+  border: 1px solid #c0cabb;
+  padding: 8px;
+  border-radius: 5px;
+  min-width: 0;
+  font-size: 12px;
+}
+.drawing-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 240px;
+  gap: 18px;
+  align-items: start;
+}
+.drawing-preview-area {
+  border: 1px solid #c5cebf;
+  border-radius: 9px;
+  overflow: hidden;
+  background: #e3e8de;
+  min-width: 0;
+}
+.drawing-preview-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  background: #f7f8f2;
+  font-size: 11px;
+  gap: 10px;
+}
+.drawing-preview-toolbar div {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.drawing-preview-toolbar button {
+  padding: 4px;
+}
+.drawing-canvas-scroll {
+  overflow: auto;
+  padding: 18px;
+  min-height: 340px;
+  max-height: 70vh;
+}
+.drawing-paper {
+  display: block;
+  min-width: 320px;
+  box-shadow: 0 3px 14px #223b2618;
+  height: auto;
+}
+.drawing-inspector {
+  padding: 14px;
+  border: 1px solid #c7cebf;
+  border-radius: 9px;
+  background: #fffefa;
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+}
+.drawing-input-row {
+  display: flex;
+  gap: 8px;
+  align-items: end;
+}
+.drawing-input-row label {
+  flex: 1;
+  min-width: 0;
+}
+.drawing-inspector details {
+  border-top: 1px solid #dee3d6;
+  padding-top: 12px;
+}
+.drawing-inspector summary {
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+.drawing-inspector details > label,
+.drawing-inspector details > .drawing-input-row {
+  margin-bottom: 10px;
+}
+.drawing-inspector .drawing-check {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+.drawing-check input {
+  accent-color: #35583e;
+}
+.drawing-small {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 8px 10px;
+  font-size: 11px;
+  border: 1px solid #adbea6;
+  border-radius: 5px;
+  background: #eef3e6;
+  color: #38513a;
+}
+.drawing-note {
+  font-size: 11px;
+  color: #687561;
+  line-height: 1.6;
+}
+.drawing-annotation {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  padding: 8px 0;
+  border-bottom: 1px solid #edf0e8;
+  gap: 6px;
+}
+.drawing-annotation button {
+  padding: 5px;
+}
+.drawing-annotation label {
+  flex: 0 0 42px;
+  min-width: 0;
+}
+.drawing-annotation input {
+  width: 100%;
+  padding: 5px;
+}
+.workspace.drawing-focused {
+  grid-template-columns: 220px minmax(360px, 1fr);
+}
+.workspace.drawing-focused.sidebar-collapsed {
+  grid-template-columns: minmax(360px, 1fr);
+}
+.drawing-focused .chat-panel {
+  display: none;
+}
+.drawing-focused .drawing-layout {
+  grid-template-columns: minmax(0, 1fr) 260px;
+}
+.drawing-focused .drawing-inspector {
+  display: flex;
+}
+.drawing-downloads {
+  display: flex;
+  gap: 8px;
+  padding: 12px;
+}
+.drawing-downloads button {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 12px;
+  background: #fffefa;
+  border: 1px solid #bfccb5;
+  border-radius: 5px;
+  padding: 7px 12px;
+}
+.drawing-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 50px 25px;
+  color: #6d7c64;
+  text-align: center;
+  font-size: 13px;
+}
+.drawing-empty h3 {
+  color: #354e36;
+  font-size: 18px;
+}
+.drawing-error,
+.drawing-issues {
+  padding: 12px;
+  background: #fbf0dc;
+  border: 1px solid #ddc89e;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.6;
+  margin-bottom: 12px;
+}
+.drawing-issues strong {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+@media (max-width: 1300px) {
+  .drawing-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .drawing-inspector {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+  .drawing-inspector details,
+  .drawing-inspector .drawing-note {
+    grid-column: 1/-1;
+  }
+}
+@media (max-width: 650px) {
+  .drawing-workspace {
+    padding: 12px;
+  }
+  .drawing-heading {
+    align-items: start;
+    flex-direction: column;
+  }
+  .drawing-inspector {
+    display: flex;
+  }
+  .drawing-canvas-scroll {
+    padding: 8px;
+  }
+}
+@media (max-width: 900px) {
+  .workspace.drawing-focused {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .drawing-focused .drawing-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+
 .bom-dialog { width: min(960px, calc(100vw - 32px)); max-width: 960px; max-height: 85vh; overflow: auto; }
 .bom-status, .bom-note { color: #4a5944; font-size: 13px; line-height: 1.6; }
 .bom-issues { padding: 12px; margin: 12px 0; border: 1px solid #d0bf93; border-radius: 8px; background: #faf5e8; font-size: 13px; line-height: 1.5; }

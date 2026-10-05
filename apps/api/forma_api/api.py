@@ -14,6 +14,7 @@ from .config import settings
 from .contracts import AppSettings, ChatRequest, ResumeRequest, SessionView, TERMINAL, Project, WorkspaceState, Run, ModelConfigView, ModelOptions
 from .security import clear_session, encrypt_secret, encrypt_secret_set, require_profile, same_origin, set_session
 from .providers.openai_compatible import base_url as compatible_base_url
+from .drawing_contracts import DrawingRequest, DrawingSubmission
 
 router = APIRouter(prefix="/api")
 
@@ -103,6 +104,33 @@ async def project_workspace(project_id: str, request: Request, response: Respons
 @router.get("/runs/{run_id}", response_model=Run)
 async def get_run(run_id: str, request: Request, response: Response):
     return await dispatch(f"runs/{run_id}", request, response)
+
+
+@router.post("/projects/{project_id}/drawings", response_model=DrawingSubmission, status_code=202)
+async def submit_drawings(project_id: str, request: Request, response: Response):
+    response.headers['Cache-Control'] = 'private, no-store'
+    same_origin(request)
+    profile = await require_profile(request, response)
+    project_id = repo.identifier(project_id)
+    await repo.owned_project(project_id, profile['id'])
+    if os.getenv('VERCEL') == '1' and not os.getenv('SUPABASE_DATABASE_URL'):
+        raise HTTPException(503, 'Drawing job checkpoint storage is not configured.')
+    payload = DrawingRequest.model_validate(await body(request, 180000))
+    await db.one('revisions', {'id':f'eq.{payload.baseRevisionId}', 'project_id':f'eq.{project_id}'})
+    snapshot = await repo.load_snapshot(str(payload.baseRevisionId))
+    from .contracts import Snapshot
+    sheets = [sheet.model_dump() for sheet in payload.sheets]
+    snapshot['manifest']['drawings'] = sheets
+    Snapshot.model_validate(snapshot)
+    app_settings = await db.one('app_settings', {'id':'eq.true'})
+    if app_settings['settings']['emergencyStop']:
+        raise HTTPException(423, 'New work is paused by the administrator.')
+    run_id = await db.rpc('submit_drawing_run', {'p_project':project_id,'p_owner':profile['id'],
+        'p_base':str(payload.baseRevisionId),'p_key':str(payload.idempotencyKey),
+        'p_environment':settings().environment,'p_request':{'sheets':sheets}})
+    from .graphs.runner import dispatch_run
+    await dispatch_run(run_id)
+    return {'runId':run_id}
 
 
 @router.get("/admin/models", response_model=list[ModelConfigView])

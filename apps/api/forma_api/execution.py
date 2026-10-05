@@ -80,7 +80,7 @@ def validate_files(files):
 
 
 def filename(value):
-    if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*\.(step|glb|json|csv)", value):
+    if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*\.(step|glb|json|csv|svg|pdf|dxf)", value):
         raise ExecutionFailure("Invalid artifact filename")
     return value
 

@@ -44,6 +44,8 @@ async def rest(table: str, method="GET", *, params=None, body=None, prefer=None)
         code = response.json().get("message", "") if response.headers.get("content-type", "").startswith("application/json") else ""
         known = {
             "STALE_REVISION": (409, "The project changed. Refresh before sending your request."),
+            "IDEMPOTENCY_CONFLICT": (409, "This request key belongs to different work. Refresh and submit the drawing again."),
+            "INVALID_DRAWING_REQUEST": (422, "The drawing request is incomplete or exceeds its limits."),
             "RUN_NOT_PAUSED": (409, "Only paused work can be continued."),
             "RUN_NOT_ACTIVE": (409, "This run is no longer active. Resume it before publishing."),
             "LEASE_LOST": (409, "The worker lease expired. Continue to retry this run."),
@@ -140,3 +142,21 @@ async def storage(path: str, method="GET", *, content=None, content_type=None, b
 
 def object_path(path: str) -> str:
     return quote(path, safe="/")
+
+
+async def storage_bytes(path: str, maximum: int = 40 * 1024 * 1024) -> bytes:
+    """Bound binary reads from an already authorized artifact's database path."""
+    cfg = settings()
+    async with client().stream("GET", f"{cfg.supabase_url}/storage/v1/object/cad-private/{object_path(path)}",
+                               headers=headers()) as response:
+        if not response.is_success:
+            raise HTTPException(503, "The accepted CAD file could not be read.")
+        chunks, total = [], 0
+        async for chunk in response.aiter_bytes():
+            total += len(chunk)
+            if total > maximum:
+                raise HTTPException(413, "The accepted CAD file exceeds its size limit.")
+            chunks.append(chunk)
+    if not total:
+        raise HTTPException(503, "The accepted CAD file is empty.")
+    return b"".join(chunks)

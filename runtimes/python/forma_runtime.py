@@ -280,6 +280,20 @@ def validate(root: Path, output: Path) -> None:
         for name in ("bom.json", "bom-flat.csv", "bom-structured.csv"):
             report["artifacts"].append({"name": name, "kind": "bom", "componentId": None,
                                        "bytes": (output / name).stat().st_size})
+    if manifest.get("drawings"):
+        drawing_module = trusted_support("drawings")
+        drawing_export = trusted_support("drawing_export")
+        occurrence_shapes={iid:state.placed_shape(shapes[instances[iid]['definitionId']],transforms[iid])
+                           for iid in placement['validatedOccurrences'] if iid in instances}
+        if not instances and root_id in placement['validatedOccurrences']:
+            occurrence_shapes[root_id]=shapes[root_id]
+        document = drawing_module.generate_drawings(shapes, solved_manifest, report.get("identity"), report.get("bom"),
+            occurrence_shapes=occurrence_shapes,validated_occurrences=placement['validatedOccurrences'])
+        report["artifacts"].extend(drawing_export.export_drawings(document, output))
+        report["drawings"] = document
+        write_json(output / "drawings.json", document)
+        report["artifacts"].append({"name": "drawings.json", "kind": "drawing", "componentId": None,
+                                    "bytes": (output / "drawings.json").stat().st_size})
     if any(a["bytes"] > MAX_BYTES for a in report["artifacts"]):
         raise ValueError("Artifact exceeds 40 MB limit")
     write_json(output / "report.json", report)

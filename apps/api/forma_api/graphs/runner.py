@@ -37,7 +37,8 @@ async def advance_graph(run_id: str, worker: str, resume: dict | None = None) ->
             if not before.values:
                 graph_input = {"run_id": run["id"], "project_id": run["project_id"],
                     "owner_id": run["owner_id"], "base_revision_id": run["base_revision_id"],
-                    "original_request": run["message"], "selected_ids": run["selected_ids"]}
+                    "original_request": run["message"], "selected_ids": run["selected_ids"],
+                    "drawing_request": run.get("drawing_request")}
             elif resume is not None:
                 graph_input = Command(resume=resume)
             else:

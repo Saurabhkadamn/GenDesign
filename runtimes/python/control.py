@@ -135,7 +135,7 @@ def main():
     parser.add_argument("--path", default="")
     args = parser.parse_args()
     if args.action == "read":
-        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*\.(step|glb|json|csv)", args.path):
+        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*\.(step|glb|json|csv|svg|pdf|dxf)", args.path):
             raise ValueError("Invalid output filename")
         path = JOB / "output" / args.path
         info = path.lstat()
