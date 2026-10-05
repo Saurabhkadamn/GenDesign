@@ -205,12 +205,26 @@ def executor() -> Executor:
 
 def build_error(receipt, stage):
     diagnostic = receipt.get("diagnostic", "")[-6000:]
+    exit_code = receipt.get("exitCode")
+    if not diagnostic.strip():
+        diagnostic = (f"CAD worker exited with code {exit_code}; no traceback was emitted. "
+                      "The failing geometry operation has not been identified.")
     location = re.findall(r'File "(?:/job/workspace/)?([^"\n]+\.py)", line (\d+)', diagnostic)
     workspace_frames = [frame for frame in location if frame[0].startswith(("parts/", "assemblies/", "calculations/"))]
     location = workspace_frames or location
     category, guidance = "geometry", "Inspect the failing operation and repair the candidate before rebuilding."
     if receipt.get("timedOut"):
         category, guidance = "timeout", "Simplify the operation. The environment was discarded."
+    elif isinstance(exit_code, int) and exit_code < 0:
+        category, guidance = "worker_signal", (
+            f"The native CAD worker was terminated by signal {-exit_code}. Inspect its last component and "
+            "stack, isolate the failing feature, and check operands for valid geometry before booleans. "
+            "A signal alone does not establish a geometry defect or an out-of-memory cause.")
+    elif "Invalid B-rep component" in diagnostic:
+        category, guidance = "invalid_component", (
+            "The component is invalid before STEP export. Check each feature. Overlapping closed sketch "
+            "profiles must not be extruded as one nested profile; construct separate valid solid cutters "
+            "and union them before cutting the body.")
     elif "Assembly placements in manifest do not match the root STEP geometry" in diagnostic:
         category, guidance = "assembly_root_mismatch", (
             "The root STEP does not contain the parts at the manifest instance frames. "
@@ -231,6 +245,8 @@ def build_error(receipt, stage):
             "Calculation files cannot be geometry components."
         )
     error = {"stage": stage, "category": category, "location": {"file": location[-1][0], "line": int(location[-1][1])} if location else None,
-             "guidance": guidance, "diagnostic": diagnostic}
-    error["fingerprint"] = digest({"category": category, "location": error["location"], "lastLine": diagnostic.strip().splitlines()[-1:]})
+             "guidance": guidance, "diagnostic": diagnostic, "exitCode": exit_code,
+             "timedOut": bool(receipt.get("timedOut")), "clean": receipt.get("clean")}
+    error["fingerprint"] = digest({"category": category, "location": error["location"], "exitCode": exit_code,
+                                  "lastLine": diagnostic.strip().splitlines()[-1:]})
     return error

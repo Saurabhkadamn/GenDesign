@@ -1938,21 +1938,18 @@ async def validate(state: AgentState) -> dict:
     if result.get("ok") is False:
         error = result.get("error", {})
         history = bounded_history([*state.get("cad_history", []), tool_message(pending, result)])
-        # A failed build consumes one bounded repair slot in
-        # ``build_candidate``.  Previously this branch always routed back to
-        # ``cad_session`` even after the configured limit, so a model could
-        # keep issuing repair turns until the much larger model-call budget
-        # was exhausted.  Stop at the repair boundary and let the terminal
-        # node clean up the run instead of silently running an unbounded
-        # geometry loop.
+        # Bound automatic repair, but retain the draft and a resumable graph.
+        # A successfully validated milestone starts a new repair allowance.
         limits = (await app_settings()).limits
         if state.get("repairs", 0) >= limits.maxRepairs:
             guidance = error.get("guidance", "Repair the failed CAD operation.")
-            return {"phase": "final", "terminal_status": "failed", "repairs": state.get("repairs", 0),
+            return {"phase": "cad_recovery", "repairs": state.get("repairs", 0),
                 "cad_history": history,
                 "final_message": (f"The bounded CAD repair limit was reached after "
                     f"{state.get('attempts', 0)} attempts. {guidance} "
-                    "The saved design is unchanged.")}
+                    f"Diagnostic: {error.get('diagnostic', 'No traceback was emitted.')[-1800:]} "
+                    "The candidate is retained and no failed geometry was published. "
+                    "Continue to re-plan the failing component with a fresh bounded repair allowance.")}
         if result.get("repeated"):
             history = bounded_history([*history, {"role": "user", "content":
                 "The normalized build error repeated after a source change. Re-plan the affected operation instead of retrying the same construction."}])
@@ -1966,7 +1963,7 @@ async def validate(state: AgentState) -> dict:
         "inspectionAvailable": bool(result.get("inspection")),
     })])
     if intermediate:
-        return {"phase": "cad_session", "cad_history": history,
+        return {"phase": "cad_session", "cad_history": history, "repairs": 0,
             "pending_cad_call": {},
             "last_milestone_hash": state.get("candidate_hash", "")}
     requested_components = requested_component_labels(state.get("original_request", ""))
@@ -1992,6 +1989,17 @@ async def validate(state: AgentState) -> dict:
 
 async def repair(state: AgentState) -> dict:
     return await cad_session(state)
+
+
+async def cad_recovery(state: AgentState) -> dict:
+    response = interrupt({"kind": "recovery", "message": state["final_message"]})
+    if (response or {}).get("kind") not in {"continue", "answer"}:
+        raise Pause("Continue is required to restart the bounded CAD repair allowance.")
+    message = str((response or {}).get("message", "")).strip()
+    history = bounded_history([*state.get("cad_history", []), {"role": "user", "content":
+        "Continue from the retained candidate. Isolate and re-plan the failed operation before building. " + message}])
+    return {"phase": "cad_session", "repairs": 0, "cad_history": history,
+            "pending_cad_call": {}, "cad_edits_since_build": 0, "final_message": ""}
 
 
 REVIEW_TOOL_NAMES = {"read_file", "inspect_geometry"}
@@ -2216,7 +2224,7 @@ def build_graph(checkpointer):
         ("coordinator_question", coordinator_question), ("engineering_triage", engineering_triage),
         ("clarification", clarification), ("cad_session", cad_session),
         ("cad_question", cad_question), ("engineering_analysis", engineering_analysis),
-        ("approval", approval), ("build", build), ("validate", validate),
+        ("approval", approval), ("build", build), ("validate", validate), ("cad_recovery", cad_recovery),
         ("review_session", review_session), ("publish", publish), ("final", final),
         ("drawing_prepare",drawing_prepare),("drawing_build",drawing_build)):
         graph.add_node(name, node)
@@ -2247,8 +2255,9 @@ def build_graph(checkpointer):
     graph.add_conditional_edges("approval", phase_route,
         {"cad_session": "cad_session", "coordinator_session": "coordinator_session", "final": "final"})
     graph.add_edge("build", "validate")
+    graph.add_edge("cad_recovery", "cad_session")
     graph.add_conditional_edges("validate", phase_route,
-        {"cad_session": "cad_session", "review_session": "review_session", "final": "final"})
+        {"cad_session": "cad_session", "cad_recovery": "cad_recovery", "review_session": "review_session", "final": "final"})
     graph.add_conditional_edges("review_session", phase_route, {
         "review_session": "review_session", "cad_session": "cad_session",
         "publish": "publish", "final": "final",
