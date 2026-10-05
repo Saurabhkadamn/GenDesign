@@ -3,12 +3,12 @@ import argparse
 import asyncio
 import hashlib
 import json
-from pathlib import Path
 import re
 import subprocess
 import sys
 import traceback
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
 import httpx
 from dotenv import dotenv_values
@@ -183,7 +183,7 @@ def arguments():
 if __name__ == "__main__":
     try:
         asyncio.run(main(arguments()))
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 - print only safe status codes and source locations
         print("Snapshot qualification did not complete: " + type(error).__name__, file=sys.stderr)
         if isinstance(getattr(error, "status_code", None), int):
             print("Sandbox response status: " + str(error.status_code), file=sys.stderr)
