@@ -70,11 +70,14 @@ def build(root: Path, output: Path) -> None:
             visiting.add(cid)
             definition = definitions[cid]
             dependencies = {d: component(d) for d in definition["dependencies"]}
+            print(f"Forma component: {cid}; source: {definition['source']}", flush=True)
             module = module_at(root, definition["source"])
             value = module.build(dict(definition["parameters"]), dependencies)
             shape = shape_of(value)
             if shape.wrapped.IsNull():
                 raise ValueError(f"Empty component {cid}")
+            if not shape.isValid():
+                raise ValueError(f"Invalid B-rep component {cid} from {definition['source']}; validate construction features before export")
             if isinstance(value, cq.Assembly):
                 value.export(str(output / f"{cid}.step"), exportType="STEP")
             else:

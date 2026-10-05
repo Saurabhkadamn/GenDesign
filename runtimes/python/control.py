@@ -98,7 +98,7 @@ def execute(operation, timeout, calculation_path):
     actual_runtime = installed_version()
     if identity.get("runtime") != actual_runtime:
         raise RuntimeError("Installed runtime hash does not match the candidate identity")
-    command = ["/opt/forma/.venv/bin/python", "-I", "/opt/forma/forma_runtime.py", operation,
+    command = ["/opt/forma/.venv/bin/python", "-I", "-u", "-X", "faulthandler", "/opt/forma/forma_runtime.py", operation,
                "--root", str(JOB / "workspace"), "--output", str(JOB / "output")]
     if calculation_path:
         command += ["--path", calculation_path]
@@ -120,6 +120,16 @@ def execute(operation, timeout, calculation_path):
     with (JOB / "diagnostic.log").open("rb") as log:
         log.seek(max(0, os.fstat(log.fileno()).st_size - 8000))
         diagnostic = log.read(8000).decode("utf-8", errors="replace")
+    if code:
+        reason = f"CAD worker exited with code {code}."
+        if timed_out:
+            reason = f"CAD worker exceeded its {timeout}-second deadline."
+        elif code < 0:
+            try:
+                reason = f"CAD worker terminated by {signal.Signals(-code).name} ({-code})."
+            except ValueError:
+                reason = f"CAD worker terminated by signal {-code}."
+        diagnostic = reason + "\n" + (diagnostic or "No traceback was emitted by the worker.")
     receipt = {"identity": identity, "exitCode": code, "timedOut": timed_out,
                "clean": clean, "elapsedMs": (time.monotonic() - started) * 1000,
                "diagnostic": diagnostic if code else ""}

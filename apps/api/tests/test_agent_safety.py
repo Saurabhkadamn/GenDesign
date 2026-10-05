@@ -607,7 +607,7 @@ async def test_unverified_assembly_evidence_preserves_focused_review():
 
 
 @pytest.mark.asyncio
-async def test_failed_build_stops_at_configured_repair_limit(monkeypatch):
+async def test_failed_build_retains_resumable_candidate_at_repair_limit(monkeypatch):
     import forma_api.graphs.design as design
 
     class Limits:
@@ -629,9 +629,10 @@ async def test_failed_build_stops_at_configured_repair_limit(monkeypatch):
             "error": {"guidance": "Inspect the failing operation and repair the candidate before rebuilding."},
         },
     })
-    assert result["phase"] == "final"
-    assert result["terminal_status"] == "failed"
+    assert result["phase"] == "cad_recovery"
+    assert "terminal_status" not in result
     assert "bounded CAD repair limit" in result["final_message"]
+    assert "candidate is retained" in result["final_message"]
 
 
 def test_assembly_root_mismatch_has_actionable_repair_guidance():

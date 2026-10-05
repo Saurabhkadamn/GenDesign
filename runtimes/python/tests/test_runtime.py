@@ -58,6 +58,32 @@ def test_step_roundtrip_and_real_glb(tmp_path):
     assert shape.BoundingBox().xlen == pytest.approx(60)
 
 
+def test_overlapping_circle_extrusion_rejected_before_export(tmp_path):
+    source = "import cadquery as cq\ndef build(p,d):\n return cq.Workplane('XY').pushPoints([(0,0),(34,0)]).circle(19.05).extrude(26.06)\n"
+    workspace, output, _ = fixture(tmp_path, source=source)
+    with pytest.raises(ValueError, match="Invalid B-rep component plate from parts/plate.py"):
+        build(workspace, output)
+    assert not (output / "plate.step").exists()
+
+
+def test_figure_eight_union_cutter_roundtrip(tmp_path):
+    source = """import cadquery as cq
+def build(p,d):
+    left = cq.Workplane('XY').circle(19.05).extrude(26.06).translate((0,0,-3))
+    right = cq.Workplane('XY').center(34,0).circle(19.05).extrude(26.06).translate((0,0,-3))
+    cutter = left.union(right)
+    assert cutter.val().isValid()
+    return cq.Workplane('XY').box(108,68,20.06,centered=(True,True,False)).translate((17,0,0)).cut(cutter)
+"""
+    workspace, output, _ = fixture(tmp_path, source=source)
+    build(workspace, output)
+    shape = cq.importers.importStep(str(output / "plate.step")).val()
+    assert shape.isValid() and len(shape.Solids()) == 1
+    for x in (0, 34):
+        assert not shape.isInside(cq.Vector(x, 0, 10.03))
+    assert shape.BoundingBox().zlen == pytest.approx(20.06, abs=1e-6)
+
+
 def test_open_surface_is_valid_only_when_declared():
     surface = cq.Face.makePlane(40, 20)
     assert properties(surface, "surface")["faces"] == 1

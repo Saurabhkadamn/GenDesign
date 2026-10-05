@@ -106,6 +106,22 @@ async def main(args):
             state.pop("pendingCommand", None)
             save()
         try:
+            if args.runtime_only_base_version and "base-verified" not in state["completed"]:
+                # Derive a diagnostic-only image from an explicitly named qualified
+                # engine. No dependency, solver, drawing or assembly code may differ.
+                await command("verify-qualified-base", "/opt/forma/.venv/bin/python",
+                              ["-I", "/opt/forma/runtime_identity.py"])
+                base_version = json.loads((report_dir / "verify-qualified-base.log").read_text())["runtimeVersion"]
+                if base_version != args.runtime_only_base_version:
+                    raise ValueError("Qualified base runtime does not match the requested identity")
+                for name in SOURCES:
+                    if name not in {"control.py", "forma_runtime.py"}:
+                        if await box.fs.read_bytes("/opt/forma/" + name, cwd="/") != (RUNTIME / name).read_bytes():
+                            raise ValueError("Runtime-only qualification cannot change " + name)
+                before_identity = await box.fs.read_bytes("/opt/forma/native/engine-identity.json", cwd="/")
+                (report_dir / "base-engine-identity.json").write_bytes(before_identity)
+                state["completed"].append("base-verified")
+                save()
             # A previously qualified base can retain its build tree. Reset
             # only this factory's directory in the new isolated VM.
             await command("fresh-build-directory", "/usr/bin/python3", ["-c",
@@ -127,16 +143,8 @@ async def main(args):
                 await box.fs.write_bytes("/qualification/fixtures/native-fourbar.json", (ROOT / "fixtures/native-fourbar.json").read_bytes(), cwd="/")
                 state["completed"].append("upload")
                 save()
-            await command("apt-https", "/usr/bin/python3", ["-c", "from pathlib import Path; paths=list(Path('/etc/apt/sources.list.d').glob('*.sources'))+list(Path('/etc/apt/sources.list.d').glob('*.list')); paths += [Path('/etc/apt/sources.list')] if Path('/etc/apt/sources.list').is_file() else []; [p.write_text(p.read_text().replace('http://','https://')) for p in paths]"])
-            await command("apt-index-https", "apt-get", ["-o", "APT::Update::Error-Mode=any", "update"])
-            await command("build-tools", "apt-get", ["install", "-y", "--no-install-recommends", "g++", "cmake", "git", "make"], env={"DEBIAN_FRONTEND": "noninteractive"})
-            await command("python-sync", "/usr/local/bin/uv", ["sync", "--locked", "--python", "/opt/forma/.venv/bin/python"], cwd="/opt/forma", env={"UV_CACHE_DIR": "/tmp/forma-uv-cache"})
-            await command("solver-source", "git", ["clone", "/tmp/forma-build/ondsel.bundle", "/tmp/forma-build/ondsel"])
-            await command("native-configure", "cmake", ["-S", "/tmp/forma-build", "-B", "/tmp/forma-build/build", "-DCMAKE_BUILD_TYPE=Release", "-DCMAKE_INSTALL_PREFIX=/opt/forma/native", "-DFORMA_ONDSEL_SOURCE_DIR=/tmp/forma-build/ondsel", "-DFORMA_JSON_INCLUDE_DIR=/tmp/forma-build/json"])
-            await command("native-compile", "cmake", ["--build", "/tmp/forma-build/build", "--parallel", "4"], limit=1200)
-            await command("native-install", "cmake", ["--install", "/tmp/forma-build/build"])
-            await command("json-notice", "install", ["-m", "644", "/tmp/forma-build/json/LICENSE", "/opt/forma/native/notices/nlohmann-json-LICENSE"])
-            await command("solver-source-notice", "install", ["-m", "644", "/tmp/forma-build/ondsel.bundle", "/opt/forma/native/notices/OndselSolver-source.bundle"])
+            if not args.runtime_only_base_version:
+                await compile_native(args, command)
             await box.update_network_policy(sandbox.NetworkPolicy.deny_all())
             await command("runtime-tests", "/opt/forma/.venv/bin/python", ["-m", "pytest", "/qualification/runtimes/python/tests", "-q", "--tb=short", "--junitxml=/qualification/runtime-tests.xml"],
                 env={"FORMA_NATIVE_TEST_BINARY": "/opt/forma/native/forma-assembly", "OPENBLAS_NUM_THREADS": "2", "OMP_NUM_THREADS": "2"}, limit=300)
@@ -147,6 +155,11 @@ async def main(args):
                 raise RuntimeError("Native release qualification requires zero skipped or failed tests")
             await command("root-ownership", "chown", ["-R", "root:root", "/opt/forma"])
             await command("attest", "/opt/forma/.venv/bin/python", ["-I", "/opt/forma/runtime_identity.py", "attest"])
+            if args.runtime_only_base_version:
+                after_identity = await box.fs.read_bytes("/opt/forma/native/engine-identity.json", cwd="/")
+                before_identity = (report_dir / "base-engine-identity.json").read_bytes()
+                if json.loads(before_identity) != json.loads(after_identity):
+                    raise ValueError("Diagnostic-only image changed the installed engine/dependencies")
             await command("supervisor-prepare", "/opt/forma/.venv/bin/python",
                 ["-I", "/opt/forma/control.py", "prepare"])
             prepared = json.loads((report_dir / "supervisor-prepare.log").read_text())
@@ -154,7 +167,8 @@ async def main(args):
             (report_dir / "engine-identity.json").write_bytes(await box.fs.read_bytes("/opt/forma/native/engine-identity.json", cwd="/"))
             saved = await box.snapshot()
             result = {"snapshotId": saved.id, "runtimeVersion": prepared["runtimeVersion"], "sourceHash": source_hash,
-                      "qualificationTests": sum(int(s.get("tests", "0")) for s in suites)}
+                      "qualificationTests": sum(int(s.get("tests", "0")) for s in suites),
+                      "qualifiedBaseRuntime": args.runtime_only_base_version}
             (report_dir / "qualified-runtime-snapshot.json").write_text(json.dumps(result, indent=2) + "\n")
             state.update(status="qualified", **result)
             state.pop("failedStage", None)
@@ -164,8 +178,20 @@ async def main(args):
             await box.stop()
         except BaseException:
             save()
-            # Keep the named build for a confirmed resume within its bounded lifetime.
             raise
+
+
+async def compile_native(args, command):
+    await command("apt-https", "/usr/bin/python3", ["-c", "from pathlib import Path; paths=list(Path('/etc/apt/sources.list.d').glob('*.sources'))+list(Path('/etc/apt/sources.list.d').glob('*.list')); paths += [Path('/etc/apt/sources.list')] if Path('/etc/apt/sources.list').is_file() else []; [p.write_text(p.read_text().replace('http://','https://')) for p in paths]"])
+    await command("apt-index-https", "apt-get", ["-o", "APT::Update::Error-Mode=any", "update"])
+    await command("build-tools", "apt-get", ["install", "-y", "--no-install-recommends", "g++", "cmake", "git", "make"], env={"DEBIAN_FRONTEND": "noninteractive"})
+    await command("python-sync", "/usr/local/bin/uv", ["sync", "--locked", "--python", "/opt/forma/.venv/bin/python"], cwd="/opt/forma", env={"UV_CACHE_DIR": "/tmp/forma-uv-cache"})
+    await command("solver-source", "git", ["clone", "/tmp/forma-build/ondsel.bundle", "/tmp/forma-build/ondsel"])
+    await command("native-configure", "cmake", ["-S", "/tmp/forma-build", "-B", "/tmp/forma-build/build", "-DCMAKE_BUILD_TYPE=Release", "-DCMAKE_INSTALL_PREFIX=/opt/forma/native", "-DFORMA_ONDSEL_SOURCE_DIR=/tmp/forma-build/ondsel", "-DFORMA_JSON_INCLUDE_DIR=/tmp/forma-build/json"])
+    await command("native-compile", "cmake", ["--build", "/tmp/forma-build/build", "--parallel", "4"], limit=1200)
+    await command("native-install", "cmake", ["--install", "/tmp/forma-build/build"])
+    await command("json-notice", "install", ["-m", "644", "/tmp/forma-build/json/LICENSE", "/opt/forma/native/notices/nlohmann-json-LICENSE"])
+    await command("solver-source-notice", "install", ["-m", "644", "/tmp/forma-build/ondsel.bundle", "/opt/forma/native/notices/OndselSolver-source.bundle"])
 
 
 def arguments():
@@ -177,6 +203,7 @@ def arguments():
     parser.add_argument("--team-id", default="team_Nzdcjz2LikTu8cDMJVaMiX45")
     parser.add_argument("--name", default="forma-native-release-20261001")
     parser.add_argument("--resume", action="store_true")
+    parser.add_argument("--runtime-only-base-version", default="")
     return parser.parse_args()
 
 
