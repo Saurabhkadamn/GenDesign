@@ -1,0 +1,27 @@
+{
+  "name": "bhusetu-survey",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 5178",
+    "build": "tsc --noEmit && vite build && node scripts/portable.mjs",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src",
+    "preview": "vite preview --host 127.0.0.1 --port 5178"
+  },
+  "dependencies": {
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.5",
+    "typescript": "6.0.3",
+    "vite": "8.2.2",
+    "vitest": "4.1.11",
+    "eslint": "9.39.5",
+    "eslint-config-next": "16.3.3"
+  }
+}
