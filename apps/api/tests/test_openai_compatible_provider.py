@@ -25,10 +25,12 @@ class FakeClient:
     def __init__(self):
         self.url = None
         self.payload = None
+        self.follow_redirects = None
 
-    async def post(self, url, *, headers, json, timeout):
+    async def post(self, url, *, headers, json, timeout, follow_redirects=False):
         self.url = url
         self.payload = json
+        self.follow_redirects = follow_redirects
         assert headers["Authorization"].startswith("Bearer ")
         return FakeResponse()
 
@@ -68,11 +70,11 @@ class FallbackClient:
     def __init__(self):
         self.payloads = []
 
-    async def post(self, url, *, headers, json, timeout):
+    async def post(self, url, *, headers, json, timeout, follow_redirects=False):
         self.payloads.append(json)
         return FallbackResponse(503, {"error": {"message": "temporarily overloaded", "code": 503}})
 
-    def stream(self, method, url, *, headers, json, timeout):
+    def stream(self, method, url, *, headers, json, timeout, follow_redirects=False):
         self.payloads.append(json)
         return _StreamResponse([{
             "choices": [{"delta": {"role": "assistant", "content": "fallback-ready"}}],
@@ -92,10 +94,25 @@ async def test_openai_compatible_turn_uses_generic_chat_contract(monkeypatch):
     assert client.url == "https://integrate.api.nvidia.com/v1/chat/completions"
     assert client.payload["model"] == "deepseek-ai/deepseek-v4-pro-0813"
     assert client.payload["tool_choice"] == "auto"
+    assert client.follow_redirects is False
     assert "provider" not in client.payload
     assert client.payload["chat_template_kwargs"] == {"thinking": False}
     assert result["calls"] == [{"id": "call-1", "name": "connection_check", "input": {"value": "ready"}}]
     assert result["inputTokens"] == 12
+
+
+@pytest.mark.asyncio
+async def test_the_grid_provider_follows_its_openai_compatible_redirect(monkeypatch):
+    client = FakeClient()
+    monkeypatch.setattr(openai_compatible.db, "client", lambda: client)
+    result = await openai_compatible.turn({
+        "provider": "openai_compatible", "base_url": "https://api.thegrid.ai/v1",
+        "model_id": "code-max", "api_key": "secret", "stream": False,
+    }, [{"role": "user", "content": "Call the check."}], [{"type": "function", "function": {
+        "name": "connection_check", "parameters": {"type": "object"}}}], max_tokens=2048)
+
+    assert client.follow_redirects is True
+    assert result["calls"][0]["name"] == "connection_check"
 
 
 @pytest.mark.asyncio
@@ -131,7 +148,7 @@ async def test_baseten_deepseek_streams_reasoning_and_tool_calls_by_default(monk
         def __init__(self):
             self.payload = None
 
-        def stream(self, method, url, *, headers, json, timeout):
+        def stream(self, method, url, *, headers, json, timeout, follow_redirects=False):
             self.payload = json
             return _StreamResponse([
                 {"choices": [{"delta": {"role": "assistant", "reasoning_content": "checking"}}]},
@@ -170,7 +187,7 @@ async def test_streaming_provider_has_a_total_wall_clock_deadline(monkeypatch):
                 yield 'data: {"choices":[{"delta":{"content":"thinking"}}]}'
 
     class SlowStreamingClient:
-        def stream(self, method, url, *, headers, json, timeout):
+        def stream(self, method, url, *, headers, json, timeout, follow_redirects=False):
             return SlowStreamResponse([])
 
     monkeypatch.setattr(openai_compatible.db, "client", lambda: SlowStreamingClient())
@@ -286,7 +303,7 @@ class GeminiThoughtResponse:
 
 
 class GeminiThoughtClient:
-    async def post(self, url, *, headers, json, timeout):
+    async def post(self, url, *, headers, json, timeout, follow_redirects=False):
         return GeminiThoughtResponse()
 
 
@@ -295,7 +312,7 @@ class TokenLimitClient:
         self.accepted_limit = accepted_limit
         self.payloads = []
 
-    async def post(self, url, *, headers, json, timeout):
+    async def post(self, url, *, headers, json, timeout, follow_redirects=False):
         self.payloads.append(json)
         if json["max_tokens"] > self.accepted_limit:
             return FallbackResponse(400, {"error": {
