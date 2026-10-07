@@ -36,6 +36,7 @@ NEBIUS_TOKEN_FACTORY_HOSTS = {
     "api.tokenfactory.nebius.com",
 }
 GEMINI_API_HOST = "generativelanguage.googleapis.com"
+THEGRID_API_HOST = "api.thegrid.ai"
 GEMINI_DEFAULT_REQUESTS_PER_MINUTE = 4
 GEMINI_503_RETRY_DELAY_SECONDS = 1.0
 # A small margin makes the limit safe for any rolling 60 second window rather
@@ -249,6 +250,15 @@ def _tool_choice(config: dict, tools: list[dict]) -> str:
     return "auto"
 
 
+def _follow_provider_redirects(config: dict) -> bool:
+    """The Grid's documented API redirects valid requests to its serving route.
+
+    Keep the shared HTTP client redirect-averse for every other configured host;
+    only the known The Grid endpoint needs its OpenAI-compatible redirect flow.
+    """
+    return urlsplit(base_url(config)).hostname == THEGRID_API_HOST
+
+
 def _sampling(config: dict) -> tuple[float, float | None]:
     host = urlsplit(base_url(config)).hostname
     model_id = str(config.get("model_id", ""))
@@ -287,17 +297,20 @@ async def _chat(*, api_key: str, url: str, model_id: str, messages: list[dict], 
     headers = {"Authorization": f"Bearer {api_key}",
                "Accept": "text/event-stream" if stream else "application/json"}
     timeout = _request_timeout()
+    follow_redirects = _follow_provider_redirects({"base_url": url})
     # HTTPX's read timeout only limits the pause between chunks. Enforce a
     # separate wall-clock deadline so a provider that streams indefinitely
     # cannot hold the Vercel Workflow step open until the platform retries it.
     async with asyncio.timeout(_request_deadline_seconds()):
         if not stream:
             response = await db.client().post(f"{url}/chat/completions", headers=headers,
-                                              json=payload, timeout=timeout)
+                                              json=payload, timeout=timeout,
+                                              follow_redirects=follow_redirects)
             return {"status": response.status_code, "body": response.text}
         events = []
         async with db.client().stream("POST", f"{url}/chat/completions", headers=headers,
-                                      json=payload, timeout=timeout) as response:
+                                      json=payload, timeout=timeout,
+                                      follow_redirects=follow_redirects) as response:
             if not response.is_success:
                 return {"status": response.status_code,
                         "body": (await response.aread()).decode("utf-8", errors="replace")}
