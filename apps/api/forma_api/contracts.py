@@ -380,12 +380,13 @@ class Requirement(Contract):
             raise ValueError("Supported geometry checks require a positive millimetre tolerance of at most 0.1.")
         if self.kind in {"solid_count", "assembly_preservation"}:
             self.tolerance = 0  # these checks compare exact inventory/state, never a millimetre delta
-        required = {"dimensions": [self.dimensions], "max_dimensions": [self.dimensions],
-                    "center": [self.center],
-                    "solid_count": [self.count], "through_holes": [self.diameter, self.count],
-                    "corner_radius": [self.radius, self.count], "assembly_preservation": [], "unverified": []}[self.kind]
-        if any(x is None for x in required):
-            raise ValueError("Requirement is missing expected values.")
+        required = {"dimensions": ["dimensions"], "max_dimensions": ["dimensions"],
+                    "center": ["center"],
+                    "solid_count": ["count"], "through_holes": ["diameter", "count"],
+                    "corner_radius": ["radius", "count"], "assembly_preservation": [], "unverified": []}[self.kind]
+        missing = [name for name in required if getattr(self, name) is None]
+        if missing:
+            raise ValueError(f"{self.kind} requires explicit values for: {', '.join(missing)}.")
         if self.kind == "through_holes" and len(self.positions) != self.count:
             raise ValueError("Provide the XY center of every expected through-hole.")
         return self

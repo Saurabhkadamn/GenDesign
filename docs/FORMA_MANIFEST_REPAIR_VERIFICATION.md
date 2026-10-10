@@ -111,3 +111,23 @@ inspection without evidence; CAD cannot offer a build or parameter edit before
 any source exists. Existing source remains readable. This prevents the fallback
 loop observed when the coordinator requested an empty file path after rejected
 delegation. API suite including these availability regressions: **263 passed**.
+
+## Multiple tool-call feedback
+
+The hosted retest on release `3beda5a8e6ba6aba3f825682ca1acc9b400fd335`
+recovered delegation after missing hole-count feedback and saved part sources,
+then rejected an incomplete native assembly. It subsequently returned batches
+of up to 13 file-read calls. Each durable graph step executes only the first
+call; the others were removed from retained assistant history without explicit
+feedback that they had not executed. This contributed to repeated read batches.
+
+Tool results now disclose the selected call and the IDs/names of calls that
+were not executed or queued, and request one next action. This applies equally
+to reads and edits; it never executes additional mutations. Provider results
+remain immutable for replay, and omitted source/arguments are not copied into
+the disclosure. Missing requirement values also name their exact fields,
+rather than returning a generic missing-values message. No engineering value
+is inferred and no geometry validation is relaxed.
+
+Local API suite: **266 passed**. The complete generated pump still requires
+hosted geometry, export and engineering acceptance evidence.

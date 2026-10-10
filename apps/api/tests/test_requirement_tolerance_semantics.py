@@ -8,6 +8,12 @@ from forma_api.contracts import Requirement
 from forma_api.tools import parse_tool
 
 
+def test_missing_hole_count_feedback_names_the_field_without_inferring_it():
+    with pytest.raises(ValidationError, match="through_holes requires explicit values for: count"):
+        Requirement(id="bores", description="Two bores", kind="through_holes",
+                    diameter=38.1, positions=[[-17, 0], [17, 0]])
+
+
 @pytest.mark.parametrize("kind, values", [
     ("dimensions", {"dimensions": [10, 20, 30]}),
     ("max_dimensions", {"dimensions": [10, 20, 30]}),

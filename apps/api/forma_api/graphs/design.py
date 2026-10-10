@@ -562,7 +562,14 @@ async def agent_tool_turn(state: AgentState, *, model_role: str, prompt_role: st
                                  max_tokens=model_step_token_budget(config, node))
 
     result = await operation(run, f"graph:{node}:{ordinal}", "model", call)
-    call_value = result["calls"][0] if result.get("calls") else None
+    call_value = deepcopy(result["calls"][0]) if result.get("calls") else None
+    if call_value and len(result["calls"]) > 1:
+        # A durable graph step executes one action. Providers can ignore the
+        # single-action instruction; never imply the remaining calls executed.
+        call_value["deferred_calls"] = [
+            {"id": item["id"], "name": item["name"]}
+            for item in result["calls"][1:]
+        ]
     assistant = deepcopy(result["message"])
     if call_value and assistant.get("tool_calls"):
         assistant["tool_calls"] = [
@@ -585,6 +592,14 @@ async def agent_tool_turn(state: AgentState, *, model_role: str, prompt_role: st
 
 
 def tool_message(call: dict, result: dict) -> dict:
+    if call.get("deferred_calls"):
+        result = {**result, "toolExecution": {
+            "selectedCallId": call["id"],
+            "notExecuted": call["deferred_calls"],
+            "instruction": ("Only the selected call was handled in this graph step. The other calls "
+                "were not executed or queued. Use this result and choose exactly one next tool action; "
+                "do not assume the omitted file reads or edits completed."),
+        }}
     return {"role": "tool", "tool_call_id": call["id"], "content": json.dumps(result, ensure_ascii=False)}
 
 
