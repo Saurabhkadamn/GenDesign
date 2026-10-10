@@ -66,3 +66,21 @@ Local API suite after this correction: **245 passed**, including inspection-cach
 recovery/invalidation, enforcement when a provider ignores tool availability,
 unsupported scalar-dimension repair, and visible tuple arity. A new hosted pump
 run remains necessary to qualify the complete generated design.
+
+The coordinator correction was released as `ef444732e60a2d1f6cc5163827ab81b63f869e85`,
+deployment `dpl_H1VK8vvLTWqVmUwqwhNy3qsw1Wx5`. Fresh project
+`5fc2efc9-1e19-4df1-a3d5-5468c2fa15d2`, run
+`6abcd76d-adb0-44f3-9be2-7356dfcece99`, progressed from one inspection to CAD
+delegation in three calls. It failed at seven model calls because CAD repeated
+the same rejected edit. No sources, revisions or artifacts were accepted.
+The proposed manifest left rootComponentId null while enabling native motion.
+
+This exposed a diagnostic omission: a null native root was mentioned by the
+authoritative Snapshot error but absent from the related repair-item list.
+The follow-up diagnostic correction explicitly lists the null root and missing
+physical occurrences, and always retains an authoritative error not covered by
+other repair items. The repeated-action terminal message retains unresolved
+contract issues. Snapshot validation and the stalled-action limit stay intact.
+Local API suite with this correction: **247 passed**. Full generated pump
+acceptance remains unverified until a fresh hosted test produces the required
+geometry and evidence.

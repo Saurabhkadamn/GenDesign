@@ -64,3 +64,23 @@ def test_uncovered_contract_error_is_sanitized_and_still_rejected():
     assert result["issues"][0]["code"] == "contract"
     assert "Duplicate component ID" in result["message"]
     assert "PRIVATE_SOURCE_MARKER" not in json.dumps(result)
+
+
+def test_null_native_root_is_listed_alongside_motion_errors():
+    manifest = rejected_pump()
+    manifest["rootComponentId"] = None
+    manifest["instances"][1]["parentId"] = None
+    result = feedback(manifest, {"parts/housing.py": "x", "parts/cover.py": "x"})
+    assert {item["code"] for item in result["issues"]} == {
+        "native_root", "invalid_motion_joint", "motion_dof"}
+    assert result["issues"][0]["path"] == "rootComponentId"
+    assert "Leaving the root null is invalid" in result["issues"][0]["repair"]
+
+
+def test_authoritative_error_is_not_hidden_by_unrelated_known_issues():
+    manifest = rejected_pump()
+    manifest["components"].append(deepcopy(manifest["components"][0]))
+    result = feedback(manifest, {"parts/housing.py": "x", "parts/cover.py": "x"})
+    assert "unknown_root" in {item["code"] for item in result["issues"]}
+    assert any(item["code"] == "contract" and "Duplicate component ID" in item["message"]
+               for item in result["issues"])

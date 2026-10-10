@@ -1608,7 +1608,11 @@ async def cad_session(state: AgentState) -> dict:
             return {**usage, "phase": "final", "terminal_status": "failed",
                 "cad_invalid_tool_attempts": invalid_attempts, "cad_history": next_history,
                 "final_message": ("The CAD model repeated the same ineffective action three times. "
-                    "The saved design is unchanged; select a model that responds to tool feedback before retrying.")}
+                    "The saved design is unchanged. " + (
+                        "Remaining issues: " + "; ".join(item["message"] for item in
+                            state["cad_contract_repair"].get("issues", []))[:1500]
+                        if state.get("cad_contract_repair") else
+                        "Select a model that responds to tool feedback before retrying."))}
         return {**usage, "phase": "cad_session", "cad_invalid_tool_attempts": invalid_attempts,
             "cad_history": next_history}
 
