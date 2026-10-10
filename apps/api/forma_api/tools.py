@@ -204,6 +204,12 @@ def portable_schema(schema: dict) -> dict:
             prefix = result.pop("prefixItems")
             if prefix:
                 result["items"] = prefix[0]
+                # Bounds are stripped for Gemini's schema subset, but losing
+                # tuple arity entirely makes other providers emit [thickness]
+                # for a three-axis bounding box. Keep the contract explicit in
+                # the portable description without adding unsupported keywords.
+                result["description"] = (result.get("description", "") +
+                    f" Exactly {len(prefix)} numeric values in order; do not send a shorter vector.").strip()
         if result.get("type") == "array" and "items" not in result:
             result["items"] = {}
         # Gemini does not reliably generate arbitrary-key dictionaries. File

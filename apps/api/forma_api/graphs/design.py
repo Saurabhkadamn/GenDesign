@@ -678,11 +678,19 @@ async def coordinator_session(state: AgentState) -> dict:
         "build": state.get("build_result"),
         "validation": state.get("validation", {}).get("report") if state.get("validation") else None,
         "publishedRevisionId": state.get("published_revision_id"),
+        "toolRepair": state.get("coordinator_contract_repair") or None,
     }
+    context_hash = digest(project_context)
+    inspected = state.get("coordinator_inspected_context") == context_hash
+    if inspected:
+        context["projectInspection"] = (
+            "This exact project context was already inspected. Its result and current workspace "
+            "are supplied above. Choose the next action; repeating inspect_project adds no evidence.")
     allowed = {"inspect_project", "read_file", "search_files", "inspect_geometry", "finish"} \
         if state.get("published_revision_id") else COORDINATOR_SESSION_TOOL_NAMES
     tools = [item for item in model_tools("coordinator")
-             if item["function"]["name"] in allowed]
+             if item["function"]["name"] in allowed
+             and not (inspected and item["function"]["name"] == "inspect_project")]
     history = state.get("coordinator_history") or [{"role": "user", "content": state["original_request"]}]
     try:
         call, history, usage = await agent_tool_turn(
@@ -700,15 +708,36 @@ async def coordinator_session(state: AgentState) -> dict:
         return {**update, "coordinator_history": bounded_history([*history, {
             "role": "user", "content": "Choose one available tool action. Do not leave this turn without a tool call."
         }])}
+    if call["name"] not in {item["function"]["name"] for item in tools}:
+        feedback = {"ok": False, "category": "unavailable_tool",
+            "message": "This tool is not available for the current project state.",
+            "availableTools": [item["function"]["name"] for item in tools],
+            "repairGuidance": context.get("projectInspection", "Choose one currently available tool.")}
+        return {**update, "coordinator_contract_repair": feedback,
+                "coordinator_history": bounded_history([*history, tool_message(call, feedback)])}
     try:
         value = parse_tool("coordinator", call["name"], call["input"]).model_dump()
     except (ValidationError, ValueError) as exc:
-        return {**update, "coordinator_history": bounded_history([*history, tool_message(call, {
-            "ok": False, "category": "tool_contract", "message": str(exc)[:3000],
-        })])}
+        errors = (exc.errors(include_url=False, include_input=False, include_context=False)
+                  if isinstance(exc, ValidationError) else [{"loc": (), "msg": str(exc)}])
+        feedback = {"ok": False, "category": "tool_contract", "tool": call["name"],
+            "issues": [{"path": ".".join(map(str, error["loc"])), "message": error["msg"]}
+                       for error in errors[:40]],
+            "repairGuidance": (
+                "dimensions/max_dimensions/center require exactly three values [X,Y,Z] for a "
+                "bounding box or its centre. They do not measure pitch/root diameter, shaft spacing, "
+                "clearance or a single thickness. Never pad missing axes with invented values. "
+                "Keep unsupported checks as kind=unverified with their complete requirement description. "
+                "Correct the delegated task and requirements together."
+                if call["name"] == "delegate" else "Correct the listed fields using the current tool schema.")}
+        await repo.event(state["run_id"], "Coordinator tool rejected: " + "; ".join(
+            item["path"] for item in feedback["issues"]), kind="validation", stage="coordination")
+        return {**update, "coordinator_contract_repair": feedback,
+            "coordinator_history": bounded_history([*history, tool_message(call, feedback)])}
     name = call["name"]
     if name == "inspect_project":
         result = project_context
+        update["coordinator_inspected_context"] = context_hash
     elif name == "read_file":
         content = snapshot["files"].get(value["path"])
         result = {"ok": content is not None, "path": value["path"],
@@ -725,10 +754,12 @@ async def coordinator_session(state: AgentState) -> dict:
         return {**update, "phase": "coordinator_question", "question": value["question"],
             "coordinator_pending_call": call}
     elif name == "delegate":
+        update["coordinator_contract_repair"] = {}
         requirements = merge_requirements(state.get("clarified_request") or state["original_request"], value.get("requirements") or [])
         if value["role"] == "engineering":
             await repo.event(state["run_id"], "Coordinator requested engineering analysis.", stage="engineering")
             return {**update, "phase": "engineering_analysis", "engineering_request": value["task"],
+                "coordinator_actions": 0,
                 "engineering_from_coordinator": True, "coordinator_pending_call": call,
                 "requirements": requirements}
         task = value["task"]
@@ -742,6 +773,7 @@ async def coordinator_session(state: AgentState) -> dict:
         }
         await repo.event(state["run_id"], "Coordinator delegated a project-aware CAD edit.", stage="cad")
         return {**update, "phase": "cad_session", "coordinator_task": task,
+            "coordinator_actions": 0,
             "requirements": requirements, "coordinator_pending_call": call,
             "cad_history": [{"role": "user", "content": json.dumps(history_request, ensure_ascii=False)}]}
     elif name == "restore_revision":
