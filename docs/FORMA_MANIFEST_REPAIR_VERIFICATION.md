@@ -84,3 +84,30 @@ contract issues. Snapshot validation and the stalled-action limit stay intact.
 Local API suite with this correction: **247 passed**. Full generated pump
 acceptance remains unverified until a fresh hosted test produces the required
 geometry and evidence.
+
+## Requirement tolerance semantics
+
+The next fresh test reached delegation with exact solid_count and unsupported
+DFM notes, but their unused tolerance fields (2 pieces, 1 degree, 2 mm fillets,
+4 mm wall) were rejected by the shared 0.1 mm maximum. That limit belongs to
+supported measured geometry checks. It is not meaningful for exact integer
+inventory or requirements that the runtime explicitly cannot verify.
+
+Requirement validation now applies the existing positive, at-most-0.1-mm limit
+to dimensions, maximum dimensions, centres, through holes and corner radii.
+Exact count/state requirements canonicalize tolerance to zero; their comparisons
+remain exact. Nonnegative finite tolerance metadata on unverified notes cannot
+turn them into measured or passing requirements. No runtime/kernel changes or
+new image are involved.
+
+Local API suite: **261 passed**. A regression replays the rejected delegation
+and runs the actual trusted requirement checker: 26 solids still fail an exact
+27 count despite the model's supplied tolerance=2, and draft/fillet/wall notes
+remain unverified. Tests retain the original bounds for every measured check
+and reject negative/infinite/NaN metadata.
+
+Empty private workspaces also no longer offer file reads/searches or geometry
+inspection without evidence; CAD cannot offer a build or parameter edit before
+any source exists. Existing source remains readable. This prevents the fallback
+loop observed when the coordinator requested an empty file path after rejected
+delegation. API suite including these availability regressions: **263 passed**.

@@ -688,6 +688,10 @@ async def coordinator_session(state: AgentState) -> dict:
             "are supplied above. Choose the next action; repeating inspect_project adds no evidence.")
     allowed = {"inspect_project", "read_file", "search_files", "inspect_geometry", "finish"} \
         if state.get("published_revision_id") else COORDINATOR_SESSION_TOOL_NAMES
+    if not snapshot["files"]:
+        allowed = allowed - {"read_file", "search_files"}
+    if not state.get("validation") and not project_context.get("revision"):
+        allowed = allowed - {"inspect_geometry"}
     tools = [item for item in model_tools("coordinator")
              if item["function"]["name"] in allowed
              and not (inspected and item["function"]["name"] == "inspect_project")]
@@ -1541,6 +1545,9 @@ async def cad_session(state: AgentState) -> dict:
         # it, and another build cannot fix an edit that was never staged.
         tools = [item for item in model_tools("cad")
                  if item["function"]["name"] in {"apply_changes", "read_file", "search_files"}]
+    if not snapshot["files"]:
+        tools = [item for item in tools if item["function"]["name"] not in {
+            "read_file", "search_files", "inspect_geometry", "build", "update_parameters"}]
     call, history, usage = await agent_tool_turn(
         state, model_role="cad", prompt_role="cad", node="cad-session",
         context=context, history=history, tools=tools,
