@@ -131,3 +131,15 @@ is inferred and no geometry validation is relaxed.
 
 Local API suite: **266 passed**. The complete generated pump still requires
 hosted geometry, export and engineering acceptance evidence.
+
+## Continue retained work
+
+An omitted through-hole count is now canonicalized from the explicitly supplied,
+validated centre list. An explicit conflicting count remains invalid. No hole
+position, diameter or solid inventory is inferred from prose or geometry.
+
+An explicit Continue for a coordinator action-limit pause now renews only its
+local action allowance. Exception-based pauses resume their pending graph node
+normally; real LangGraph interrupts still receive Command(resume=...). The
+overall model-call budget, candidate identity and retained repair feedback stay
+intact. Tests resume real MemorySaver checkpoints for both paths.

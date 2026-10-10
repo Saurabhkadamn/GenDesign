@@ -363,7 +363,10 @@ class Requirement(Contract):
     axis: Literal["X", "Y", "Z"] = "Z"
     dimensions: Vector | None = None
     center: Vector | None = None
-    count: int | None = Field(default=None, ge=0, le=1000)
+    count: int | None = Field(default=None, ge=0, le=1000, description=(
+        "Required for solid_count and corner_radius. For through_holes, omission uses "
+        "the number of explicitly supplied positions; an explicit count must match them."
+    ))
     diameter: float | None = Field(default=None, gt=0)
     radius: float | None = Field(default=None, gt=0)
     positions: list[tuple[float, float]] = Field(default_factory=list, max_length=1000)
@@ -375,6 +378,11 @@ class Requirement(Contract):
 
     @model_validator(mode="after")
     def values_for_kind(self):
+        if self.kind == "through_holes" and self.count is None and self.positions:
+            # The supplied centre list already explicitly specifies the hole
+            # inventory. Canonicalize that redundant value; never infer positions
+            # or a solid count from the description or from generated geometry.
+            self.count = len(self.positions)
         if self.kind in {"dimensions", "max_dimensions", "center", "through_holes", "corner_radius"} \
                 and not 0 < self.tolerance <= 0.1:
             raise ValueError("Supported geometry checks require a positive millimetre tolerance of at most 0.1.")
