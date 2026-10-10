@@ -37,13 +37,17 @@ def workspace_contract_feedback(manifest: dict, files: dict, error: Exception) -
                 "Stage the component and its source before adding an occurrence.")
     native = manifest.get("nativeAssembly")
     if native:
-        if root in definitions and definitions[root]["kind"] != "assembly":
+        if not root or (root in definitions and definitions[root]["kind"] != "assembly"):
             add("native_root", "rootComponentId", "Native solving needs an assembly root.",
-                "Supply an assembly component, source and dependencies for the staged parts.")
+                "Set rootComponentId to a kind=assembly definition and supply its executable "
+                "assemblies/ source and dependencies in the same edit. Leaving the root null is invalid.")
         parents = {item.get("parentId") for item in instances.values() if item.get("parentId")}
         physical = {iid for iid, item in instances.items()
                     if iid not in parents and item["definitionId"] in definitions
                     and definitions[item["definitionId"]]["kind"] != "surface"}
+        if not physical:
+            add("native_occurrences", "instances", "Native solving needs physical occurrences.",
+                "Create identifiable physical leaf instances for the staged parts before enabling native solving.")
         for iid in native.get("groundedInstances", []):
             if iid not in physical:
                 add("invalid_ground", f"nativeAssembly.groundedInstances.{iid}",
@@ -71,8 +75,22 @@ def workspace_contract_feedback(manifest: dict, files: dict, error: Exception) -
     errors = (error.errors(include_input=False, include_url=False, include_context=False)
               if isinstance(error, ValidationError) else [{"loc": (), "msg": str(error)}])
     messages = [item["msg"] for item in errors]
-    if not issues:
-        for item in errors[:20]:
+    coverage = {
+        "Unknown root component.": {"unknown_root"},
+        "Missing source:": {"missing_source"},
+        "Unknown component dependency.": {"unknown_dependency"},
+        "Unknown instance definition.": {"unknown_definition"},
+        "Native solving requires an assembly root and physical occurrences.": {
+            "native_root", "unknown_root", "native_occurrences"},
+        "Grounding must name physical leaf occurrences.": {"invalid_ground"},
+        "Motion requires one qualified revolute or slider joint.": {"invalid_motion_joint"},
+        "A single-driver mechanism must declare one allowed DOF.": {"motion_dof"},
+    }
+    codes = {item["code"] for item in issues}
+    for item in errors[:20]:
+        covered = any(text in item["msg"] and codes.intersection(expected)
+                      for text, expected in coverage.items())
+        if not covered:
             add("contract", ".".join(map(str, item["loc"])) or "workspace",
                 item["msg"][:500], "Correct this field using the current workspace and tool schema.")
     return {"ok": False, "category": "workspace_contract",
