@@ -40,6 +40,7 @@ class AgentState(TypedDict, total=False):
     cad_history: list[dict[str, Any]]
     cad_edits_since_build: int
     cad_invalid_tool_attempts: int
+    cad_contract_repair: dict[str, Any]
     review_history: list[dict[str, Any]]
     review_reads: int
     review_inspected: bool
