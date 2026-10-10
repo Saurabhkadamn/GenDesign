@@ -40,7 +40,19 @@ async def advance_graph(run_id: str, worker: str, resume: dict | None = None) ->
                     "original_request": run["message"], "selected_ids": run["selected_ids"],
                     "drawing_request": run.get("drawing_request")}
             elif resume is not None:
-                graph_input = Command(resume=resume)
+                interrupted = any(getattr(task, "interrupts", ()) for task in before.tasks)
+                if interrupted:
+                    graph_input = Command(resume=resume)
+                else:
+                    # Pause exceptions leave a pending node, not a LangGraph
+                    # interrupt. Continue that node normally. Renew only the
+                    # coordinator's local action allowance on explicit Continue;
+                    # keep the total model budget and saved repair evidence.
+                    if resume.get("kind") == "continue" and \
+                            before.values.get("phase") == "coordinator_session" and \
+                            before.values.get("coordinator_actions", 0) >= 12:
+                        await graph.aupdate_state(config, {"coordinator_actions": 0})
+                    graph_input = None
             else:
                 graph_input = None
             try:
