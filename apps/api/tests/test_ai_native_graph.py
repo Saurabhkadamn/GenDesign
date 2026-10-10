@@ -23,6 +23,42 @@ def state(**updates):
     return value
 
 
+@pytest.mark.asyncio
+async def test_multiple_provider_calls_disclose_unexecuted_actions(monkeypatch, graph_mocks):
+    calls = [
+        {"id": "read-first", "name": "read_file", "input": {"path": "parts/first.py"}},
+        {"id": "read-second", "name": "read_file", "input": {"path": "parts/second.py"}},
+        {"id": "edit-third", "name": "apply_changes", "input": {"files": {"parts/third.py": "secret source"}}},
+    ]
+
+    async def turn(*_args, **_kwargs):
+        return {"message": {"role": "assistant", "content": "", "tool_calls": [
+            {"id": c["id"], "type": "function", "function": {
+                "name": c["name"], "arguments": json.dumps(c["input"])}} for c in calls]},
+            "calls": calls, "inputTokens": 10, "outputTokens": 20, "webSearchRequests": 0}
+
+    monkeypatch.setattr(design.models, "turn", turn)
+    call, history, usage = await design.agent_tool_turn(state(), model_role="cad", prompt_role="cad",
+        node="cad-session", context={}, history=[], tools=[])
+    assert call["id"] == "read-first"
+    assert [c["id"] for c in history[-1]["tool_calls"]] == ["read-first"]
+    feedback = design.tool_message(call, {"ok": True, "content": "first source"})
+    execution = json.loads(feedback["content"])["toolExecution"]
+    assert execution["notExecuted"] == [
+        {"id": "read-second", "name": "read_file"}, {"id": "edit-third", "name": "apply_changes"}]
+    assert "not executed or queued" in execution["instruction"]
+    assert "secret source" not in feedback["content"]
+    assert "deferred_calls" not in calls[0]  # cached provider result remains immutable
+    assert usage["model_calls"] == 1
+    assert "candidate" not in graph_mocks  # no additional edit happened
+
+
+def test_single_tool_feedback_keeps_original_protocol():
+    result = {"ok": True, "content": "source"}
+    message = design.tool_message({"id": "one", "name": "read_file"}, result)
+    assert json.loads(message["content"]) == result
+
+
 @pytest.fixture
 def graph_mocks(monkeypatch):
     saved = {}
