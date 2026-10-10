@@ -367,10 +367,19 @@ class Requirement(Contract):
     diameter: float | None = Field(default=None, gt=0)
     radius: float | None = Field(default=None, gt=0)
     positions: list[tuple[float, float]] = Field(default_factory=list, max_length=1000)
-    tolerance: float = Field(default=0.02, gt=0, le=0.1)
+    tolerance: float = Field(default=0.02, ge=0, description=(
+        "Millimetres for supported geometry checks: greater than zero and at most 0.1. "
+        "Ignored for exact solid_count, assembly_preservation and unverified notes; "
+        "it cannot loosen an exact count or verify an unsupported requirement."
+    ))
 
     @model_validator(mode="after")
     def values_for_kind(self):
+        if self.kind in {"dimensions", "max_dimensions", "center", "through_holes", "corner_radius"} \
+                and not 0 < self.tolerance <= 0.1:
+            raise ValueError("Supported geometry checks require a positive millimetre tolerance of at most 0.1.")
+        if self.kind in {"solid_count", "assembly_preservation"}:
+            self.tolerance = 0  # these checks compare exact inventory/state, never a millimetre delta
         required = {"dimensions": [self.dimensions], "max_dimensions": [self.dimensions],
                     "center": [self.center],
                     "solid_count": [self.count], "through_holes": [self.diameter, self.count],
