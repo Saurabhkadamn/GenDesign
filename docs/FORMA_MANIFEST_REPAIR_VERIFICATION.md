@@ -105,3 +105,9 @@ and runs the actual trusted requirement checker: 26 solids still fail an exact
 27 count despite the model's supplied tolerance=2, and draft/fillet/wall notes
 remain unverified. Tests retain the original bounds for every measured check
 and reject negative/infinite/NaN metadata.
+
+Empty private workspaces also no longer offer file reads/searches or geometry
+inspection without evidence; CAD cannot offer a build or parameter edit before
+any source exists. Existing source remains readable. This prevents the fallback
+loop observed when the coordinator requested an empty file path after rejected
+delegation. API suite including these availability regressions: **263 passed**.

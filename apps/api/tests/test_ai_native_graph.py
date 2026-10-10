@@ -852,7 +852,7 @@ Assembly Requirements:
     result = await design.cad_session(state(original_request=request,
         cad_history=[{"role": "user", "content": request}]))
     assert "apply_changes" in seen["tools"]
-    assert "read_file" in seen["tools"]
+    assert "read_file" not in seen["tools"]  # the first part has not been staged yet
     assert seen["context"]["componentMilestone"]["requestedTypes"] == ["Base plate", "Guide rail"]
     assert seen["context"]["request"] == request
     assert result["phase"] == "cad_session"
@@ -1221,6 +1221,22 @@ async def test_coordinator_repairs_single_dimension_without_inventing_axes(monke
     requirement = next(r for r in fixed["requirements"] if r["id"] == "spacing")
     assert requirement["kind"] == "unverified"
     assert requirement["dimensions"] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("session", ["coordinator", "cad"])
+async def test_empty_workspace_does_not_offer_reads_of_nonexistent_files(monkeypatch, graph_mocks, session):
+    observed = []
+
+    async def turn(_config, _messages, tools, **_kwargs):
+        observed.extend(t["function"]["name"] for t in tools)
+        return {"message": {"role": "assistant", "content": ""}, "calls": [],
+                "inputTokens": 10, "outputTokens": 20, "webSearchRequests": 0}
+
+    monkeypatch.setattr(design.models, "turn", turn)
+    await (design.coordinator_session(state()) if session == "coordinator" else design.cad_session(state()))
+    assert not {"read_file", "search_files", "inspect_geometry"}.intersection(observed)
+    assert ("delegate" if session == "coordinator" else "apply_changes") in observed
 
 
 @pytest.mark.asyncio
