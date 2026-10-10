@@ -1052,6 +1052,114 @@ async def test_cad_session_stops_repeated_malformed_tool_arguments(monkeypatch, 
 
 
 @pytest.mark.asyncio
+async def test_manifest_repair_survives_history_loss_and_accepts_atomic_fix(monkeypatch, graph_mocks):
+    original = design.Snapshot.model_validate({"manifest": {"components": [
+        {"id": "housing", "name": "Housing", "kind": "solid", "source": "parts/housing.py"}],
+        "rootComponentId": "housing"},
+        "files": {"parts/housing.py": "def build(parameters, dependencies):\n    return None"}}).model_dump()
+    graph_mocks["candidate"] = deepcopy(original)
+    manifest = deepcopy(original["manifest"])
+    manifest["rootComponentId"] = "pump"
+    arguments = {"manifest": manifest, "files": {}}
+    contexts = []
+    events = []
+
+    async def event(_run, message, **kwargs):
+        events.append((message, kwargs))
+
+    async def turn(_config, messages, tools, **_kwargs):
+        contexts.append((json.loads(messages[1]["content"].split(": ", 1)[1]), tools))
+        return {"message": {"role": "assistant", "content": "", "tool_calls": [{
+            "id": "repair", "type": "function", "function": {
+                "name": "apply_changes", "arguments": json.dumps(arguments)}}]},
+            "calls": [{"id": "repair", "name": "apply_changes", "input": deepcopy(arguments)}],
+            "inputTokens": 10, "outputTokens": 20, "webSearchRequests": 0}
+
+    monkeypatch.setattr(design.models, "turn", turn)
+    monkeypatch.setattr(design.repo, "event", event)
+    current = state()
+    first = await design.cad_session(current)
+    assert graph_mocks["candidate"] == original
+    assert first["cad_contract_repair"]["issues"][0]["code"] == "unknown_root"
+    # Simulate rolling history compaction/checkpoint recovery. Dedicated repair
+    # state still carries the exact blockers to the next model call.
+    current.update(first)
+    current["cad_history"] = []
+    second = await design.cad_session(current)
+    assert second["cad_contract_repair"]["stalledAttempts"] == 2
+    assert contexts[-1][0]["workspaceRepair"]["issues"]
+    assert {tool["function"]["name"] for tool in contexts[-1][1]} == {
+        "apply_changes", "read_file", "search_files"}
+    manifest["components"].append({"id": "pump", "name": "Pump", "kind": "assembly",
+                                   "source": "assemblies/pump.py", "dependencies": ["housing"]})
+    current.update(second)
+    current["cad_history"] = []
+    third = await design.cad_session(current)
+    assert third["phase"] == "cad_session"
+    assert third["cad_contract_repair"]["stalledAttempts"] == 1
+    assert third["cad_contract_repair"]["issues"][0]["code"] == "missing_source"
+    assert graph_mocks["candidate"] == original
+    arguments["files"] = {"assemblies/pump.py": "def build(parameters, dependencies):\n    return None"}
+    current.update(third)
+    fixed = await design.cad_session(current)
+    assert fixed["cad_contract_repair"] == {}
+    assert fixed["cad_invalid_tool_attempts"] == 0
+    assert graph_mocks["candidate"]["manifest"]["rootComponentId"] == "pump"
+    assert fixed["validation"] == {}  # staging a contract is not geometry validation
+    assert any("unknown_root at rootComponentId" in message for message, _ in events)
+    assert all("return None" not in message for message, _ in events)
+
+
+@pytest.mark.asyncio
+async def test_stalled_manifest_repair_preserves_candidate_and_reports_blocker(monkeypatch, graph_mocks):
+    arguments = {"files": {}, "manifest": {"rootComponentId": "missing"}}
+
+    async def turn(*_args, **_kwargs):
+        return {"message": {"role": "assistant", "content": "", "tool_calls": [{
+            "id": "invalid", "type": "function", "function": {
+                "name": "apply_changes", "arguments": json.dumps(arguments)}}]},
+            "calls": [{"id": "invalid", "name": "apply_changes", "input": arguments}],
+            "inputTokens": 10, "outputTokens": 20, "webSearchRequests": 0}
+
+    monkeypatch.setattr(design.models, "turn", turn)
+    current = state()
+    for _ in range(3):
+        result = await design.cad_session(current)
+        current.update(result)
+        current["cad_history"] = []
+    assert result["phase"] == "final"
+    assert result["terminal_status"] == "failed"
+    assert "missing has no component definition" in result["final_message"]
+    assert "candidate" not in graph_mocks
+
+
+@pytest.mark.asyncio
+async def test_pending_contract_repair_cannot_be_bypassed_by_build(monkeypatch, graph_mocks):
+    graph_mocks["candidate"] = design.Snapshot.model_validate({"manifest": {"components": [
+        {"id": "base", "name": "Base", "kind": "solid", "source": "parts/base.py"}],
+        "rootComponentId": "base"},
+        "files": {"parts/base.py": "def build(parameters, dependencies):\n    return None"}}).model_dump()
+
+    async def turn(*_args, **_kwargs):
+        return {"message": {"role": "assistant", "content": "", "tool_calls": [{
+            "id": "ignored-repair", "type": "function", "function": {
+                "name": "build", "arguments": "{}"}}]},
+            "calls": [{"id": "ignored-repair", "name": "build", "input": {}}],
+            "inputTokens": 10, "outputTokens": 20, "webSearchRequests": 0}
+
+    async def unexpected_build(*_args, **_kwargs):
+        pytest.fail("Rejected edits must be repaired before any automatic or provider-selected build")
+
+    monkeypatch.setattr(design.models, "turn", turn)
+    monkeypatch.setattr(design, "build", unexpected_build)
+    result = await design.cad_session(state(cad_edits_since_build=3,
+        cad_contract_repair={"issues": [{"code": "unknown_root", "path": "rootComponentId"}],
+                             "stalledAttempts": 1}))
+    assert result["phase"] == "cad_session"
+    assert "Repair the rejected edit" in result["cad_history"][-1]["content"]
+
+
+@pytest.mark.asyncio
 async def test_second_reviewer_repair_publishes_findings_for_user_edit(monkeypatch, graph_mocks):
     graph_mocks["candidate"] = {
         "manifest": {"schemaVersion": 1, "units": "mm", "components": [], "instances": [],

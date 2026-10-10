@@ -22,6 +22,7 @@ from ..requirements import design_work_requested, merge_requirements
 from ..assembly_requirements import normalize_assembly_requirements
 from ..services import runs as run_service
 from ..tools import model_tools, parameter_patch, parse_tool, portable_schema, updated_manifest
+from ..workspace_diagnostics import contract_repair_attempt, workspace_contract_feedback
 from .state import AgentState
 
 _worker: ContextVar[str] = ContextVar("forma_graph_worker", default="graph")
@@ -1422,7 +1423,8 @@ async def cad_session(state: AgentState) -> dict:
     edits_since_build = state.get("cad_edits_since_build", 0)
     buildable = bool(snapshot["manifest"].get("components")
                      and snapshot["manifest"].get("rootComponentId"))
-    if edits_since_build >= MAX_CAD_EDITS_WITHOUT_BUILD and buildable:
+    if (edits_since_build >= MAX_CAD_EDITS_WITHOUT_BUILD and buildable
+            and not state.get("cad_contract_repair")):
         # Tool availability is advisory for some OpenAI-compatible providers:
         # they can still return apply_changes after it is removed from the
         # schema. Enforce the edit bound in graph code and give CAD real build
@@ -1465,6 +1467,7 @@ async def cad_session(state: AgentState) -> dict:
         "lastBuild": state.get("build_result"),
         "lastReview": state.get("review"),
         "nativeGroundingEvidence": native_grounding_evidence(snapshot, state.get("validation") or {}),
+        "workspaceRepair": state.get("cad_contract_repair") or None,
     }
     tools = [item for item in model_tools("cad", review_response=(state.get("review") or {}).get("action") == "repair")
              if item["function"]["name"] in CAD_SESSION_TOOL_NAMES]
@@ -1501,6 +1504,11 @@ async def cad_session(state: AgentState) -> dict:
             "nonempty source for the new assembly. Do not call build again on the single-part root."
         )
         tools = [item for item in tools if item["function"]["name"] == "apply_changes"]
+    if state.get("cad_contract_repair"):
+        # Carry the rejection outside the rolling dialogue. Reads must not erase
+        # it, and another build cannot fix an edit that was never staged.
+        tools = [item for item in model_tools("cad")
+                 if item["function"]["name"] in {"apply_changes", "read_file", "search_files"}]
     call, history, usage = await agent_tool_turn(
         state, model_role="cad", prompt_role="cad", node="cad-session",
         context=context, history=history, tools=tools,
@@ -1516,6 +1524,12 @@ async def cad_session(state: AgentState) -> dict:
                     "The saved design is unchanged; select a model with reliable tool calling before retrying.")}
         return {**usage, "phase": "cad_session", "cad_invalid_tool_attempts": invalid_attempts,
             "cad_history": history}
+    if state.get("cad_contract_repair") and call["name"] not in {
+            "apply_changes", "read_file", "search_files"}:
+        feedback = {**state["cad_contract_repair"],
+                    "message": "Repair the rejected edit before building or completing the design."}
+        return {**usage, "phase": "cad_session", "cad_history": bounded_history([
+            *history, tool_message(call, feedback)])}
     tool_input = call["input"]
     hierarchy_pre_normalized = False
     if call["name"] == "apply_changes" and isinstance(tool_input, dict) \
@@ -1692,16 +1706,22 @@ async def cad_session(state: AgentState) -> dict:
                 "manifest": manifest, "files": files,
             }).model_dump()
         except (ValidationError, ValueError) as exc:
-            invalid_attempts = state.get("cad_invalid_tool_attempts", 0) + 1
-            result = {"ok": False, "category": "workspace_contract", "message": str(exc)[:5000]}
+            result = workspace_contract_feedback(manifest, files, exc)
+            invalid_attempts = contract_repair_attempt(state.get("cad_contract_repair") or {}, result)
+            repair = {**result, "stalledAttempts": invalid_attempts}
+            await repo.event(state["run_id"], "Workspace edit rejected: " + "; ".join(
+                f"{item['code']} at {item['path']}" for item in result["issues"]),
+                kind="validation", stage="cad", attempt=invalid_attempts)
             next_history = bounded_history([*history, tool_message(call, result)])
             if invalid_attempts >= 3:
                 return {**usage, "phase": "final", "terminal_status": "failed",
                     "cad_invalid_tool_attempts": invalid_attempts, "cad_history": next_history,
-                    "final_message": ("The CAD model returned an invalid workspace manifest three times. "
-                        "The saved design is unchanged; select a model with reliable structured output before retrying.")}
+                    "cad_contract_repair": repair,
+                    "final_message": ("The CAD model could not repair the workspace after three stalled attempts. "
+                        "The saved design is unchanged. Remaining issues: " + "; ".join(
+                            item["message"] for item in result["issues"])[:1500])}
             return {**usage, "phase": "cad_session", "cad_invalid_tool_attempts": invalid_attempts,
-                "cad_history": next_history}
+                "cad_contract_repair": repair, "cad_history": next_history}
         candidate_hash = digest(candidate)
         await run_service.save_candidate(state["run_id"], candidate, candidate_hash)
         await repo.event(state["run_id"], ("CAD updated named component parameters." if name == "update_parameters"
@@ -1714,6 +1734,7 @@ async def cad_session(state: AgentState) -> dict:
                 "another instance id." if hierarchy_normalized else "")}
         return {**usage, "phase": "cad_session", "candidate_hash": candidate_hash,
             "cad_invalid_tool_attempts": 0,
+            "cad_contract_repair": {},
             "cad_edits_since_build": edits_since_build + 1,
             "last_read_path": None,
             "cad_history": bounded_history([*history, tool_message(call, result)]),
