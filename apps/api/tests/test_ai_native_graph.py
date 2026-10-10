@@ -1160,6 +1160,70 @@ async def test_pending_contract_repair_cannot_be_bypassed_by_build(monkeypatch, 
 
 
 @pytest.mark.asyncio
+async def test_coordinator_inspection_cache_survives_history_loss_and_context_changes(monkeypatch, graph_mocks):
+    contexts = []
+
+    async def turn(_config, messages, tools, **_kwargs):
+        contexts.append((json.loads(messages[1]["content"].split(": ", 1)[1]), tools))
+        return {"message": {"role": "assistant", "content": "", "tool_calls": [{
+            "id": "inspect", "type": "function", "function": {"name": "inspect_project", "arguments": "{}"}}]},
+            "calls": [{"id": "inspect", "name": "inspect_project", "input": {}}],
+            "inputTokens": 10, "outputTokens": 20, "webSearchRequests": 0}
+
+    monkeypatch.setattr(design.models, "turn", turn)
+    current = state(project_context={"revision": None, "previousMessages": []})
+    first = await design.coordinator_session(current)
+    current.update(first)
+    current["coordinator_history"] = []
+    second = await design.coordinator_session(current)
+    assert "inspect_project" not in {t["function"]["name"] for t in contexts[-1][1]}
+    assert "already inspected" in contexts[-1][0]["projectInspection"]
+    assert json.loads(second["coordinator_history"][-1]["content"])["category"] == "unavailable_tool"
+    current.update(second)
+    current["project_context"] = {"revision": None, "previousMessages": [{"role": "user", "content": "New evidence"}]}
+    third = await design.coordinator_session(current)
+    assert "inspect_project" in {t["function"]["name"] for t in contexts[-1][1]}
+    assert third["coordinator_inspected_context"] != first["coordinator_inspected_context"]
+
+
+@pytest.mark.asyncio
+async def test_coordinator_repairs_single_dimension_without_inventing_axes(monkeypatch, graph_mocks):
+    arguments = {"role": "cad", "task": "Build the requested pump.", "requirements": [{
+        "id": "spacing", "description": "Shaft centre separation 34 mm", "kind": "dimensions",
+        "dimensions": [34], "tolerance": .01}]}
+    contexts = []
+
+    async def turn(_config, messages, _tools, **_kwargs):
+        contexts.append(json.loads(messages[1]["content"].split(": ", 1)[1]))
+        return {"message": {"role": "assistant", "content": "", "tool_calls": [{
+            "id": "delegate", "type": "function", "function": {
+                "name": "delegate", "arguments": json.dumps(arguments)}}]},
+            "calls": [{"id": "delegate", "name": "delegate", "input": deepcopy(arguments)}],
+            "inputTokens": 10, "outputTokens": 20, "webSearchRequests": 0}
+
+    monkeypatch.setattr(design.models, "turn", turn)
+    current = state(original_request="Create a pump with shaft centre separation 34 mm.", coordinator_actions=10)
+    first = await design.coordinator_session(current)
+    assert first["phase"] == "coordinator_session"
+    assert [i["path"] for i in first["coordinator_contract_repair"]["issues"]] == [
+        "requirements.0.dimensions.1", "requirements.0.dimensions.2"]
+    assert "invented values" in first["coordinator_contract_repair"]["repairGuidance"]
+    assert "input_value" not in json.dumps(first["coordinator_contract_repair"])
+    current.update(first)
+    current["coordinator_history"] = []
+    arguments["requirements"][0].update(kind="unverified", dimensions=None)
+    fixed = await design.coordinator_session(current)
+    assert contexts[-1]["toolRepair"]["issues"]
+    assert fixed["phase"] == "cad_session"
+    assert fixed["coordinator_contract_repair"] == {}
+    assert fixed["coordinator_actions"] == 0
+    assert fixed["model_calls"] == 2  # delegation does not reset the global call budget
+    requirement = next(r for r in fixed["requirements"] if r["id"] == "spacing")
+    assert requirement["kind"] == "unverified"
+    assert requirement["dimensions"] is None
+
+
+@pytest.mark.asyncio
 async def test_second_reviewer_repair_publishes_findings_for_user_edit(monkeypatch, graph_mocks):
     graph_mocks["candidate"] = {
         "manifest": {"schemaVersion": 1, "units": "mm", "components": [], "instances": [],

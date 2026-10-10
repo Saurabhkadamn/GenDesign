@@ -270,6 +270,15 @@ def test_tool_schemas_use_gemini_compatible_homogeneous_arrays():
     assert files["items"]["required"] == ["path", "content"]
 
 
+def test_portable_tuple_schema_keeps_numeric_arity_visible():
+    from forma_api.tools import model_tools
+
+    delegate = next(t for t in model_tools("coordinator") if t["function"]["name"] == "delegate")
+    requirement = delegate["function"]["parameters"]["properties"]["requirements"]["items"]
+    assert "Exactly 3 numeric values" in requirement["properties"]["dimensions"]["description"]
+    assert "Exactly 3 numeric values" in requirement["properties"]["center"]["description"]
+
+
 def test_manifest_rejects_calculation_file_as_geometry_component():
     from forma_api.graphs.design import Candidate
     candidate = {

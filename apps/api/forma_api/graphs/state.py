@@ -16,6 +16,8 @@ class AgentState(TypedDict, total=False):
     coordinator_task: str
     coordinator_pending_call: dict[str, Any]
     coordinator_actions: int
+    coordinator_inspected_context: str
+    coordinator_contract_repair: dict[str, Any]
     engineering_from_coordinator: bool
     phase: str
     route: Literal["clarify", "analyze", "cad", "answer"]
