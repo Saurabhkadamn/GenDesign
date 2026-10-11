@@ -8,10 +8,30 @@ from forma_api.contracts import Requirement
 from forma_api.tools import parse_tool
 
 
-def test_missing_hole_count_feedback_names_the_field_without_inferring_it():
+def test_hole_count_is_canonicalized_from_explicit_positions():
+    requirement = Requirement(id="bores", description="Two bores", kind="through_holes",
+                             diameter=38.1, positions=[[-17, 0], [17, 0]], tolerance=.025)
+    assert requirement.count == 2
+    assert requirement.positions == [(-17, 0), (17, 0)]
+    assert requirement.tolerance == .025
+
+
+def test_missing_hole_count_and_positions_still_require_explicit_inventory():
     with pytest.raises(ValidationError, match="through_holes requires explicit values for: count"):
+        Requirement(id="bores", description="Two bores", kind="through_holes", diameter=38.1)
+
+
+def test_explicit_hole_count_cannot_contradict_positions():
+    with pytest.raises(ValidationError, match="every expected through-hole"):
         Requirement(id="bores", description="Two bores", kind="through_holes",
-                    diameter=38.1, positions=[[-17, 0], [17, 0]])
+                    diameter=38.1, count=3, positions=[[-17, 0], [17, 0]])
+
+
+def test_positions_do_not_imply_other_requirement_values():
+    with pytest.raises(ValidationError, match="solid_count requires explicit values for: count"):
+        Requirement(id="inventory", description="27 parts", kind="solid_count", positions=[[0, 0]])
+    with pytest.raises(ValidationError, match="through_holes requires explicit values for: diameter"):
+        Requirement(id="bores", description="Two bores", kind="through_holes", positions=[[-17, 0], [17, 0]])
 
 
 @pytest.mark.parametrize("kind, values", [
