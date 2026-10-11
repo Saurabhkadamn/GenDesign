@@ -12,7 +12,7 @@ from ..engine import Pause
 from ..providers.openrouter import ModelFailure
 from ..services.checkpoints import checkpoint_saver
 from ..services import runs as run_service
-from .design import build_graph, reset_worker, set_worker
+from .design import bounded_history, build_graph, reset_worker, set_worker
 
 
 def graph_config(run_id: str) -> dict:
@@ -48,10 +48,28 @@ async def advance_graph(run_id: str, worker: str, resume: dict | None = None) ->
                     # interrupt. Continue that node normally. Renew only the
                     # coordinator's local action allowance on explicit Continue;
                     # keep the total model budget and saved repair evidence.
+                    updates = {}
+                    message = str(resume.get("message") or "").strip()
+                    if message and resume.get("kind") in {"continue", "answer"}:
+                        # An exception-based pause has no interrupt node to
+                        # consume user guidance. Keep it in the authoritative
+                        # request and the active role's dialogue before retrying.
+                        request = before.values.get("clarified_request") or \
+                            before.values.get("original_request", "")
+                        updates["clarified_request"] = request + "\n\nUser continuation: " + message
+                        history_key = {"coordinator_session": "coordinator_history",
+                            "cad_session": "cad_history", "repair": "cad_history",
+                            "review_session": "review_history"}.get(before.values.get("phase"))
+                        if history_key:
+                            history = before.values.get(history_key) or [{"role": "user", "content": request}]
+                            updates[history_key] = bounded_history([*history,
+                                {"role": "user", "content": message}])
                     if resume.get("kind") == "continue" and \
                             before.values.get("phase") == "coordinator_session" and \
                             before.values.get("coordinator_actions", 0) >= 12:
-                        await graph.aupdate_state(config, {"coordinator_actions": 0})
+                        updates["coordinator_actions"] = 0
+                    if updates:
+                        await graph.aupdate_state(config, updates)
                     graph_input = None
             else:
                 graph_input = None
