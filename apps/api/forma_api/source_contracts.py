@@ -24,6 +24,20 @@ def component_entrypoint_issues(manifest: dict, files: dict) -> list[dict]:
         function = functions[-1]
         if function.decorator_list:
             continue
+        # A later binding may replace/wrap this function. Do not pretend to
+        # know the runtime signature of those dynamic entrypoints.
+        later = tree.body[tree.body.index(function) + 1:]
+        def binds_build(node):
+            if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                return any(isinstance(item, ast.Name) and item.id == "build"
+                           for target in targets for item in ast.walk(target))
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                return any((alias.asname or alias.name.split(".")[0]) == "build"
+                           for alias in node.names)
+            return False
+        if any(binds_build(node) for node in later):
+            continue
         args = function.args
         positional = len(args.posonlyargs) + len(args.args)
         required = positional - len(args.defaults)

@@ -49,3 +49,9 @@ def test_does_not_claim_static_proof_for_imported_or_decorated_entrypoints():
     files = {"parts/cover.py": "from helper import build\n",
              "parts/shaft.py": "@wrapper\ndef build(parameters):\n    pass\n"}
     assert component_entrypoint_issues(manifest(), files) == []
+
+
+def test_rebound_entrypoint_requires_runtime_validation():
+    files = {"parts/cover.py": "def build(params):\n    pass\nbuild = wrapper(build)\n",
+             "parts/shaft.py": "def build(params):\n    pass\nfrom helper import build\n"}
+    assert component_entrypoint_issues(manifest(), files) == []
