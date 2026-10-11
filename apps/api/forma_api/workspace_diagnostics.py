@@ -4,6 +4,7 @@ Snapshot remains the authority. These diagnostics expose related blockers at
 once, so an agent can repair a staged assembly without guessing the next error.
 """
 from pydantic import ValidationError
+from .source_contracts import component_entrypoint_issues
 
 
 def workspace_contract_feedback(manifest: dict, files: dict, error: Exception) -> dict:
@@ -13,6 +14,7 @@ def workspace_contract_feedback(manifest: dict, files: dict, error: Exception) -
         issues.append({"code": code, "path": path, "message": message, "repair": repair})
 
     definitions = {item["id"]: item for item in manifest.get("components", [])}
+    issues.extend(component_entrypoint_issues(manifest, files))
     for item in definitions.values():
         if item["source"] not in files:
             add("missing_source", f"components.{item['id']}.source",
@@ -76,6 +78,7 @@ def workspace_contract_feedback(manifest: dict, files: dict, error: Exception) -
               if isinstance(error, ValidationError) else [{"loc": (), "msg": str(error)}])
     messages = [item["msg"] for item in errors]
     coverage = {
+        "CAD entrypoint contract:": {"build_signature"},
         "Unknown root component.": {"unknown_root"},
         "Missing source:": {"missing_source"},
         "Unknown component dependency.": {"unknown_dependency"},

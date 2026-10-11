@@ -1399,3 +1399,62 @@ async def test_resumed_cad_answer_is_presented_as_user_input(monkeypatch, graph_
 
     monkeypatch.setattr(design, "agent_tool_turn", tool_turn)
     await design.cad_session({**initial, **resumed})
+
+
+@pytest.mark.asyncio
+async def test_source_signature_regression_is_atomic_and_repair_survives_history_loss(monkeypatch, graph_mocks):
+    original = design.Snapshot.model_validate({"manifest": {"components": [
+        {"id": "cover", "name": "Cover", "kind": "solid", "source": "parts/cover.py"}],
+        "rootComponentId": "cover"}, "files": {
+            "parts/cover.py": "def build(parameters, dependencies):\n    return None"}}).model_dump()
+    graph_mocks["candidate"] = deepcopy(original)
+    arguments = {"files": {"parts/cover.py": "def build(params):\n    return 'PRIVATE_CODE'"}}
+
+    async def turn(*_args, **_kwargs):
+        return {"message": {"role": "assistant", "content": "", "tool_calls": [{
+            "id": "repair-signature", "type": "function", "function": {
+                "name": "apply_changes", "arguments": json.dumps(arguments)}}]},
+            "calls": [{"id": "repair-signature", "name": "apply_changes", "input": deepcopy(arguments)}],
+            "inputTokens": 10, "outputTokens": 20, "webSearchRequests": 0}
+
+    monkeypatch.setattr(design.models, "turn", turn)
+    current = state()
+    rejected = await design.cad_session(current)
+    assert graph_mocks["candidate"] == original
+    issue = rejected["cad_contract_repair"]["issues"][0]
+    assert issue["code"] == "build_signature"
+    assert issue["path"] == "parts/cover.py"
+    assert "PRIVATE_CODE" not in json.dumps(rejected["cad_contract_repair"])
+    current.update(rejected)
+    current["cad_history"] = []
+    arguments["files"]["parts/cover.py"] = "def build(parameters, dependencies):\n    return None"
+    accepted = await design.cad_session(current)
+    assert accepted["cad_contract_repair"] == {}
+    assert graph_mocks["candidate"] == original
+    assert accepted["validation"] == {}
+
+
+@pytest.mark.asyncio
+async def test_entrypoint_preflight_allows_incremental_repairs_with_unrelated_legacy_source(monkeypatch, graph_mocks):
+    original = design.Snapshot.model_validate({"manifest": {"components": [
+        {"id": "cover", "name": "Cover", "kind": "solid", "source": "parts/cover.py"},
+        {"id": "legacy", "name": "Legacy", "kind": "solid", "source": "parts/legacy.py"}],
+        "rootComponentId": "cover"}, "files": {
+            "parts/cover.py": "def build(parameters, dependencies):\n    return None",
+            "parts/legacy.py": "def build(params):\n    return None"}}).model_dump()
+    graph_mocks["candidate"] = deepcopy(original)
+    arguments = {"files": {"parts/cover.py": "def build(parameters, dependencies):\n    pass"}}
+
+    async def turn(*_args, **_kwargs):
+        return {"message": {"role": "assistant", "content": "", "tool_calls": [{
+            "id": "focused-edit", "type": "function", "function": {
+                "name": "apply_changes", "arguments": json.dumps(arguments)}}]},
+            "calls": [{"id": "focused-edit", "name": "apply_changes", "input": deepcopy(arguments)}],
+            "inputTokens": 10, "outputTokens": 20, "webSearchRequests": 0}
+
+    monkeypatch.setattr(design.models, "turn", turn)
+    accepted = await design.cad_session(state())
+    assert accepted["cad_contract_repair"] == {}
+    assert graph_mocks["candidate"]["files"]["parts/cover.py"] == arguments["files"]["parts/cover.py"]
+    assert graph_mocks["candidate"]["files"]["parts/legacy.py"] == original["files"]["parts/legacy.py"]
+    assert accepted["validation"] == {}  # runtime still must qualify the whole candidate

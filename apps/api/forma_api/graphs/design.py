@@ -23,6 +23,7 @@ from ..assembly_requirements import normalize_assembly_requirements
 from ..services import runs as run_service
 from ..tools import model_tools, parameter_patch, parse_tool, portable_schema, updated_manifest
 from ..workspace_diagnostics import contract_repair_attempt, workspace_contract_feedback
+from ..source_contracts import validate_component_entrypoints
 from .state import AgentState
 
 _worker: ContextVar[str] = ContextVar("forma_graph_worker", default="graph")
@@ -1763,6 +1764,8 @@ async def cad_session(state: AgentState) -> dict:
             candidate = Snapshot.model_validate({
                 "manifest": manifest, "files": files,
             }).model_dump()
+            validate_component_entrypoints(candidate["manifest"], {
+                path: candidate["files"][path] for path in value["files"]})
         except (ValidationError, ValueError) as exc:
             result = workspace_contract_feedback(manifest, files, exc)
             invalid_attempts = contract_repair_attempt(state.get("cad_contract_repair") or {}, result)
@@ -1943,6 +1946,7 @@ async def cad_candidate(state: AgentState, *, repair=False) -> dict:
             )
         candidate = Snapshot.model_validate({"manifest": manifest,
             "files": merged_files}).model_dump()
+        validate_component_entrypoints(candidate["manifest"], value.files)
         if hierarchy_changed:
             await repo.event(state["run_id"],
                 "CAD assembly hierarchy had invalid parent references; flattened those edges for a buildable draft.",
