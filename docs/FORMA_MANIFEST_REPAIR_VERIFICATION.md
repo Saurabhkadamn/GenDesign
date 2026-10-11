@@ -143,3 +143,12 @@ local action allowance. Exception-based pauses resume their pending graph node
 normally; real LangGraph interrupts still receive Command(resume=...). The
 overall model-call budget, candidate identity and retained repair feedback stay
 intact. Tests resume real MemorySaver checkpoints for both paths.
+# User guidance after a paused run
+
+An exception-based pause has no LangGraph interrupt handler to consume the
+continuation payload. The runner now retains nonempty continuation guidance in
+the effective request and the active role's bounded dialogue before retrying the
+pending node. Real interrupt handlers keep consuming their own payload without
+duplicate injection. Candidate identity, repair evidence and global model usage
+remain unchanged. MemorySaver checkpoint tests cover coordinator and CAD pauses
+as well as real interrupts.
