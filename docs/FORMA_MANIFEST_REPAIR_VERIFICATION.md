@@ -152,3 +152,20 @@ pending node. Real interrupt handlers keep consuming their own payload without
 duplicate injection. Candidate identity, repair evidence and global model usage
 remain unchanged. MemorySaver checkpoint tests cover coordinator and CAD pauses
 as well as real interrupts.
+
+## Declared CAD entrypoint regression
+
+The retained pump repeatedly replaced a two-argument cover entrypoint with
+`build(params)`. New CAD edits now receive a static preflight check before they
+are saved. A declared synchronous entrypoint must accept the two positional
+dictionaries supplied by the runtime. Feedback lists all statically incompatible
+component signatures, without source contents, and remains in the dedicated
+repair context after dialogue compaction. Rejected edits leave the candidate
+unchanged. Existing snapshots remain readable; this guard applies to new CAD
+edits rather than changing the snapshot serialization contract.
+
+This is a narrow check, not proof of executable geometry. Imported/decorated
+entrypoints and missing functions remain subject to isolated runtime validation.
+Valid solids still require independent inventory, dimension and engineering
+checks. Local verification: 285 API tests passed, including an atomic rejection
+and repair through the actual CAD session.
