@@ -10,6 +10,9 @@ class AgentState(TypedDict, total=False):
     original_request: str
     drawing_request: dict[str, Any] | None
     clarified_request: str
+    user_updates: list[dict[str, str]]
+    working_memory: dict[str, Any]
+    context_estimated_tokens: int
     selected_ids: list[str]
     project_context: dict[str, Any]
     coordinator_history: list[dict[str, Any]]

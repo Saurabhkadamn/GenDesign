@@ -12,6 +12,7 @@ from ..engine import Pause
 from ..providers.openrouter import ModelFailure
 from ..services.checkpoints import checkpoint_saver
 from ..services import runs as run_service
+from ..agent_memory import user_update
 from .design import bounded_history, build_graph, reset_worker, set_worker
 
 
@@ -56,7 +57,7 @@ async def advance_graph(run_id: str, worker: str, resume: dict | None = None) ->
                         # request and the active role's dialogue before retrying.
                         request = before.values.get("clarified_request") or \
                             before.values.get("original_request", "")
-                        updates["clarified_request"] = request + "\n\nUser continuation: " + message
+                        updates.update(user_update(before.values, message))
                         history_key = {"coordinator_session": "coordinator_history",
                             "cad_session": "cad_history", "repair": "cad_history",
                             "review_session": "review_history"}.get(before.values.get("phase"))
