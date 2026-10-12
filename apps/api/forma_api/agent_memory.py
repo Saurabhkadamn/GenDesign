@@ -107,12 +107,13 @@ def capture_history(state: dict, history: list[dict]) -> dict:
         if message.get("role") != "tool":
             continue
         name = calls.get(message.get("tool_call_id"))
-        if name in {"apply_changes", "update_parameters", "build", "request_engineering"}:
+        if name:
             try:
                 result = json.loads(message.get("content") or "{}")
             except (TypeError, ValueError):
                 continue
-            if isinstance(result, dict):
+            if isinstance(result, dict) and (result.get("ok") is False or
+                    name in {"apply_changes", "update_parameters", "build", "request_engineering"}):
                 memory = record_observation({"working_memory": memory}, name, result,
                                             candidate=result.get("candidateHash") or "")
     return memory

@@ -1603,10 +1603,10 @@ async def cad_session(state: AgentState) -> dict:
         history = bounded_history([*history, {"role": "user", "content":
             "Your response contained no valid tool call. Call exactly one available tool with valid arguments; do not put a tool-call list in plain text."}])
         if invalid_attempts >= 3:
-            return {**usage, "phase": "final", "terminal_status": "failed",
+            return {**usage, "phase": "cad_recovery",
                 "cad_invalid_tool_attempts": invalid_attempts, "cad_history": history,
                 "final_message": ("The CAD model returned no usable tool call three times. "
-                    "The saved design is unchanged; select a model with reliable tool calling before retrying.")}
+                    "The saved design and feedback are retained. Continue with a focused correction to retry.")}
         return {**usage, "phase": "cad_session", "cad_invalid_tool_attempts": invalid_attempts,
             "cad_history": history}
     if state.get("cad_contract_repair") and call["name"] not in {
@@ -1639,11 +1639,11 @@ async def cad_session(state: AgentState) -> dict:
         }
         next_history = bounded_history([*history, tool_message(call, feedback)])
         if invalid_attempts >= 3:
-            return {**usage, "phase": "final", "terminal_status": "failed",
+            return {**usage, "phase": "cad_recovery",
                 "cad_invalid_tool_attempts": invalid_attempts, "cad_history": next_history,
                 "final_message": ("The CAD model returned an invalid tool action three times, "
-                    "so the run stopped before publishing geometry. Choose a model with reliable "
-                    "tool arguments and Continue to retry.")}
+                    "so the run paused before publishing geometry. Continue with a focused correction "
+                    "to the tool arguments; the saved candidate is retained.")}
         return {**usage, "phase": "cad_session", "cad_invalid_tool_attempts": invalid_attempts,
             "cad_history": next_history}
 
@@ -1658,14 +1658,14 @@ async def cad_session(state: AgentState) -> dict:
         }
         next_history = bounded_history([*history, tool_message(call, feedback)])
         if invalid_attempts >= 3:
-            return {**usage, "phase": "final", "terminal_status": "failed",
+            return {**usage, "phase": "cad_recovery",
                 "cad_invalid_tool_attempts": invalid_attempts, "cad_history": next_history,
                 "final_message": ("The CAD model repeated the same ineffective action three times. "
                     "The saved design is unchanged. " + (
                         "Remaining issues: " + "; ".join(item["message"] for item in
                             state["cad_contract_repair"].get("issues", []))[:1500]
                         if state.get("cad_contract_repair") else
-                        "Select a model that responds to tool feedback before retrying."))}
+                        "Continue with a focused correction to the repeated action."))}
         return {**usage, "phase": "cad_session", "cad_invalid_tool_attempts": invalid_attempts,
             "cad_history": next_history}
 
@@ -1707,10 +1707,11 @@ async def cad_session(state: AgentState) -> dict:
                     "Choose one of the listed file paths or patch the requested component.")}
             next_history = bounded_history([*history, tool_message(call, result)])
             if invalid_attempts >= 3:
-                return {**usage, "phase": "final", "terminal_status": "failed",
+                return {**usage, "phase": "cad_recovery",
                     "cad_invalid_tool_attempts": invalid_attempts, "cad_history": next_history,
                     "final_message": ("The CAD model repeatedly requested paths that are not in the workspace, "
-                        "so no source was executed. Start a new run or edit the request and try again.")}
+                        "so this action was paused. The saved candidate is retained; Continue with an "
+                        "actual workspace path or a focused edit.")}
             return {**usage, "phase": "cad_session", "cad_invalid_tool_attempts": invalid_attempts,
                 "last_read_path": value.get("path"), "cad_history": next_history}
         return {**usage, "phase": "cad_session", "cad_invalid_tool_attempts": 0,
@@ -1770,7 +1771,7 @@ async def cad_session(state: AgentState) -> dict:
             invalid_attempts = state.get("cad_invalid_tool_attempts", 0) + 1
             next_history = bounded_history([*history, tool_message(call, result)])
             if invalid_attempts >= 3:
-                return {**usage, "phase": "final", "terminal_status": "failed",
+                return {**usage, "phase": "cad_recovery",
                     "cad_invalid_tool_attempts": invalid_attempts, "cad_history": next_history,
                     "final_message": "The CAD model repeatedly returned empty source files, so no source was executed."}
             return {**usage, "phase": "cad_session", "cad_invalid_tool_attempts": invalid_attempts,
@@ -1794,7 +1795,7 @@ async def cad_session(state: AgentState) -> dict:
                         "Fix only the reported file, then submit it again with apply_changes.")}
                 next_history = bounded_history([*history, tool_message(call, result)])
                 if invalid_attempts >= 3:
-                    return {**usage, "phase": "final", "terminal_status": "failed",
+                    return {**usage, "phase": "cad_recovery",
                         "cad_invalid_tool_attempts": invalid_attempts, "cad_history": next_history,
                         "final_message": ("The CAD model returned invalid Python source three times. "
                             "The saved design is unchanged; select a model that preserves code formatting before retrying.")}
@@ -1815,7 +1816,7 @@ async def cad_session(state: AgentState) -> dict:
                 kind="validation", stage="cad", attempt=invalid_attempts)
             next_history = bounded_history([*history, tool_message(call, result)])
             if invalid_attempts >= 3:
-                return {**usage, "phase": "final", "terminal_status": "failed",
+                return {**usage, "phase": "cad_recovery",
                     "cad_invalid_tool_attempts": invalid_attempts, "cad_history": next_history,
                     "cad_contract_repair": repair,
                     "final_message": ("The CAD model could not repair the workspace after three stalled attempts. "
@@ -2145,7 +2146,10 @@ async def cad_recovery(state: AgentState) -> dict:
     message = str((response or {}).get("message", "")).strip()
     history = bounded_history([*state.get("cad_history", []), {"role": "user", "content":
         "Continue from the retained candidate. Isolate and re-plan the failed operation before building. " + message}])
+    repair = state.get("cad_contract_repair") or {}
     return {"phase": "cad_session", "repairs": 0, "cad_history": history,
+            "cad_invalid_tool_attempts": 0,
+            "cad_contract_repair": {**repair, "stalledAttempts": 0} if repair else {},
             **user_update(state, message),
             "pending_cad_call": {}, "cad_edits_since_build": 0, "final_message": ""}
 
