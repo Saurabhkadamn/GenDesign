@@ -132,3 +132,25 @@ def read_memory(memory: dict, offset: int, limit: int) -> dict:
     return {"outcomes": facts[offset:offset + limit], "total": len(facts),
             "nextOffset": offset + limit if offset + limit < len(facts) else None,
             "currentValidation": False}
+
+
+def notes_just_saved(history: list[dict]) -> bool:
+    """One-action cooldown after successful notes; intervening work/input renews it."""
+    index=len(history)-1
+    while index>=1:
+        result=history[index]
+        if result.get('role')!='tool': return False
+        calls=history[index-1].get('tool_calls') or []
+        if not any(call.get('id')==result.get('tool_call_id') and
+            call.get('function',{}).get('name')=='update_working_notes' for call in calls):
+            return False
+        try:
+            value=json.loads(result.get('content') or '{}')
+        except (ValueError,TypeError):
+            return False
+        if not isinstance(value,dict): return False
+        if value.get('category')=='note_progress' and value.get('ok') is False:
+            index-=2  # A rejected notes call is not a different task action.
+            continue
+        return value.get('ok') is True and value.get('agentReportedNotes') is True
+    return False
