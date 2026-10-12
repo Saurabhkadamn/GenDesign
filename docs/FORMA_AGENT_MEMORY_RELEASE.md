@@ -18,6 +18,12 @@ Local regression coverage exercises real LangGraph checkpoint interruption/resum
 
 Final test and hosted release evidence are recorded separately under `D:/v1/test-results`. Hosted acceptance uses the saved provider/model and isolated test projects. The full external gear pump is still unverified; this release does not turn nine recovered partial STEP files into a completed pump.
 
+The API regression suite passed 302 tests. The two initial hosted agent runs failed after 42 and 24 model calls respectively, with no published revision. Both retained the exact 8.125 mm clarification. The first exposed missing entrypoints/registration; the second used the new staging diagnostics and exported actual geometry, then exposed an existing validator defect: it required an assembly root even for one standalone occurrence.
+
+The validator now permits one standalone occurrence only when it refers to the root, has no parent and uses no native joints. Existing independent STEP solid inventory, placement and symmetric-difference checks still apply; displaced geometry and multiple occurrences still fail. This runtime change passed 74 qualified CAD tests with zero skips/failures and unchanged native engine attestation. The qualified runtime is `forma-537dd448bdeb66e6`; its release image was snapshotted with expiration explicitly disabled, then independently queried to verify no expiration.
+
+The exact saved agent candidate was rebuilt without source edits and validated in a separate VM containing STEP and metadata, without generated Python. Occurrence validation now passes. Measured dimensions are 60 x 40 x 6 mm and the single through-hole is 8.125 mm. The plate's Z bounds are 0 to 6 mm, so its centre is [0,0,3], failing the requested [0,0,0] centre. Three requirements pass and one fails. This is a model-generated positioning error, correctly exposed after the Forma validator repair; runtime success is not full request acceptance.
+
 ## Remaining work from the review
 
 - Component/subassembly diagnostic tools and isolated API probes are not implemented here.
