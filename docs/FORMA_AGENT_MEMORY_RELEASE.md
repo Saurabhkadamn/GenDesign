@@ -14,6 +14,8 @@ Rejected tool arguments now receive field-level diagnostics without echoing Pyda
 
 Hosted testing also exposed consecutive note saves without task progress. After a successful note save, the coordinator and CAD tool menus temporarily omit another note save and describe the next action. A different task action or new human input makes notes available again. CAD rejects provider attempts to execute that omitted note action, retaining the existing notes and usage; repeated ignored-tool attempts remain resumable. A rejected note attempt cannot renew its own eligibility. This is a generic orchestration control, not a mechanical recipe or a part lock.
 
+The note-progress change uses the already-qualified runtime image and adds no CAD dependencies, runtime source changes or database migration. Its preview branch is configured with the same qualified image and runtime identity as production.
+
 Automatic three-edit builds now defer when a multi-component workspace still has a single-part root, so the agent receives the existing root repair context first. This changes orchestration ordering, not engineering geometry.
 
 The initial hosted run retained the exact clarification and used both working-memory tools, but then repeatedly staged a script without a registered buildable part. Source/staging diagnostics now accompany the CAD context and successful edits. The optional `diagnose_workspace` tool reports top-level entrypoints, unregistered files and the root without executing source. These observations are advisory and do not reject or rewrite geometry. Full component execution diagnostics remain separate work.
