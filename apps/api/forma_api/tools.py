@@ -136,7 +136,7 @@ class ReadWorkingMemory(Contract):
 
 SPECS = {
     "diagnose_workspace": (Empty, "Inspect source entrypoints, registered definitions and root staging problems without running code. Saved files are not built geometry. Does not modify or lock parts."),
-    "read_working_memory": (ReadWorkingMemory, "Read older retained tool outcomes outside recent dialogue, newest first. This is previous evidence with source provenance, not current validation."),
+    "read_working_memory": (ReadWorkingMemory, "Read older retained tool outcomes, newest first. The most recent 12 are already supplied in context; use offset 12 for older outcomes. Offered when older outcomes exist. This is previous evidence with source provenance, not current validation."),
     "update_working_notes": (WorkingNotes, "Save durable task notes, decisions, pending requirements and failed approaches. Supplied fields replace only those fields; omitted fields are preserved. These are agent-reported notes, not validation. Does not edit or lock parts."),
     "read_file": (ReadFile, "Read a private workspace source file before editing it."),
     "search_files": (Search, "Search private workspace files by literal text."),

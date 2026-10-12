@@ -27,7 +27,7 @@ from ..workspace_diagnostics import contract_repair_attempt, workspace_contract_
 from ..source_contracts import validate_component_entrypoints
 from ..workspace_status import workspace_status
 from ..agent_memory import (user_update, memory_context, capture_history, record_observation,
-                            fit_dialogue, compact_narrative, update_notes, estimate_tokens, read_memory, notes_just_saved)
+                            fit_dialogue, compact_narrative, update_notes, estimate_tokens, read_memory, notes_just_saved, older_outcomes_available)
 from .state import AgentState
 
 _worker: ContextVar[str] = ContextVar("forma_graph_worker", default="graph")
@@ -730,6 +730,10 @@ async def coordinator_session(state: AgentState) -> dict:
     if notes_just_saved(history):
         tools=[item for item in tools if item['function']['name']!='update_working_notes']
         context['taskProgress']='Working notes were just saved. Choose a different action to advance the task. Notes become available after another action or a human update.'
+    older_memory=older_outcomes_available(state,history)
+    if not older_memory:
+        tools=[item for item in tools if item['function']['name']!='read_working_memory']
+        context['memoryAvailability']='All retained outcomes are already included in current working memory; there are no older outcomes to retrieve. Advance the task using the request and workspace.'
     try:
         call, history, usage = await agent_tool_turn(
             state, model_role="coordinator", prompt_role="coordinator", node="coordinator-session",
@@ -751,6 +755,10 @@ async def coordinator_session(state: AgentState) -> dict:
             "message": "This tool is not available for the current project state.",
             "availableTools": [item["function"]["name"] for item in tools],
             "repairGuidance": context.get("projectInspection", "Choose one currently available tool.")}
+        if call['name']=='read_working_memory' and not older_memory:
+            feedback.update(category='memory_progress',repairGuidance=context['memoryAvailability'])
+        elif call['name']=='update_working_notes' and notes_just_saved(history):
+            feedback.update(category='note_progress',repairGuidance=context['taskProgress'])
         return {**update, "coordinator_contract_repair": feedback,
                 "coordinator_history": bounded_history([*history, tool_message(call, feedback)])}
     try:
@@ -1601,6 +1609,10 @@ async def cad_session(state: AgentState) -> dict:
     if note_cooldown:
         tools=[item for item in tools if item['function']['name']!='update_working_notes']
         context['taskProgress']='Working notes were just saved. Choose a different reading, editing, building or inspection action. Notes become available after another action or a human update.'
+    older_memory=older_outcomes_available(state,history)
+    if not older_memory:
+        tools=[item for item in tools if item['function']['name']!='read_working_memory']
+        context['memoryAvailability']='All retained outcomes are already included in current working memory; there are no older outcomes to retrieve. Advance the task using the request and workspace.'
     call, history, usage = await agent_tool_turn(
         state, model_role="cad", prompt_role="cad", node="cad-session",
         context=context, history=history, tools=tools,
@@ -1622,15 +1634,17 @@ async def cad_session(state: AgentState) -> dict:
                     "message": "Repair the rejected edit before building or completing the design."}
         return {**usage, "phase": "cad_session", "cad_history": bounded_history([
             *history, tool_message(call, feedback)])}
-    if note_cooldown and call['name']=='update_working_notes':
+    if (note_cooldown and call['name']=='update_working_notes') or (not older_memory and call['name']=='read_working_memory'):
         invalid_attempts=state.get('cad_invalid_tool_attempts',0)+1
-        feedback={'ok':False,'category':'note_progress','message':'The notes action was not executed because notes were just saved.',
+        note_action=call['name']=='update_working_notes'
+        feedback={'ok':False,'category':'note_progress' if note_action else 'memory_progress',
+            'message':'This memory action was not executed because it adds no information in the current state.',
             'availableTools':[item['function']['name'] for item in tools],
-            'repairGuidance':context['taskProgress']}
+            'repairGuidance':context['taskProgress'] if note_action else context['memoryAvailability']}
         return {**usage,'phase':'cad_recovery' if invalid_attempts>=3 else 'cad_session',
             'cad_invalid_tool_attempts':invalid_attempts,
             'cad_history':bounded_history([*history,tool_message(call,feedback)]),
-            'final_message':'The model kept requesting notes instead of advancing the task. The candidate and usage were retained; Continue with a focused next action.'}
+            'final_message':'The model kept requesting memory actions that add no information. The candidate and usage were retained; Continue with a focused next action.'}
     tool_input = call["input"]
     hierarchy_pre_normalized = False
     if call["name"] == "apply_changes" and isinstance(tool_input, dict) \
