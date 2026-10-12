@@ -2398,7 +2398,7 @@ def build_graph(checkpointer):
     graph.add_conditional_edges("cad_session", phase_route, {
         "cad_session": "cad_session", "cad_question": "cad_question",
         "engineering_analysis": "engineering_analysis", "build": "build", "validate": "validate",
-        "final": "final",
+        "cad_recovery": "cad_recovery", "final": "final",
     })
     graph.add_edge("cad_question", "cad_session")
     graph.add_conditional_edges("engineering_analysis", phase_route,

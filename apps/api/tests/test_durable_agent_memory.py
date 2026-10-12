@@ -172,24 +172,24 @@ async def test_invalid_action_waits_at_checkpoint_and_resumes_without_losing_can
         return {"id":"bad","name":"read_file","input":{"path":""}}, [], {"model_calls":18}
     monkeypatch.setattr(design.run_service,"load_candidate",load)
     monkeypatch.setattr(design,"agent_tool_turn",turn)
-    graph = StateGraph(AgentState)
-    graph.add_node('cad',design.cad_session)
-    graph.add_node('recovery',design.cad_recovery)
-    graph.add_edge(START,'cad')
-    graph.add_edge('cad','recovery')
-    graph.add_edge('recovery',END)
+    async def seed(_): return {"phase":"cad_session"}
+    monkeypatch.setattr(design,'coordinator',seed)
+    monkeypatch.setattr(design,'coordinator_session',seed)
     saver=InMemorySaver()
-    compiled=graph.compile(checkpointer=saver)
+    compiled=design.build_graph(saver)
     config={"configurable":{"thread_id":"invalid-action-resume"}}
     initial={"run_id":"run","original_request":"Keep the part","candidate_hash":"same",
         "attempts":5,"model_calls":17,"cad_invalid_tool_attempts":2,
         "cad_contract_repair":{"issues":[{"message":"Keep this unresolved contract"}],"stalledAttempts":2},
         "requirements":[{"id":"exact"}],"working_memory":{"notes":{"pendingRequirements":["Keep exact dimensions"]}}}
-    waiting=await compiled.ainvoke(initial,config)
+    await compiled.ainvoke(initial,config)
+    await compiled.ainvoke(None,config)
+    await compiled.ainvoke(None,config)
+    waiting=await compiled.ainvoke(None,config)
     assert waiting['__interrupt__'] and waiting['phase']=='cad_recovery'
     assert waiting['model_calls']==18 and waiting['cad_invalid_tool_attempts']==3
     assert 'terminal_status' not in waiting
-    restarted=graph.compile(checkpointer=saver)
+    restarted=design.build_graph(saver)
     resumed=await restarted.ainvoke(Command(resume={"kind":"continue","message":"Read parts/part.py."}),config)
     assert resumed['candidate_hash']=='same' and resumed['attempts']==5 and resumed['model_calls']==18
     assert resumed['requirements']==initial['requirements'] and resumed['working_memory']==initial['working_memory']

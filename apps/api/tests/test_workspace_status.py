@@ -25,3 +25,25 @@ def test_registered_entrypoint_with_source_is_staged_but_not_validated():
     assert result["rootSourcePresent"] is True and not result["stagingProblems"]
     assert result["sourceDiagnostics"][0]["registered"] is True
     assert result["geometryExecuted"] is False
+
+
+def test_missing_literal_parameter_reads_are_reported_without_execution_or_edits():
+    snapshot={"manifest":{"components":[{"id":"a","source":"parts/a.py","parameters":{"height":40}}],
+        "rootComponentId":"a"},"files":{"parts/a.py":
+        'def build(params, dependencies):\n    return params["width"] + params["height"]'}}
+    result=workspace_status(snapshot)
+    row=result['sourceDiagnostics'][0]
+    assert row['declaredParameterKeys']==['height']
+    assert row['literalParameterReads']==['height','width']
+    assert row['referencedMissingParameters']==['width']
+    assert 'advisory' in result['stagingProblems'][-1]
+    assert snapshot['manifest']['components'][0]['parameters']=={'height':40}
+    assert result['geometryExecuted'] is False
+
+
+def test_optional_get_and_dependency_reads_are_not_missing_parameter_claims():
+    result=workspace_status({'manifest':{'components':[{'id':'a','source':'parts/a.py','parameters':{}}],
+        'rootComponentId':'a'},'files':{'parts/a.py':
+        'def build(p, d):\n    return p.get("width", 10) + d["height"]'}})
+    assert result['sourceDiagnostics'][0]['referencedMissingParameters']==[]
+    assert result['stagingProblems']==[]
