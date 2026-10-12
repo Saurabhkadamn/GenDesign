@@ -2,6 +2,7 @@
 import json
 import re
 import time
+import os
 from copy import deepcopy
 import ast
 from contextvars import ContextVar
@@ -24,6 +25,9 @@ from ..services import runs as run_service
 from ..tools import model_tools, parameter_patch, parse_tool, portable_schema, updated_manifest
 from ..workspace_diagnostics import contract_repair_attempt, workspace_contract_feedback
 from ..source_contracts import validate_component_entrypoints
+from ..workspace_status import workspace_status
+from ..agent_memory import (user_update, memory_context, capture_history, record_observation,
+                            fit_dialogue, compact_narrative, update_notes, estimate_tokens, read_memory)
 from .state import AgentState
 
 _worker: ContextVar[str] = ContextVar("forma_graph_worker", default="graph")
@@ -551,12 +555,20 @@ async def agent_tool_turn(state: AgentState, *, model_role: str, prompt_role: st
     ordinal = state.get("model_calls", 0)
     if ordinal >= (await app_settings()).limits.maxModelCalls:
         raise Pause("The model-call budget was reached. The current draft and completed evidence were preserved.")
+    memory = capture_history(state, history)
+    context = {**context, "workingMemory": memory_context({**state, "working_memory": memory},
+        (context.get("workspace") or context.get("currentWorkspace") or {}).get("candidateHash", ""))}
     history = bounded_history(history)
     messages = [
         {"role": "system", "content": system_prompt(prompt_role)},
         {"role": "system", "content": "Current private design context: " + json.dumps(context, ensure_ascii=False)},
         *history,
     ]
+    try:
+        budget = int(os.getenv("FORMA_AGENT_CONTEXT_TOKENS", "48000"))
+        messages = fit_dialogue(messages, tools, budget, protocol_safe_history)
+    except ValueError as exc:
+        raise Pause(str(exc)) from None
 
     async def call():
         return await models.turn(config, messages, tools,
@@ -578,7 +590,8 @@ async def agent_tool_turn(state: AgentState, *, model_role: str, prompt_role: st
         ][:1]
     elif not call_value:
         assistant.pop("tool_calls", None)
-    next_history = bounded_history([*history, assistant], allow_pending=True)
+    # Store the original generation below; keep only useful narrative in active context.
+    next_history = bounded_history([*messages[2:], compact_narrative(assistant)], allow_pending=True)
     await db.insert("generations", {
         "id": str(uuid5(NAMESPACE_URL, f"{run['id']}:graph:{ordinal}")),
         "run_id": run["id"], "ordinal": ordinal, "role": prompt_role,
@@ -587,6 +600,8 @@ async def agent_tool_turn(state: AgentState, *, model_role: str, prompt_role: st
         "input_tokens": result["inputTokens"], "output_tokens": result["outputTokens"],
     }, conflict="run_id,ordinal")
     return call_value, next_history, {
+        "working_memory": memory,
+        "context_estimated_tokens": estimate_tokens([messages, tools]),
         "model_calls": ordinal + 1,
         "search_count": state.get("search_count", 0) + result.get("webSearchRequests", 0),
     }
@@ -666,7 +681,7 @@ async def coordinator(state: AgentState) -> dict:
 
 COORDINATOR_SESSION_TOOL_NAMES = {
     "inspect_project", "read_file", "search_files", "inspect_geometry",
-    "delegate", "restore_revision", "ask_user", "finish",
+    "delegate", "restore_revision", "ask_user", "finish", "update_working_notes", "read_working_memory", "diagnose_workspace",
 }
 
 
@@ -708,7 +723,7 @@ async def coordinator_session(state: AgentState) -> dict:
         allowed = allowed - {"read_file", "search_files"}
     if not state.get("validation") and not project_context.get("revision"):
         allowed = allowed - {"inspect_geometry"}
-    tools = [item for item in model_tools("coordinator")
+    tools = [item for item in model_tools("coordinator", working_memory=True)
              if item["function"]["name"] in allowed
              and not (inspected and item["function"]["name"] == "inspect_project")]
     history = state.get("coordinator_history") or [{"role": "user", "content": state["original_request"]}]
@@ -755,7 +770,15 @@ async def coordinator_session(state: AgentState) -> dict:
         return {**update, "coordinator_contract_repair": feedback,
             "coordinator_history": bounded_history([*history, tool_message(call, feedback)])}
     name = call["name"]
-    if name == "inspect_project":
+    if name == "update_working_notes":
+        notes = parse_tool("coordinator", name, call["input"]).model_dump(exclude_unset=True)
+        update["working_memory"] = update_notes(update.get("working_memory") or state.get("working_memory") or {}, notes)
+        result = {"ok": True, "agentReportedNotes": True}
+    elif name == "read_working_memory":
+        result = read_memory(update.get("working_memory") or state.get("working_memory") or {}, value["offset"], value["limit"])
+    elif name == "diagnose_workspace":
+        result = workspace_status(snapshot)
+    elif name == "inspect_project":
         result = project_context
         update["coordinator_inspected_context"] = context_hash
     elif name == "read_file":
@@ -827,8 +850,7 @@ async def coordinator_question(state: AgentState) -> dict:
     }), {"role": "user", "content": message}])
     return {"phase": "coordinator_session", "question": "", "coordinator_pending_call": {},
         "coordinator_history": history,
-        "clarified_request": (state.get("clarified_request") or state["original_request"]) +
-            "\n\nUser clarification: " + message}
+        **user_update(state, message, "clarification")}
 
 
 async def engineering_triage(state: AgentState) -> dict:
@@ -906,7 +928,7 @@ async def clarification(state: AgentState) -> dict:
     message = str((response or {}).get("message", "")).strip()
     if not message:
         raise Pause("A clarification answer is required.")
-    return {"clarified_request": f"{state['original_request']}\n\nUser clarification: {message}",
+    return {**user_update(state, message, "clarification"),
         "phase": "engineering_triage", "route": "cad"}
 
 
@@ -919,6 +941,7 @@ async def engineering_analysis(state: AgentState) -> dict:
         "triageAssumptions": state.get("engineering_assumptions", []),
         "triageRemarks": state.get("engineering_remarks", []),
         "cadRequest": state.get("engineering_request", ""),
+        "workingMemory": memory_context(state),
     }
     prompt = """Perform the engineering analysis needed before geometry. Use the engineering packet below as the
 source of truth and do not call a value missing when it is present in the original request, explicit requirements,
@@ -1242,7 +1265,7 @@ def normalize_instance_hierarchy(manifest: dict) -> tuple[dict, bool]:
 
 CAD_SESSION_TOOL_NAMES = {
     "read_file", "search_files", "apply_changes", "update_parameters", "build",
-    "inspect_geometry", "request_engineering", "respond_to_review", "ask_user",
+    "inspect_geometry", "request_engineering", "respond_to_review", "ask_user", "update_working_notes", "read_working_memory", "diagnose_workspace",
 }
 MAX_CAD_EDITS_WITHOUT_BUILD = 3
 MAX_REVIEW_REPAIR_CYCLES = 2
@@ -1473,10 +1496,16 @@ async def cad_session(state: AgentState) -> dict:
     }]
     requested_components = requested_component_labels(state.get("original_request", ""))
     edits_since_build = state.get("cad_edits_since_build", 0)
+    manifest = snapshot["manifest"]
+    physical_components = [item for item in manifest.get("components", [])
+                           if item.get("kind") != "assembly"]
+    root = next((item for item in manifest.get("components", [])
+                 if item.get("id") == manifest.get("rootComponentId")), None)
+    root_needs_repair = len(physical_components) > 1 and (root or {}).get("kind") != "assembly"
     buildable = bool(snapshot["manifest"].get("components")
                      and snapshot["manifest"].get("rootComponentId"))
     if (edits_since_build >= MAX_CAD_EDITS_WITHOUT_BUILD and buildable
-            and not state.get("cad_contract_repair")):
+            and not state.get("cad_contract_repair") and not root_needs_repair):
         # Tool availability is advisory for some OpenAI-compatible providers:
         # they can still return apply_changes after it is removed from the
         # schema. Enforce the edit bound in graph code and give CAD real build
@@ -1520,8 +1549,9 @@ async def cad_session(state: AgentState) -> dict:
         "lastReview": state.get("review"),
         "nativeGroundingEvidence": native_grounding_evidence(snapshot, state.get("validation") or {}),
         "workspaceRepair": state.get("cad_contract_repair") or None,
+        "workspaceStatus": workspace_status(snapshot),
     }
-    tools = [item for item in model_tools("cad", review_response=(state.get("review") or {}).get("action") == "repair")
+    tools = [item for item in model_tools("cad", working_memory=True, review_response=(state.get("review") or {}).get("action") == "repair")
              if item["function"]["name"] in CAD_SESSION_TOOL_NAMES]
     if len(requested_components) > 1:
         staged = staged_component_count(snapshot["manifest"])
@@ -1573,10 +1603,10 @@ async def cad_session(state: AgentState) -> dict:
         history = bounded_history([*history, {"role": "user", "content":
             "Your response contained no valid tool call. Call exactly one available tool with valid arguments; do not put a tool-call list in plain text."}])
         if invalid_attempts >= 3:
-            return {**usage, "phase": "final", "terminal_status": "failed",
+            return {**usage, "phase": "cad_recovery",
                 "cad_invalid_tool_attempts": invalid_attempts, "cad_history": history,
                 "final_message": ("The CAD model returned no usable tool call three times. "
-                    "The saved design is unchanged; select a model with reliable tool calling before retrying.")}
+                    "The saved design and feedback are retained. Continue with a focused correction to retry.")}
         return {**usage, "phase": "cad_session", "cad_invalid_tool_attempts": invalid_attempts,
             "cad_history": history}
     if state.get("cad_contract_repair") and call["name"] not in {
@@ -1599,21 +1629,31 @@ async def cad_session(state: AgentState) -> dict:
         value = parsed.model_dump()
     except (ValidationError, ValueError) as exc:
         invalid_attempts = state.get("cad_invalid_tool_attempts", 0) + 1
+        issues = (exc.errors(include_url=False,include_input=False,include_context=False)
+            if isinstance(exc,ValidationError) else [{"loc":(),"msg":str(exc)}])
+        offered = next((item['function']['parameters'] for item in tools
+            if item['function']['name']==call['name']),{})
+        guidance = {
+            "update_parameters":"changes must be a list of componentId, parameter and value objects. Use existing component IDs and parameter names; introduce new parameters with apply_changes.manifest and preserve the requested values.",
+            "apply_changes":"files maps exact Python paths to full source. Correct the listed manifest/source fields together. Provided component arrays need complete entries; introduce source parameters in those entries. The rejected action changed nothing.",
+            "read_file":"Use an exact non-empty file path from workspace.files. If it is empty, create source with apply_changes.",
+        }.get(call['name'],"Correct the listed fields using the currently offered tool schema. The rejected action changed nothing.")
         feedback = {
-            "ok": False, "category": "tool_contract", "message": str(exc)[:3000],
-            "repairGuidance": ("Use an existing component ID and parameter name from workspace.manifest; "
-                "read its source before changing a value. Use apply_changes for new parameters."
-                if call["name"] == "update_parameters" else
-                "Use an exact non-empty file path from workspace.files. "
-                "If workspace.files is empty, create the requested source with apply_changes immediately.")
+            "ok": False, "category": "tool_contract", "tool":call['name'],
+            "message":"Tool arguments were rejected before any changes were saved.",
+            "issues":[{"path":".".join(map(str,item['loc'])),"message":item['msg'][:500]} for item in issues[:40]],
+            "acceptedArguments":sorted(offered.get('properties',{})),
+            "repairGuidance":guidance,
         }
+        usage['working_memory']=record_observation({'working_memory':usage.get('working_memory') or
+            state.get('working_memory')},call['name'],feedback,candidate=digest(snapshot))
         next_history = bounded_history([*history, tool_message(call, feedback)])
         if invalid_attempts >= 3:
-            return {**usage, "phase": "final", "terminal_status": "failed",
+            return {**usage, "phase": "cad_recovery",
                 "cad_invalid_tool_attempts": invalid_attempts, "cad_history": next_history,
                 "final_message": ("The CAD model returned an invalid tool action three times, "
-                    "so the run stopped before publishing geometry. Choose a model with reliable "
-                    "tool arguments and Continue to retry.")}
+                    "so the run paused before publishing geometry. Continue with a focused correction "
+                    "to the tool arguments; the saved candidate is retained.")}
         return {**usage, "phase": "cad_session", "cad_invalid_tool_attempts": invalid_attempts,
             "cad_history": next_history}
 
@@ -1628,14 +1668,14 @@ async def cad_session(state: AgentState) -> dict:
         }
         next_history = bounded_history([*history, tool_message(call, feedback)])
         if invalid_attempts >= 3:
-            return {**usage, "phase": "final", "terminal_status": "failed",
+            return {**usage, "phase": "cad_recovery",
                 "cad_invalid_tool_attempts": invalid_attempts, "cad_history": next_history,
                 "final_message": ("The CAD model repeated the same ineffective action three times. "
                     "The saved design is unchanged. " + (
                         "Remaining issues: " + "; ".join(item["message"] for item in
                             state["cad_contract_repair"].get("issues", []))[:1500]
                         if state.get("cad_contract_repair") else
-                        "Select a model that responds to tool feedback before retrying."))}
+                        "Continue with a focused correction to the repeated action."))}
         return {**usage, "phase": "cad_session", "cad_invalid_tool_attempts": invalid_attempts,
             "cad_history": next_history}
 
@@ -1648,6 +1688,16 @@ async def cad_session(state: AgentState) -> dict:
             "repairGuidance": "Use the engineering summary and parameters, then create or build the requested CAD source."}
         return {**usage, "phase": "cad_session", "last_read_path": None,
             "cad_history": bounded_history([*history, tool_message(call, feedback)])}
+    if name == "update_working_notes":
+        notes = parsed.model_dump(exclude_unset=True)
+        memory = update_notes(usage.get("working_memory") or state.get("working_memory") or {}, notes)
+        return {**usage, "phase": "cad_session", "working_memory": memory,
+            "cad_history": bounded_history([*history, tool_message(call, {"ok": True, "agentReportedNotes": True})])}
+    if name == "read_working_memory":
+        result = read_memory(usage.get("working_memory") or state.get("working_memory") or {}, value["offset"], value["limit"])
+        return {**usage, "phase": "cad_session", "cad_history": bounded_history([*history, tool_message(call, result)])}
+    if name == "diagnose_workspace":
+        return {**usage, "phase": "cad_session", "cad_history": bounded_history([*history, tool_message(call, workspace_status(snapshot))])}
     if name == "read_file" and state.get("last_read_path") == value.get("path"):
         feedback = {"ok": False, "category": "repeated_tool_action",
             "message": "This file was just read in the previous CAD turn.",
@@ -1667,10 +1717,11 @@ async def cad_session(state: AgentState) -> dict:
                     "Choose one of the listed file paths or patch the requested component.")}
             next_history = bounded_history([*history, tool_message(call, result)])
             if invalid_attempts >= 3:
-                return {**usage, "phase": "final", "terminal_status": "failed",
+                return {**usage, "phase": "cad_recovery",
                     "cad_invalid_tool_attempts": invalid_attempts, "cad_history": next_history,
                     "final_message": ("The CAD model repeatedly requested paths that are not in the workspace, "
-                        "so no source was executed. Start a new run or edit the request and try again.")}
+                        "so this action was paused. The saved candidate is retained; Continue with an "
+                        "actual workspace path or a focused edit.")}
             return {**usage, "phase": "cad_session", "cad_invalid_tool_attempts": invalid_attempts,
                 "last_read_path": value.get("path"), "cad_history": next_history}
         return {**usage, "phase": "cad_session", "cad_invalid_tool_attempts": 0,
@@ -1730,7 +1781,7 @@ async def cad_session(state: AgentState) -> dict:
             invalid_attempts = state.get("cad_invalid_tool_attempts", 0) + 1
             next_history = bounded_history([*history, tool_message(call, result)])
             if invalid_attempts >= 3:
-                return {**usage, "phase": "final", "terminal_status": "failed",
+                return {**usage, "phase": "cad_recovery",
                     "cad_invalid_tool_attempts": invalid_attempts, "cad_history": next_history,
                     "final_message": "The CAD model repeatedly returned empty source files, so no source was executed."}
             return {**usage, "phase": "cad_session", "cad_invalid_tool_attempts": invalid_attempts,
@@ -1754,7 +1805,7 @@ async def cad_session(state: AgentState) -> dict:
                         "Fix only the reported file, then submit it again with apply_changes.")}
                 next_history = bounded_history([*history, tool_message(call, result)])
                 if invalid_attempts >= 3:
-                    return {**usage, "phase": "final", "terminal_status": "failed",
+                    return {**usage, "phase": "cad_recovery",
                         "cad_invalid_tool_attempts": invalid_attempts, "cad_history": next_history,
                         "final_message": ("The CAD model returned invalid Python source three times. "
                             "The saved design is unchanged; select a model that preserves code formatting before retrying.")}
@@ -1775,7 +1826,7 @@ async def cad_session(state: AgentState) -> dict:
                 kind="validation", stage="cad", attempt=invalid_attempts)
             next_history = bounded_history([*history, tool_message(call, result)])
             if invalid_attempts >= 3:
-                return {**usage, "phase": "final", "terminal_status": "failed",
+                return {**usage, "phase": "cad_recovery",
                     "cad_invalid_tool_attempts": invalid_attempts, "cad_history": next_history,
                     "cad_contract_repair": repair,
                     "final_message": ("The CAD model could not repair the workspace after three stalled attempts. "
@@ -1788,12 +1839,15 @@ async def cad_session(state: AgentState) -> dict:
         await repo.event(state["run_id"], ("CAD updated named component parameters." if name == "update_parameters"
             else "CAD updated a focused part of the code workspace."), stage="cad")
         result = {"ok": True, "candidateHash": candidate_hash,
+            "workspaceStatus": workspace_status(candidate),
             "changedFiles": sorted(value["files"]), "deletedFiles": value.get("deletePaths", []),
             "autoRegisteredComponents": auto_registered,
             "hierarchyNormalized": hierarchy_normalized,
             "hierarchyNote": ("Top-level or invalid parent sentinels were normalized to null; parentId must name "
                 "another instance id." if hierarchy_normalized else "")}
         return {**usage, "phase": "cad_session", "candidate_hash": candidate_hash,
+            "working_memory": record_observation({"working_memory": usage.get("working_memory") or state.get("working_memory")},
+                name, result, candidate=candidate_hash),
             "cad_invalid_tool_attempts": 0,
             "cad_contract_repair": {},
             "cad_edits_since_build": edits_since_build + 1,
@@ -1918,9 +1972,8 @@ async def cad_question(state: AgentState) -> dict:
     history = bounded_history([*state.get("cad_history", []), tool_message(call, {
         "answered": True, "message": message,
     }), {"role": "user", "content": message}])
-    clarified = state.get("clarified_request") or state["original_request"]
     return {"phase": "cad_session", "question": "", "pending_cad_call": {},
-        "cad_history": history, "clarified_request": clarified + "\n\nUser clarification: " + message}
+        "cad_history": history, **user_update(state, message, "clarification")}
 
 
 async def cad_candidate(state: AgentState, *, repair=False) -> dict:
@@ -2034,6 +2087,7 @@ async def build(state: AgentState) -> dict:
 async def validate(state: AgentState) -> dict:
     result = state.get("build_result", {})
     pending = state.get("pending_cad_call") or {"id": "build"}
+    memory = record_observation(state, "build", result, candidate=state.get("candidate_hash", ""))
     if result.get("ok") is False:
         error = result.get("error", {})
         history = bounded_history([*state.get("cad_history", []), tool_message(pending, result)])
@@ -2043,6 +2097,7 @@ async def validate(state: AgentState) -> dict:
         if state.get("repairs", 0) >= limits.maxRepairs:
             guidance = error.get("guidance", "Repair the failed CAD operation.")
             return {"phase": "cad_recovery", "repairs": state.get("repairs", 0),
+                "working_memory": memory,
                 "cad_history": history,
                 "final_message": (f"The bounded CAD repair limit was reached after "
                     f"{state.get('attempts', 0)} attempts. {guidance} "
@@ -2053,6 +2108,7 @@ async def validate(state: AgentState) -> dict:
             history = bounded_history([*history, {"role": "user", "content":
                 "The normalized build error repeated after a source change. Re-plan the affected operation instead of retrying the same construction."}])
         return {"phase": "cad_session", "cad_history": history, "pending_cad_call": {},
+            "working_memory": memory,
             "final_message": error.get("guidance", "Repair the failed CAD operation.")}
     intermediate = not state.get("build_final", True)
     history = bounded_history([*state.get("cad_history", []), tool_message(pending, {
@@ -2063,6 +2119,7 @@ async def validate(state: AgentState) -> dict:
     })])
     if intermediate:
         return {"phase": "cad_session", "cad_history": history, "repairs": 0,
+            "working_memory": memory,
             "pending_cad_call": {},
             "last_milestone_hash": state.get("candidate_hash", "")}
     requested_components = requested_component_labels(state.get("original_request", ""))
@@ -2076,11 +2133,13 @@ async def validate(state: AgentState) -> dict:
                 "relationships before the final build. Do not repeat an unchanged build."
             )}])
             return {"phase": "cad_session", "cad_history": history, "pending_cad_call": {},
+                "working_memory": memory,
                 "last_milestone_hash": state.get("candidate_hash", "")}
     # Every final build gets a focused evidence review before draft publication.
     # This is a bounded quality pass, not a release gate: after at most two
     # focused repairs, publish the last buildable draft with its findings.
     return {"phase": "review_session", "cad_history": history,
+        "working_memory": memory,
         "pending_cad_call": {}, "review_history": [], "review_reads": 0,
         "review_inspected": False, "review_actions": 0, "review": state.get("review") or {},
         "review_repairs": state.get("review_repairs", 0)}
@@ -2097,7 +2156,11 @@ async def cad_recovery(state: AgentState) -> dict:
     message = str((response or {}).get("message", "")).strip()
     history = bounded_history([*state.get("cad_history", []), {"role": "user", "content":
         "Continue from the retained candidate. Isolate and re-plan the failed operation before building. " + message}])
+    repair = state.get("cad_contract_repair") or {}
     return {"phase": "cad_session", "repairs": 0, "cad_history": history,
+            "cad_invalid_tool_attempts": 0,
+            "cad_contract_repair": {**repair, "stalledAttempts": 0} if repair else {},
+            **user_update(state, message),
             "pending_cad_call": {}, "cad_edits_since_build": 0, "final_message": ""}
 
 
@@ -2345,7 +2408,7 @@ def build_graph(checkpointer):
     graph.add_conditional_edges("cad_session", phase_route, {
         "cad_session": "cad_session", "cad_question": "cad_question",
         "engineering_analysis": "engineering_analysis", "build": "build", "validate": "validate",
-        "final": "final",
+        "cad_recovery": "cad_recovery", "final": "final",
     })
     graph.add_edge("cad_question", "cad_session")
     graph.add_conditional_edges("engineering_analysis", phase_route,

@@ -1,5 +1,5 @@
 from copy import deepcopy
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import Field, field_validator, model_validator
 
@@ -117,7 +117,27 @@ class RequestEngineering(Contract):
     task: str = Field(min_length=1, max_length=6000)
 
 
+NoteText = Annotated[str, Field(max_length=1000)]
+
+
+class WorkingNotes(Contract):
+    objective: str = Field(default="", max_length=3000)
+    currentTask: str = Field(default="", max_length=3000)
+    decisions: list[NoteText] = Field(default_factory=list, max_length=40)
+    pendingRequirements: list[NoteText] = Field(default_factory=list, max_length=100)
+    failedApproaches: list[NoteText] = Field(default_factory=list, max_length=40)
+    nextAction: str = Field(default="", max_length=3000)
+
+
+class ReadWorkingMemory(Contract):
+    offset: int = Field(default=0, ge=0)
+    limit: int = Field(default=12, ge=1, le=40)
+
+
 SPECS = {
+    "diagnose_workspace": (Empty, "Inspect source entrypoints, registered definitions and root staging problems without running code. Saved files are not built geometry. Does not modify or lock parts."),
+    "read_working_memory": (ReadWorkingMemory, "Read older retained tool outcomes outside recent dialogue, newest first. This is previous evidence with source provenance, not current validation."),
+    "update_working_notes": (WorkingNotes, "Save durable task notes, decisions, pending requirements and failed approaches. Supplied fields replace only those fields; omitted fields are preserved. These are agent-reported notes, not validation. Does not edit or lock parts."),
     "read_file": (ReadFile, "Read a private workspace source file before editing it."),
     "search_files": (Search, "Search private workspace files by literal text."),
     "apply_changes": (ApplyChanges, "Atomically stage related files and optional manifest changes. Omitted top-level manifest fields are preserved; provided fields and arrays replace their values. Include complete entries in provided arrays. Does not execute code."),
@@ -235,14 +255,15 @@ def portable_schema(schema: dict) -> dict:
     return expand(schema)
 
 
-def model_tools(role: Role, *, review_response: bool = False) -> list[dict]:
+def model_tools(role: Role, *, review_response: bool = False, working_memory: bool = False) -> list[dict]:
+    names = (*ROLE_TOOLS[role], "update_working_notes", "read_working_memory", "diagnose_workspace") if working_memory and role in {"cad", "coordinator"} else ROLE_TOOLS[role]
     return [{"type": "function", "function": {"name": name, "description": SPECS[name][1],
-            "parameters": portable_schema(SPECS[name][0].model_json_schema())}} for name in ROLE_TOOLS[role]
+            "parameters": portable_schema(SPECS[name][0].model_json_schema())}} for name in names
             if name != "respond_to_review" or review_response]
 
 
 def parse_tool(role: Role, name: str, value: dict):
-    if name not in ROLE_TOOLS[role]:
+    if name not in ROLE_TOOLS[role] and not (name in {"update_working_notes", "read_working_memory", "diagnose_workspace"} and role in {"cad", "coordinator"}):
         raise ValueError("This role cannot use that tool.")
     parsed = SPECS[name][0].model_validate(value)
     if isinstance(parsed, ReadFile):

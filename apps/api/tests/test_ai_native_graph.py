@@ -1064,8 +1064,8 @@ async def test_cad_session_stops_repeated_text_instead_of_tool_call(monkeypatch,
     assert first["phase"] == "cad_session"
     assert first["cad_invalid_tool_attempts"] == 1
     stopped = await design.cad_session(state(cad_invalid_tool_attempts=2))
-    assert stopped["phase"] == "final"
-    assert stopped["terminal_status"] == "failed"
+    assert stopped["phase"] == "cad_recovery"
+    assert "terminal_status" not in stopped
     assert "no usable tool call three times" in stopped["final_message"]
 
 
@@ -1082,8 +1082,8 @@ async def test_cad_session_stops_repeated_malformed_tool_arguments(monkeypatch, 
 
     monkeypatch.setattr(design.models, "turn", turn)
     result = await design.cad_session(state(cad_invalid_tool_attempts=2))
-    assert result["phase"] == "final"
-    assert result["terminal_status"] == "failed"
+    assert result["phase"] == "cad_recovery"
+    assert "terminal_status" not in result
     assert "invalid tool action three times" in result["final_message"]
 
 
@@ -1163,8 +1163,8 @@ async def test_stalled_manifest_repair_preserves_candidate_and_reports_blocker(m
         result = await design.cad_session(current)
         current.update(result)
         current["cad_history"] = []
-    assert result["phase"] == "final"
-    assert result["terminal_status"] == "failed"
+    assert result["phase"] == "cad_recovery"
+    assert "terminal_status" not in result
     assert "missing has no component definition" in result["final_message"]
     assert "candidate" not in graph_mocks
 

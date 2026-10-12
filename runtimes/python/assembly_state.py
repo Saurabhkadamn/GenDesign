@@ -197,7 +197,13 @@ def verify_step_occurrences(shapes, manifest, worlds, *, step_path=None):
         return {"validatedOccurrences": [root] if root and definitions[root]["kind"] != "surface" else [],
                 "solidChecks": 0, "mode": "single_component"}
     if root is None or definitions[root]["kind"] != "assembly":
-        raise ValueError("Multiple occurrences require a real exported assembly root")
+        # A standalone part may carry one BOM/identity occurrence. Validate its
+        # exported geometry against that pose below, just as for an assembly.
+        # Multiple occurrences or native joints still require an assembly root.
+        single = next(iter(instances.values())) if len(instances) == 1 else None
+        if (root is None or single is None or single.get("definitionId") != root
+                or single.get("parentId") is not None or manifest.get("nativeAssembly")):
+            raise ValueError("Multiple occurrences or native joints require a real exported assembly root")
     parents = {i.get("parentId") for i in instances.values()}
     physical = [iid for iid, i in instances.items() if iid not in parents
                 and definitions[i["definitionId"]]["kind"] != "surface"]

@@ -19,6 +19,7 @@ class SavedState(TypedDict, total=False):
     coordinator_contract_repair: dict
     original_request: str
     clarified_request: str
+    user_updates: list[dict]
     coordinator_history: list[dict]
     cad_history: list[dict]
 
@@ -94,4 +95,5 @@ async def test_continue_resumes_actual_checkpoint_without_losing_evidence(monkey
     else:
         assert observed[0]["clarified_request"] == "Build the complete pump.\n\nUser continuation: " + guidance
         assert observed[0][history_key][-1] == {"role": "user", "content": guidance}
+        assert observed[0]["user_updates"] == [{"kind":"continuation", "message":guidance}]
     assert (await graph.aget_state(config)).values["model_calls"] == 24
