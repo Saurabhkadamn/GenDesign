@@ -164,12 +164,15 @@ def test_failed_read_tool_feedback_is_retained_but_successful_source_is_not_copi
 
 
 @pytest.mark.asyncio
-async def test_invalid_action_waits_at_checkpoint_and_resumes_without_losing_candidate(monkeypatch):
+@pytest.mark.parametrize('tool,arguments',[('read_file',{'path':''}),('apply_changes',{'files':{'parts/part.py':None}})])
+async def test_invalid_action_waits_at_checkpoint_and_resumes_without_losing_candidate(monkeypatch,tool,arguments):
     snapshot = {"manifest":{"components":[{"id":"part","kind":"solid","source":"parts/part.py"}],
         "rootComponentId":"part"},"files":{"parts/part.py":"def build(parameters, dependencies):\n    return None"}}
     async def load(_): return deepcopy(snapshot)
     async def turn(_state, **kwargs):
-        return {"id":"bad","name":"read_file","input":{"path":""}}, [], {"model_calls":18}
+        history=[{"role":"assistant","tool_calls":[{"id":"bad","type":"function",
+            "function":{"name":tool,"arguments":json.dumps(arguments)}}]}]
+        return {"id":"bad","name":tool,"input":arguments}, history, {"model_calls":18}
     monkeypatch.setattr(design.run_service,"load_candidate",load)
     monkeypatch.setattr(design,"agent_tool_turn",turn)
     async def seed(_): return {"phase":"cad_session"}
@@ -189,10 +192,18 @@ async def test_invalid_action_waits_at_checkpoint_and_resumes_without_losing_can
     assert waiting['__interrupt__'] and waiting['phase']=='cad_recovery'
     assert waiting['model_calls']==18 and waiting['cad_invalid_tool_attempts']==3
     assert 'terminal_status' not in waiting
+    feedback=json.loads(waiting['cad_history'][-1]['content'])
+    assert feedback['tool']==tool and feedback['issues']
+    assert 'input_value' not in json.dumps(feedback)
+    assert ('path' if tool=='read_file' else 'files') in feedback['acceptedArguments']
+    if tool=='apply_changes': assert 'manifest/source' in feedback['repairGuidance']
     restarted=design.build_graph(saver)
     resumed=await restarted.ainvoke(Command(resume={"kind":"continue","message":"Read parts/part.py."}),config)
     assert resumed['candidate_hash']=='same' and resumed['attempts']==5 and resumed['model_calls']==18
-    assert resumed['requirements']==initial['requirements'] and resumed['working_memory']==initial['working_memory']
+    assert resumed['requirements']==initial['requirements']
+    assert resumed['working_memory']['notes']==initial['working_memory']['notes']
+    assert resumed['working_memory']['outcomes']['tool_contract']['candidateHash']==design.digest(snapshot)
+    assert resumed['working_memory']['outcomes']['tool_contract']['issues']==feedback['issues']
     assert resumed['cad_invalid_tool_attempts']==0
     assert resumed['cad_contract_repair']['stalledAttempts']==0
     assert resumed['cad_contract_repair']['issues']==initial['cad_contract_repair']['issues']

@@ -1629,14 +1629,24 @@ async def cad_session(state: AgentState) -> dict:
         value = parsed.model_dump()
     except (ValidationError, ValueError) as exc:
         invalid_attempts = state.get("cad_invalid_tool_attempts", 0) + 1
+        issues = (exc.errors(include_url=False,include_input=False,include_context=False)
+            if isinstance(exc,ValidationError) else [{"loc":(),"msg":str(exc)}])
+        offered = next((item['function']['parameters'] for item in tools
+            if item['function']['name']==call['name']),{})
+        guidance = {
+            "update_parameters":"changes must be a list of componentId, parameter and value objects. Use existing component IDs and parameter names; introduce new parameters with apply_changes.manifest and preserve the requested values.",
+            "apply_changes":"files maps exact Python paths to full source. Correct the listed manifest/source fields together. Provided component arrays need complete entries; introduce source parameters in those entries. The rejected action changed nothing.",
+            "read_file":"Use an exact non-empty file path from workspace.files. If it is empty, create source with apply_changes.",
+        }.get(call['name'],"Correct the listed fields using the currently offered tool schema. The rejected action changed nothing.")
         feedback = {
-            "ok": False, "category": "tool_contract", "message": str(exc)[:3000],
-            "repairGuidance": ("Use an existing component ID and parameter name from workspace.manifest; "
-                "read its source before changing a value. Use apply_changes for new parameters."
-                if call["name"] == "update_parameters" else
-                "Use an exact non-empty file path from workspace.files. "
-                "If workspace.files is empty, create the requested source with apply_changes immediately.")
+            "ok": False, "category": "tool_contract", "tool":call['name'],
+            "message":"Tool arguments were rejected before any changes were saved.",
+            "issues":[{"path":".".join(map(str,item['loc'])),"message":item['msg'][:500]} for item in issues[:40]],
+            "acceptedArguments":sorted(offered.get('properties',{})),
+            "repairGuidance":guidance,
         }
+        usage['working_memory']=record_observation({'working_memory':usage.get('working_memory') or
+            state.get('working_memory')},call['name'],feedback,candidate=digest(snapshot))
         next_history = bounded_history([*history, tool_message(call, feedback)])
         if invalid_attempts >= 3:
             return {**usage, "phase": "cad_recovery",
