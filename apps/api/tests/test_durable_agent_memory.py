@@ -168,7 +168,8 @@ async def test_cad_notes_tool_preserves_source_and_unrelated_pending_requirement
 
 
 @pytest.mark.asyncio
-async def test_model_turn_retains_full_generation_but_compacts_no_action_output(monkeypatch):
+@pytest.mark.parametrize('role,workspace_key',[('cad','workspace'),('coordinator','currentWorkspace')])
+async def test_model_turn_retains_full_generation_but_compacts_no_action_output(monkeypatch,role,workspace_key):
     from forma_api.contracts import AppSettings
     records = []
     prompts = []
@@ -186,11 +187,13 @@ async def test_model_turn_retains_full_generation_but_compacts_no_action_output(
     monkeypatch.setattr(design,"operation",operation)
     monkeypatch.setattr(design.db,"insert",insert)
     monkeypatch.setattr(design.models,"turn",model)
-    state = {"model_calls":0,"working_memory":{"notes":{"pendingRequirements":["Exact design"]}}}
-    _, history, usage = await design.agent_tool_turn(state,model_role="cad",prompt_role="cad",
-        node="cad-session",context={"request":"Exact design"},history=[],tools=[])
+    state = {"model_calls":0,"working_memory":{"notes":{"pendingRequirements":["Exact design"]},
+        "outcomes":{"built":{"candidateHash":"current","ok":True}}}}
+    _, history, usage = await design.agent_tool_turn(state,model_role=role,prompt_role=role,
+        node=role+'-session',context={"request":"Exact design",workspace_key:{"candidateHash":"current"}},history=[],tools=[])
     assert len(records[0]["output"]["content"]) == 102163
     assert len(history[-1]["content"]) < 500
     assert usage["working_memory"]["notes"]["pendingRequirements"] == ["Exact design"]
     context = json.loads(prompts[0][1]["content"].split(": ",1)[1])
     assert context["workingMemory"]["notesAreAgentReported"] is True
+    assert context["workingMemory"]["recentOutcomes"][0]["currentCandidate"] is True

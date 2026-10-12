@@ -557,7 +557,7 @@ async def agent_tool_turn(state: AgentState, *, model_role: str, prompt_role: st
         raise Pause("The model-call budget was reached. The current draft and completed evidence were preserved.")
     memory = capture_history(state, history)
     context = {**context, "workingMemory": memory_context({**state, "working_memory": memory},
-        context.get("workspace", {}).get("candidateHash", ""))}
+        (context.get("workspace") or context.get("currentWorkspace") or {}).get("candidateHash", ""))}
     history = bounded_history(history)
     messages = [
         {"role": "system", "content": system_prompt(prompt_role)},
