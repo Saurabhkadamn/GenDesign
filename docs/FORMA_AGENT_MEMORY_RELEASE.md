@@ -10,6 +10,8 @@ The context budget includes serialized messages and tool schemas, using a conser
 
 Automatic three-edit builds now defer when a multi-component workspace still has a single-part root, so the agent receives the existing root repair context first. This changes orchestration ordering, not engineering geometry.
 
+The initial hosted run retained the exact clarification and used both working-memory tools, but then repeatedly staged a script without a registered buildable part. Source/staging diagnostics now accompany the CAD context and successful edits. The optional `diagnose_workspace` tool reports top-level entrypoints, unregistered files and the root without executing source. These observations are advisory and do not reject or rewrite geometry. Full component execution diagnostics remain separate work.
+
 ## Validation
 
 Local regression coverage exercises real LangGraph checkpoint interruption/resumption and a new graph instance reading the checkpoint; exact-value preservation beyond the dialogue limit; multiple clarifications; unchanged source and usage counters; failure provenance after edits; retrieval of older outcomes; complete tool protocol pairs; notes as partial patches; and retained full generation output with compact active narrative.

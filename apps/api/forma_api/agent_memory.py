@@ -38,6 +38,8 @@ def record_observation(state: dict, name: str, result: dict, *, candidate: str =
             "location": location,
             "guidance": error.get("guidance") or result.get("repairGuidance") or result.get("message"),
             "diagnostic": (error.get("diagnostic") or "")[-3000:]}
+    if result.get("workspaceStatus"):
+        fact["workspaceStatus"] = result["workspaceStatus"]
     if name in {"apply_changes", "update_parameters"} and result.get("ok"):
         changed = memory.setdefault("changedFiles", {})
         for path in result.get("changedFiles") or []:

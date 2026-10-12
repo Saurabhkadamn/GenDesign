@@ -25,6 +25,7 @@ from ..services import runs as run_service
 from ..tools import model_tools, parameter_patch, parse_tool, portable_schema, updated_manifest
 from ..workspace_diagnostics import contract_repair_attempt, workspace_contract_feedback
 from ..source_contracts import validate_component_entrypoints
+from ..workspace_status import workspace_status
 from ..agent_memory import (user_update, memory_context, capture_history, record_observation,
                             fit_dialogue, compact_narrative, update_notes, estimate_tokens, read_memory)
 from .state import AgentState
@@ -680,7 +681,7 @@ async def coordinator(state: AgentState) -> dict:
 
 COORDINATOR_SESSION_TOOL_NAMES = {
     "inspect_project", "read_file", "search_files", "inspect_geometry",
-    "delegate", "restore_revision", "ask_user", "finish", "update_working_notes", "read_working_memory",
+    "delegate", "restore_revision", "ask_user", "finish", "update_working_notes", "read_working_memory", "diagnose_workspace",
 }
 
 
@@ -775,6 +776,8 @@ async def coordinator_session(state: AgentState) -> dict:
         result = {"ok": True, "agentReportedNotes": True}
     elif name == "read_working_memory":
         result = read_memory(update.get("working_memory") or state.get("working_memory") or {}, value["offset"], value["limit"])
+    elif name == "diagnose_workspace":
+        result = workspace_status(snapshot)
     elif name == "inspect_project":
         result = project_context
         update["coordinator_inspected_context"] = context_hash
@@ -1262,7 +1265,7 @@ def normalize_instance_hierarchy(manifest: dict) -> tuple[dict, bool]:
 
 CAD_SESSION_TOOL_NAMES = {
     "read_file", "search_files", "apply_changes", "update_parameters", "build",
-    "inspect_geometry", "request_engineering", "respond_to_review", "ask_user", "update_working_notes", "read_working_memory",
+    "inspect_geometry", "request_engineering", "respond_to_review", "ask_user", "update_working_notes", "read_working_memory", "diagnose_workspace",
 }
 MAX_CAD_EDITS_WITHOUT_BUILD = 3
 MAX_REVIEW_REPAIR_CYCLES = 2
@@ -1546,6 +1549,7 @@ async def cad_session(state: AgentState) -> dict:
         "lastReview": state.get("review"),
         "nativeGroundingEvidence": native_grounding_evidence(snapshot, state.get("validation") or {}),
         "workspaceRepair": state.get("cad_contract_repair") or None,
+        "workspaceStatus": workspace_status(snapshot),
     }
     tools = [item for item in model_tools("cad", working_memory=True, review_response=(state.get("review") or {}).get("action") == "repair")
              if item["function"]["name"] in CAD_SESSION_TOOL_NAMES]
@@ -1682,6 +1686,8 @@ async def cad_session(state: AgentState) -> dict:
     if name == "read_working_memory":
         result = read_memory(usage.get("working_memory") or state.get("working_memory") or {}, value["offset"], value["limit"])
         return {**usage, "phase": "cad_session", "cad_history": bounded_history([*history, tool_message(call, result)])}
+    if name == "diagnose_workspace":
+        return {**usage, "phase": "cad_session", "cad_history": bounded_history([*history, tool_message(call, workspace_status(snapshot))])}
     if name == "read_file" and state.get("last_read_path") == value.get("path"):
         feedback = {"ok": False, "category": "repeated_tool_action",
             "message": "This file was just read in the previous CAD turn.",
@@ -1822,6 +1828,7 @@ async def cad_session(state: AgentState) -> dict:
         await repo.event(state["run_id"], ("CAD updated named component parameters." if name == "update_parameters"
             else "CAD updated a focused part of the code workspace."), stage="cad")
         result = {"ok": True, "candidateHash": candidate_hash,
+            "workspaceStatus": workspace_status(candidate),
             "changedFiles": sorted(value["files"]), "deletedFiles": value.get("deletePaths", []),
             "autoRegisteredComponents": auto_registered,
             "hierarchyNormalized": hierarchy_normalized,

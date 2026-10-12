@@ -135,6 +135,7 @@ class ReadWorkingMemory(Contract):
 
 
 SPECS = {
+    "diagnose_workspace": (Empty, "Inspect source entrypoints, registered definitions and root staging problems without running code. Saved files are not built geometry. Does not modify or lock parts."),
     "read_working_memory": (ReadWorkingMemory, "Read older retained tool outcomes outside recent dialogue, newest first. This is previous evidence with source provenance, not current validation."),
     "update_working_notes": (WorkingNotes, "Save durable task notes, decisions, pending requirements and failed approaches. Supplied fields replace only those fields; omitted fields are preserved. These are agent-reported notes, not validation. Does not edit or lock parts."),
     "read_file": (ReadFile, "Read a private workspace source file before editing it."),
@@ -255,14 +256,14 @@ def portable_schema(schema: dict) -> dict:
 
 
 def model_tools(role: Role, *, review_response: bool = False, working_memory: bool = False) -> list[dict]:
-    names = (*ROLE_TOOLS[role], "update_working_notes", "read_working_memory") if working_memory and role in {"cad", "coordinator"} else ROLE_TOOLS[role]
+    names = (*ROLE_TOOLS[role], "update_working_notes", "read_working_memory", "diagnose_workspace") if working_memory and role in {"cad", "coordinator"} else ROLE_TOOLS[role]
     return [{"type": "function", "function": {"name": name, "description": SPECS[name][1],
             "parameters": portable_schema(SPECS[name][0].model_json_schema())}} for name in names
             if name != "respond_to_review" or review_response]
 
 
 def parse_tool(role: Role, name: str, value: dict):
-    if name not in ROLE_TOOLS[role] and not (name in {"update_working_notes", "read_working_memory"} and role in {"cad", "coordinator"}):
+    if name not in ROLE_TOOLS[role] and not (name in {"update_working_notes", "read_working_memory", "diagnose_workspace"} and role in {"cad", "coordinator"}):
         raise ValueError("This role cannot use that tool.")
     parsed = SPECS[name][0].model_validate(value)
     if isinstance(parsed, ReadFile):
