@@ -727,7 +727,8 @@ async def coordinator_session(state: AgentState) -> dict:
              if item["function"]["name"] in allowed
              and not (inspected and item["function"]["name"] == "inspect_project")]
     history = state.get("coordinator_history") or [{"role": "user", "content": state["original_request"]}]
-    if notes_just_saved(history):
+    note_cooldown=notes_just_saved(history)
+    if note_cooldown:
         tools=[item for item in tools if item['function']['name']!='update_working_notes']
         context['taskProgress']='Working notes were just saved. Choose a different action to advance the task. Notes become available after another action or a human update.'
     older_memory=older_outcomes_available(state,history)
@@ -757,7 +758,7 @@ async def coordinator_session(state: AgentState) -> dict:
             "repairGuidance": context.get("projectInspection", "Choose one currently available tool.")}
         if call['name']=='read_working_memory' and not older_memory:
             feedback.update(category='memory_progress',repairGuidance=context['memoryAvailability'])
-        elif call['name']=='update_working_notes' and notes_just_saved(history):
+        elif call['name']=='update_working_notes' and note_cooldown:
             feedback.update(category='note_progress',repairGuidance=context['taskProgress'])
         return {**update, "coordinator_contract_repair": feedback,
                 "coordinator_history": bounded_history([*history, tool_message(call, feedback)])}

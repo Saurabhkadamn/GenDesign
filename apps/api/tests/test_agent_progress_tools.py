@@ -42,7 +42,8 @@ async def test_successful_notes_offer_a_different_action_and_renew_after_it(monk
 
 
 @pytest.mark.asyncio
-async def test_provider_cannot_execute_omitted_note_action_or_reset_usage(monkeypatch):
+@pytest.mark.parametrize('role',['cad','coordinator'])
+async def test_provider_cannot_execute_omitted_note_action_or_reset_usage(monkeypatch,role):
     snapshot={'manifest':{'components':[],'instances':[],'rootComponentId':None},'files':{}}
     async def load(_): return deepcopy(snapshot)
     monkeypatch.setattr(design.run_service,'load_candidate',load)
@@ -54,13 +55,14 @@ async def test_provider_cannot_execute_omitted_note_action_or_reset_usage(monkey
             'function':{'name':call['name'],'arguments':json.dumps(call['input'])}}]}]
         return call,history,{'model_calls':19}
     monkeypatch.setattr(design,'agent_tool_turn',turn)
-    result=await design.cad_session({'run_id':'run','original_request':'Keep all features',
-        'cad_history':saved_notes(),'working_memory':deepcopy(memory),'model_calls':18,
+    node=design.cad_session if role=='cad' else design.coordinator_session
+    result=await node({'run_id':'run','original_request':'Keep all features',
+        role+'_history':saved_notes(),'working_memory':deepcopy(memory),'model_calls':18,
         'cad_invalid_tool_attempts':2,'attempts':4})
-    assert result['phase']=='cad_recovery' and result['model_calls']==19
+    assert result['phase']==('cad_recovery' if role=='cad' else 'coordinator_session') and result['model_calls']==19
     assert 'attempts' not in result and 'working_memory' not in result
-    assert json.loads(result['cad_history'][-1]['content'])['category']=='note_progress'
-    assert notes_just_saved(result['cad_history'])
+    assert json.loads(result[role+'_history'][-1]['content'])['category']=='note_progress'
+    assert notes_just_saved(result[role+'_history'])
     assert memory['notes']['pendingRequirements']==['Preserve every requested feature']
 
 
@@ -95,7 +97,8 @@ async def test_memory_retrieval_is_offered_only_for_facts_outside_current_contex
 
 
 @pytest.mark.asyncio
-async def test_ignored_empty_memory_read_is_not_executed_and_cannot_renew_notes(monkeypatch):
+@pytest.mark.parametrize('role',['cad','coordinator'])
+async def test_ignored_empty_memory_read_is_not_executed_and_cannot_renew_notes(monkeypatch,role):
     snapshot={'manifest':{'components':[],'instances':[],'rootComponentId':None},'files':{}}
     async def load(_): return deepcopy(snapshot)
     monkeypatch.setattr(design.run_service,'load_candidate',load)
@@ -106,11 +109,12 @@ async def test_ignored_empty_memory_read_is_not_executed_and_cannot_renew_notes(
             'function':{'name':call['name'],'arguments':'{}'}}]}]
         return call,history,{'model_calls':19}
     monkeypatch.setattr(design,'agent_tool_turn',turn)
-    result=await design.cad_session({'run_id':'run','original_request':'Keep exact values',
-        'cad_history':saved_notes(),'working_memory':{},'model_calls':18,'cad_invalid_tool_attempts':2})
-    assert result['phase']=='cad_recovery' and result['model_calls']==19
-    assert json.loads(result['cad_history'][-1]['content'])['category']=='memory_progress'
-    assert notes_just_saved(result['cad_history'])
+    node=design.cad_session if role=='cad' else design.coordinator_session
+    result=await node({'run_id':'run','original_request':'Keep exact values',
+        role+'_history':saved_notes(),'working_memory':{},'model_calls':18,'cad_invalid_tool_attempts':2})
+    assert result['phase']==('cad_recovery' if role=='cad' else 'coordinator_session') and result['model_calls']==19
+    assert json.loads(result[role+'_history'][-1]['content'])['category']=='memory_progress'
+    assert notes_just_saved(result[role+'_history'])
     assert 'working_memory' not in result and snapshot['files']=={}
 
 
