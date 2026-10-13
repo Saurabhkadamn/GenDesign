@@ -141,16 +141,20 @@ def notes_just_saved(history: list[dict]) -> bool:
         result=history[index]
         if result.get('role')!='tool': return False
         calls=history[index-1].get('tool_calls') or []
-        if not any(call.get('id')==result.get('tool_call_id') and
-            call.get('function',{}).get('name')=='update_working_notes' for call in calls):
-            return False
+        call=next((call for call in calls if call.get('id')==result.get('tool_call_id')),None)
+        if not call: return False
         try:
             value=json.loads(result.get('content') or '{}')
         except (ValueError,TypeError):
             return False
         if not isinstance(value,dict): return False
-        if value.get('category')=='note_progress' and value.get('ok') is False:
+        if value.get('category') in {'note_progress','memory_progress'} and value.get('ok') is False:
             index-=2  # A rejected notes call is not a different task action.
             continue
-        return value.get('ok') is True and value.get('agentReportedNotes') is True
+        return call.get('function',{}).get('name')=='update_working_notes' and value.get('ok') is True and value.get('agentReportedNotes') is True
     return False
+
+
+def older_outcomes_available(state: dict, history: list[dict]) -> bool:
+    """Recent twelve outcomes are already provided; retrieval needs older facts."""
+    return len(capture_history(state,history).get('outcomes') or {})>12
