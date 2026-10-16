@@ -281,6 +281,8 @@ async def _turn_openrouter(config: dict, messages: list[dict], tools: list[dict]
 async def turn(config: dict, messages: list[dict], tools: list[dict], *, max_tokens: int | None = None,
                web_search=False, max_searches=0, allow_fallback=True):
     """Dispatch through the configured provider without leaking provider details into graph code."""
+    from ..tools import provider_tools
+    tools = provider_tools(config, tools)
     if config.get("provider", "openrouter") == "openai_compatible":
         from .openai_compatible import turn as compatible_turn
         return await compatible_turn(config, messages, tools, max_tokens=max_tokens,

@@ -683,7 +683,7 @@ async def test_reviewer_tool_budget_forces_a_decision(monkeypatch, graph_mocks):
 
 
 @pytest.mark.asyncio
-async def test_cad_session_forces_build_after_three_edits(monkeypatch, graph_mocks):
+async def test_cad_session_suggests_tests_without_overriding_agent_action(monkeypatch, graph_mocks):
     graph_mocks["candidate"] = {
         "manifest": {"schemaVersion": 1, "units": "mm",
             "components": [{"id": "block", "name": "Block", "source": "parts/block.py",
@@ -693,8 +693,14 @@ async def test_cad_session_forces_build_after_three_edits(monkeypatch, graph_moc
         "files": {"parts/block.py": "def build(p,d): return None"},
     }
     seen = {}
-    async def turn(*_args, **_kwargs):
-        raise AssertionError("CAD must build without another model call")
+    async def turn(_config, messages, tools, **_kwargs):
+        context = json.loads(messages[1]["content"].split(": ", 1)[1])
+        assert context["testSuggested"]
+        assert {"apply_changes", "read_file", "build"}.issubset({item["function"]["name"] for item in tools})
+        return {"message": {"role": "assistant", "content": "", "tool_calls": [{
+            "id": "chosen-build", "type": "function", "function": {"name": "build", "arguments": '{"final":false}'}}]},
+            "calls": [{"id": "chosen-build", "name": "build", "input": {"final": False}}],
+            "inputTokens": 1, "outputTokens": 1}
     monkeypatch.setattr(design.models, "turn", turn)
     async def build(build_state):
         seen.update(build_state)
@@ -702,6 +708,7 @@ async def test_cad_session_forces_build_after_three_edits(monkeypatch, graph_moc
     monkeypatch.setattr(design, "build", build)
     result = await design.cad_session(state(cad_edits_since_build=3))
     assert seen["pending_cad_call"]["name"] == "build"
+    assert seen["pending_cad_call"]["id"] == "chosen-build"
     assert seen["cad_edits_since_build"] == 0
     assert result["phase"] == "validate"
 
@@ -915,7 +922,7 @@ async def test_second_part_requires_real_assembly_root_before_rebuild(monkeypatc
     result = await design.cad_session(state(build_result={"ok": False,
         "error": {"category": "assembly_root_mismatch"}}))
     assert result["phase"] == "cad_session"
-    assert seen["tools"] == ["apply_changes"]
+    assert {"apply_changes", "read_file", "build"}.issubset(seen["tools"])
     assert "rootComponentId" in seen["context"]["assemblyRootRepair"]
 
 
@@ -1431,7 +1438,7 @@ async def test_source_signature_regression_is_atomic_and_repair_survives_history
     accepted = await design.cad_session(current)
     assert accepted["cad_contract_repair"] == {}
     assert graph_mocks["candidate"] == original
-    assert accepted["validation"] == {}
+    assert "validation" not in accepted  # Unchanged valid source keeps any current evidence.
 
 
 @pytest.mark.asyncio

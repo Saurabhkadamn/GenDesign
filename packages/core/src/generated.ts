@@ -270,6 +270,7 @@ export interface components {
             };
             /**
              * Color
+             * @description Color string in #RRGGBB format, for example #999999. Not 0x999999.
              * @default #b9c4ad
              */
             color: string;
@@ -671,6 +672,7 @@ export interface components {
             name: string;
             /**
              * Densitykgm3
+             * @description Physical material density in kg/m^3, greater than zero. Omit or use null when unknown. Assembly groups have no bulk density; their mass is derived from physical occurrences. Never use zero as unknown.
              * @default null
              */
             densityKgM3: number | null;

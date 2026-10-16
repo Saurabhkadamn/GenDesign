@@ -468,7 +468,9 @@ export function Workspace({
             className={`save-status ${run ? 'working' : ''} ${drawingDirty && !run ? 'unsaved' : ''}`}
           >
             <span />
-            {run
+            {waitingInput
+              ? 'Waiting for your response'
+              : run
               ? 'Working on your design'
               : drawingDirty
                 ? 'Unsaved drawing edits'
@@ -1091,8 +1093,8 @@ export function Workspace({
                 <div className="run-waiting" role="status">
                   <CircleHelp size={15} />
                   <span>
-                    Forma is waiting for one design decision. Reply to the question above; if it is
-                    an engineering proposal, you can also type <strong>approve</strong>.
+                    Forma needs your response. Follow the message above to answer a question or
+                    continue a paused step. Your saved design is retained.
                   </span>
                 </div>
               )}

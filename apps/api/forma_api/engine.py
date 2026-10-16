@@ -14,7 +14,7 @@ from .execution import ExecutionFailure, SandboxExpired, build_error, digest, ex
 from .prompts import VERSION as PROMPT_VERSION, system_prompt
 from .requirements import design_work_requested, merge_requirements
 from .assembly_requirements import check_assembly_preservation, normalize_assembly_requirements
-from .tools import model_tools, parameter_patch, parse_tool, updated_manifest
+from .tools import model_tools, parameter_patch, parse_tool, source_patch, updated_manifest
 
 
 class Pause(Exception):
@@ -361,16 +361,20 @@ async def execute_tool(run, cp, call, app_settings, worker):
     name, value, limits = call["name"], parsed.model_dump(), app_settings.limits
     snapshot = cp["snapshot"]
     if name == "read_file":
+        if value.get("version") == "rejected":
+            raise ValueError("Rejected proposal source is available only in the CAD graph session; use saved for this role.")
         return {"content": snapshot["files"].get(value["path"])}
     if name == "search_files":
         return {"matches": [{"path": p, "line": i+1, "text": line[:300]} for p, code in snapshot["files"].items() for i, line in enumerate(code.splitlines()) if value["query"] in line][:100]}
     if name in {"apply_changes", "update_parameters"}:
         if name == "update_parameters":
             parsed = parameter_patch(snapshot["manifest"], parsed)
-            value = parsed.model_dump()
-        if cp["role"] == "engineering" and (value["manifest"] is not None or any(not p.startswith("calculations/") for p in value["files"])):
+        parsed = source_patch(snapshot["files"], parsed)
+        value = parsed.model_dump()
+        paths = [*value["files"], *value.get("deletePaths", [])]
+        if cp["role"] == "engineering" and (value["manifest"] is not None or any(not p.startswith("calculations/") for p in paths)):
             raise ValueError("Engineering can edit only calculations/ files and cannot modify the manifest.")
-        if cp["role"] == "cad" and any(p.startswith("calculations/") for p in value["files"]):
+        if cp["role"] == "cad" and any(p.startswith("calculations/") for p in paths):
             raise ValueError("Delegate calculations to the engineering agent.")
         files = {**snapshot["files"], **value["files"]}
         for path in value.get("deletePaths", []):
@@ -378,12 +382,16 @@ async def execute_tool(run, cp, call, app_settings, worker):
         candidate = Snapshot.model_validate({"manifest": updated_manifest(snapshot["manifest"], parsed), "files": files}).model_dump()
         if not app_settings.surfacingEnabled and any(c["kind"] == "surface" for c in candidate["manifest"]["components"]):
             raise ValueError("Surface modeling is disabled by the administrator.")
+        if value.get("dryRun"):
+            return {"ok": True, "previewOnly": True, "saved": False, "proposedCandidateHash": digest(candidate)}
         cp["snapshot"] = candidate
         if cp["role"] == "cad" and candidate != snapshot:
             cp["changed"] = True
             cp.pop("validated", None)
         return {"ok": True, "candidateHash": digest(candidate)}
     if name == "inspect_geometry":
+        if value.get("componentId"):
+            raise ValueError("Part-probe reports are available in the CAD graph session. Omit componentId for full-candidate evidence.")
         return cp.get("validated", {"verified": False, "message": "Build the current candidate first."})
     if name == "request_engineering":
         cp["engineeringRequest"] = value["task"]
@@ -399,6 +407,8 @@ async def execute_tool(run, cp, call, app_settings, worker):
             cp["sandbox"] = cp.get("sandbox") or f"forma-{UUID(run['id']).hex}-{uuid4().hex[:12]}"
         return None
     if name == "build":
+        if value.get("componentId"):
+            raise ValueError("Isolated component builds require the current graph harness.")
         return await build_candidate(run, cp, limits, f"tool:{cp['sequence']}")
     if name == "calculate":
         if not value["path"].startswith("calculations/"):

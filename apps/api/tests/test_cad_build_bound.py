@@ -4,7 +4,7 @@ from forma_api.graphs import design
 
 
 @pytest.mark.asyncio
-async def test_three_edits_force_intermediate_build_without_another_model_call(monkeypatch):
+async def test_many_edits_preserve_agent_choice_of_test_scope(monkeypatch):
     captured = {}
     snapshot = {"manifest": {"components": [
         {"id": "plate", "kind": "solid"},
@@ -22,8 +22,12 @@ async def test_three_edits_force_intermediate_build_without_another_model_call(m
         captured.update(state)
         return {"phase": "validate"}
 
-    async def model_turn(*_args, **_kwargs):
-        raise AssertionError("The model must not receive another edit turn")
+    async def model_turn(_state, **kwargs):
+        assert kwargs["context"]["testSuggested"]
+        assert "apply_changes" in {tool["function"]["name"] for tool in kwargs["tools"]}
+        call = {"id": "agent-build", "name": "build", "input": {"final": False}}
+        return call, [{"role": "assistant", "tool_calls": [{"id": "agent-build", "type": "function",
+            "function": {"name": "build", "arguments": '{"final":false}'}}]}], {"model_calls": 21}
 
     monkeypatch.setattr(design.run_service, "load_candidate", load)
     monkeypatch.setattr(design.repo, "event", event)
