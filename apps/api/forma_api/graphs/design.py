@@ -22,10 +22,11 @@ from ..providers.openrouter import ModelFailure
 from ..requirements import design_work_requested, merge_requirements
 from ..assembly_requirements import normalize_assembly_requirements
 from ..services import runs as run_service
-from ..tools import model_tools, parameter_patch, parse_tool, portable_schema, updated_manifest
+from ..tools import model_tools, parameter_patch, parse_tool, json_schema, provider_tools, source_patch, updated_manifest
 from ..workspace_diagnostics import contract_repair_attempt, workspace_contract_feedback
 from ..source_contracts import validate_component_entrypoints
 from ..workspace_status import workspace_status
+from ..harness import acceptance_context, component_snapshot, probe_context, recovery_key
 from ..agent_memory import (user_update, memory_context, capture_history, record_observation,
                             fit_dialogue, compact_narrative, update_notes, estimate_tokens, read_memory, notes_just_saved, older_outcomes_available)
 from .state import AgentState
@@ -252,7 +253,7 @@ def requested_part_type_count(request: str) -> int | None:
 
 def model_step_token_budget(config: dict, node: str) -> int:
     """Bound one Vercel step, while allowing a design to span many tool turns."""
-    caps = {"coordinator-session": 8192, "cad-session": 64000,
+    caps = {"coordinator-session": 8192, "cad-session": 64000, "cad-replan": 4096,
             "review-session": 8192, "analysis": 24000, "triage": 8192}
     try:
         configured = int(config.get("max_output_tokens") or 32768)
@@ -326,7 +327,7 @@ class ReviewResult(Contract):
 
 def submission_tool(name: str, description: str, contract: type[Contract]) -> dict:
     return {"type": "function", "function": {"name": name, "description": description,
-        "parameters": portable_schema(contract.model_json_schema())}}
+        "parameters": json_schema(contract.model_json_schema())}}
 
 
 async def app_settings() -> AppSettings:
@@ -345,7 +346,7 @@ async def structured_turn(state: AgentState, role: str, node: str, prompt: str,
     max_model_calls = (await app_settings()).limits.maxModelCalls
     if ordinal >= max_model_calls:
         raise Pause("The model-call limit was reached. Start a new bounded run when ready.")
-    tools = [submission_tool(tool_name, f"Submit the complete {node} result.", contract)]
+    tools = provider_tools(config, [submission_tool(tool_name, f"Submit the complete {node} result.", contract)])
     messages = [{"role": "system", "content": system_prompt(role)},
         {"role": "system", "content": prompt},
         {"role": "user", "content": state.get("clarified_request") or state["original_request"]}]
@@ -529,6 +530,15 @@ def compact_completed_changes(history: list[dict]) -> list[dict]:
                         ". The saved workspace is authoritative; use read_file to inspect source."})
                     index += 2
                     continue
+                if result.get("ok") is False and len(json.dumps(arguments)) > 8000:
+                    # Full rejected proposals stay in generation records and
+                    # are selectively readable; do not refill the prompt with
+                    # thousands of lines that were never saved.
+                    compacted.append({"role": "assistant", "content":
+                        "An apply_changes proposal was rejected without saving. Feedback: " + json.dumps(result, ensure_ascii=False)[:12000] +
+                        ". Read retained proposal source with read_file(version='rejected') when needed."})
+                    index += 2
+                    continue
         compacted.append(message)
         index += 1
     return compacted
@@ -552,6 +562,7 @@ async def agent_tool_turn(state: AgentState, *, model_role: str, prompt_role: st
     """Run one open-ended model/tool turn while retaining only bounded dialogue state."""
     run = await run_row(state)
     config = await models.configuration(model_role)
+    tools = provider_tools(config, tools)
     ordinal = state.get("model_calls", 0)
     if ordinal >= (await app_settings()).limits.maxModelCalls:
         raise Pause("The model-call budget was reached. The current draft and completed evidence were preserved.")
@@ -794,10 +805,11 @@ async def coordinator_session(state: AgentState) -> dict:
         result = project_context
         update["coordinator_inspected_context"] = context_hash
     elif name == "read_file":
-        content = snapshot["files"].get(value["path"])
+        content = snapshot["files"].get(value["path"]) if value.get("version") != "rejected" else None
         result = {"ok": content is not None, "path": value["path"],
             "content": content[:60_000] if content is not None else None,
-            "availablePaths": sorted(snapshot["files"]) if content is None else []}
+            "availablePaths": sorted(snapshot["files"]) if content is None else [],
+            "message": "Rejected proposal source is available in the CAD session only." if value.get("version") == "rejected" else ""}
     elif name == "search_files":
         result = {"matches": [{"path": path, "line": index + 1, "text": line[:300]}
             for path, source in snapshot["files"].items()
@@ -1488,6 +1500,28 @@ def register_unlisted_part_sources(manifest: dict, files: dict[str, str]) -> tup
     return manifest, added
 
 
+def retained_proposal_files(arguments) -> dict[str, str]:
+    """Retain readable rejected source privately without accepting a workspace edit."""
+    if not isinstance(arguments, dict):
+        return {}
+    files = arguments.get("files") or {}
+    if isinstance(files, list):
+        files = {item["path"]: item["content"] for item in files
+                 if isinstance(item, dict) and isinstance(item.get("path"), str) and isinstance(item.get("content"), str)}
+    if not isinstance(files, dict):
+        return {}
+    result = {}
+    for path, source in files.items():
+        if not isinstance(path, str) or not isinstance(source, str) or len(source) > 150_000:
+            continue
+        try:
+            safe_path(path)
+        except ValueError:
+            continue
+        result[path] = source
+    return result if len(json.dumps(result).encode()) <= 2_000_000 else {}
+
+
 async def cad_session(state: AgentState) -> dict:
     """Let the CAD model choose one incremental workspace/tool action."""
     snapshot = await run_service.load_candidate(state["run_id"])
@@ -1509,39 +1543,15 @@ async def cad_session(state: AgentState) -> dict:
     requested_components = requested_component_labels(state.get("original_request", ""))
     edits_since_build = state.get("cad_edits_since_build", 0)
     manifest = snapshot["manifest"]
-    physical_components = [item for item in manifest.get("components", [])
-                           if item.get("kind") != "assembly"]
-    root = next((item for item in manifest.get("components", [])
-                 if item.get("id") == manifest.get("rootComponentId")), None)
-    root_needs_repair = len(physical_components) > 1 and (root or {}).get("kind") != "assembly"
     buildable = bool(snapshot["manifest"].get("components")
                      and snapshot["manifest"].get("rootComponentId"))
-    if (edits_since_build >= MAX_CAD_EDITS_WITHOUT_BUILD and buildable
-            and not state.get("cad_contract_repair") and not root_needs_repair):
-        # Tool availability is advisory for some OpenAI-compatible providers:
-        # they can still return apply_changes after it is removed from the
-        # schema. Enforce the edit bound in graph code and give CAD real build
-        # feedback before another source patch consumes a model call.
-        required = requested_part_type_count(state["original_request"])
-        built = sum(component.get("kind") != "assembly"
-                    for component in snapshot["manifest"]["components"])
-        final = required is not None and built >= required
-        call_id = f"auto-build-{state.get('model_calls', 0)}-{state.get('attempts', 0)}"
-        call = {"id": call_id, "name": "build", "input": {"final": final}}
-        assistant = {"role": "assistant", "content": "", "tool_calls": [{
-            "id": call_id, "type": "function", "function": {
-                "name": "build", "arguments": json.dumps({"final": final}),
-            },
-        }]}
-        await repo.event(state["run_id"],
-            f"CAD reached {edits_since_build} edits; building the saved candidate before more changes.",
-            stage="execution")
-        return await build({**state, "phase": "build", "pending_cad_call": call,
-            "cad_history": bounded_history([*history, assistant], allow_pending=True),
-            "cad_edits_since_build": 0, "build_final": final,
-            "requested_part_types": required or 0, "built_part_types": built})
     context = {
         "request": state.get("clarified_request") or state["original_request"],
+        "acceptanceLedger": acceptance_context(state, snapshot),
+        "componentTests": probe_context(state, snapshot),
+        "recoveryPlan": state.get("recovery_plan") or None,
+        "rejectedSource": {"paths": sorted(state.get("rejected_files") or {}),
+                           "instruction": "Unsaved proposal source only; use read_file(version='rejected') selectively. Saved source is authoritative."},
         "delegatedTask": state.get("coordinator_task", ""),
         "projectContext": state.get("project_context", {}),
         "selectedIds": state.get("selected_ids", []),
@@ -1570,17 +1580,14 @@ async def cad_session(state: AgentState) -> dict:
         context["componentMilestone"] = {
             "requestedTypes": requested_components,
             "stagedTypeCount": staged,
-            "instruction": ("Stage one buildable component type per apply_changes call. A partial manifest "
+            "instruction": ("Work on a small dependency-related group per edit. Use mergeById=true for focused manifest edits. A partial manifest "
                 "must be internally consistent for the components already staged; it need not describe "
-                "the entire final assembly yet. Build intermediate candidates, then add the remaining "
+                "the entire final assembly yet. Test parts using build(componentId=...) and assembly milestones using build(final=false), then add the remaining "
                 "parts. A passing partial build will not publish the design."),
         }
     if edits_since_build >= MAX_CAD_EDITS_WITHOUT_BUILD and buildable:
-        # Keep the graph progressing even when a model repeatedly proposes
-        # patches. A build is the only useful next action after this bound.
-        tools = [item for item in tools if item["function"]["name"] in
-                 {"build", "read_file", "search_files", "inspect_geometry"}]
-        context["buildRequired"] = True
+        context["testSuggested"] = ("Several edits are untested. Choose an isolated part test, an assembly milestone "
+                                    "or a focused repair needed to make the next test meaningful.")
         context["editsSinceBuild"] = edits_since_build
     manifest = snapshot["manifest"]
     physical_components = [item for item in manifest.get("components", [])
@@ -1590,14 +1597,15 @@ async def cad_session(state: AgentState) -> dict:
     if len(physical_components) > 1 and (root or {}).get("kind") != "assembly":
         context["assemblyRootRepair"] = (
             "This workspace has multiple physical parts, but rootComponentId names a single part. "
-            "The root STEP cannot contain all manifest instances. Your next action must be "
-            "apply_changes: add an assemblies/ Python source with build(parameters, dependencies) "
+            "The root STEP cannot contain all manifest instances. Before a full assembly build, "
+            "use apply_changes to add an assemblies/ Python source with build(parameters, dependencies) "
             "returning a CadQuery Assembly; add every currently staged part under its exact manifest "
             "instance ID and frame; declare those part IDs as dependencies; make the new assembly "
-            "component rootComponentId. Include the complete, internally consistent manifest and "
-            "nonempty source for the new assembly. Do not call build again on the single-part root."
+            "component rootComponentId. Use mergeById=true with focused complete entries and "
+            "nonempty assembly source. Individual part probes remain available while staging the assembly."
         )
-        tools = [item for item in tools if item["function"]["name"] == "apply_changes"]
+        # An unfinished root is a diagnostic, not a reason to remove source
+        # inspection and isolated part tests from the agent's toolset.
     if state.get("cad_contract_repair"):
         # Carry the rejection outside the rolling dialogue. Reads must not erase
         # it, and another build cannot fix an edit that was never staged.
@@ -1605,7 +1613,8 @@ async def cad_session(state: AgentState) -> dict:
                  if item["function"]["name"] in {"apply_changes", "read_file", "search_files"}]
     if not snapshot["files"]:
         tools = [item for item in tools if item["function"]["name"] not in {
-            "read_file", "search_files", "inspect_geometry", "build", "update_parameters"}]
+            "search_files", "inspect_geometry", "build", "update_parameters"} and
+            (item["function"]["name"] != "read_file" or state.get("rejected_files"))]
     note_cooldown=notes_just_saved(history)
     if note_cooldown:
         tools=[item for item in tools if item['function']['name']!='update_working_notes']
@@ -1657,8 +1666,14 @@ async def cad_session(state: AgentState) -> dict:
         parsed = parse_tool("cad", call["name"], tool_input)
         if call["name"] == "update_parameters":
             parsed = parameter_patch(snapshot["manifest"], parsed)
+        if call["name"] in {"apply_changes", "update_parameters"}:
+            parsed = source_patch(snapshot["files"], parsed)
         value = parsed.model_dump()
     except (ValidationError, ValueError) as exc:
+        if call["name"] == "apply_changes":
+            proposed = retained_proposal_files(tool_input)
+            if proposed:
+                usage["rejected_files"] = proposed
         invalid_attempts = state.get("cad_invalid_tool_attempts", 0) + 1
         issues = (exc.errors(include_url=False,include_input=False,include_context=False)
             if isinstance(exc,ValidationError) else [{"loc":(),"msg":str(exc)}])
@@ -1729,20 +1744,23 @@ async def cad_session(state: AgentState) -> dict:
         return {**usage, "phase": "cad_session", "cad_history": bounded_history([*history, tool_message(call, result)])}
     if name == "diagnose_workspace":
         return {**usage, "phase": "cad_session", "cad_history": bounded_history([*history, tool_message(call, workspace_status(snapshot))])}
-    if name == "read_file" and state.get("last_read_path") == value.get("path"):
+    read_key = ("rejected:" if value.get("version") == "rejected" else "") + str(value.get("path", ""))
+    if name == "read_file" and state.get("last_read_path") == read_key:
         feedback = {"ok": False, "category": "repeated_tool_action",
             "message": "This file was just read in the previous CAD turn.",
             "repairGuidance": "Use the returned source now. Patch it with apply_changes or build the candidate."}
-        return {**usage, "phase": "cad_session", "last_read_path": value.get("path"),
+        return {**usage, "phase": "cad_session", "last_read_path": read_key,
             "cad_history": bounded_history([*history, tool_message(call, feedback)])}
     if name == "read_file":
         safe_path(value["path"])
-        content = snapshot["files"].get(value["path"])
+        rejected = value.get("version") == "rejected"
+        selected_files = (state.get("rejected_files") or {}) if rejected else snapshot["files"]
+        content = selected_files.get(value["path"])
         if content is None:
             invalid_attempts = state.get("cad_invalid_tool_attempts", 0) + 1
             result = {"ok": False, "category": "file_not_found", "path": value["path"],
                 "message": "That path is not a file in the workspace. Read only an exact path from workspace.files.",
-                "availablePaths": sorted(snapshot["files"]),
+                "availablePaths": sorted(selected_files),
                 "repairGuidance": ("The workspace is empty; create the requested parts with apply_changes instead "
                     "of reading a directory or invented metadata file." if not snapshot["files"] else
                     "Choose one of the listed file paths or patch the requested component.")}
@@ -1756,9 +1774,10 @@ async def cad_session(state: AgentState) -> dict:
             return {**usage, "phase": "cad_session", "cad_invalid_tool_attempts": invalid_attempts,
                 "last_read_path": value.get("path"), "cad_history": next_history}
         return {**usage, "phase": "cad_session", "cad_invalid_tool_attempts": 0,
-            "last_read_path": value.get("path"),
+            "last_read_path": read_key,
             "cad_history": bounded_history([*history, tool_message(call, {
-                "ok": True, "path": value["path"], "content": content})])}
+                "ok": True, "path": value["path"], "version": value.get("version", "saved"),
+                "saved": not rejected, "content": content})])}
     if name == "search_files":
         matches = [{"path": path, "line": index + 1, "text": line[:300]}
             for path, source in snapshot["files"].items()
@@ -1767,6 +1786,15 @@ async def cad_session(state: AgentState) -> dict:
         return {**usage, "phase": "cad_session", "cad_history": bounded_history([
             *history, tool_message(call, {"matches": matches})]), "last_read_path": None}
     if name == "inspect_geometry":
+        if value.get("componentId"):
+            cid = value["componentId"]
+            probe = (state.get("component_probes") or {}).get(cid)
+            freshness = next((item for item in probe_context(state, snapshot) if item["componentId"] == cid), {})
+            result = {"ok": probe is not None, "scope": "component_only", "componentId": cid,
+                      "currentSource": freshness.get("currentSource", False), "probe": probe,
+                      "message": "Part diagnostic only. Assembly and configurations require a complete build."}
+            return {**usage, "phase": "cad_session", "cad_history": bounded_history([
+                *history, tool_message(call, result)])}
         result = state.get("validation") or {
             "verified": False, "message": "Build the current candidate before inspecting imported geometry."
         }
@@ -1794,7 +1822,7 @@ async def cad_session(state: AgentState) -> dict:
             "cad_history": bounded_history([*history, tool_message(call, {"ok": True, "returnedForReview": True, "geometryChanged": False})]),
             "review_history": [{"role": "user", "content": "CAD disputes this repair finding using current evidence. Reassess the unchanged validated candidate; do not confuse aggregate centres with occurrence frame origins. " + json.dumps(response)}]}
     if name in {"apply_changes", "update_parameters"}:
-        invalid_paths = [path for path in value["files"]
+        invalid_paths = [path for path in [*value["files"], *value.get("deletePaths", [])]
                          if not (path.startswith("parts/") or path.startswith("assemblies/"))]
         if invalid_paths:
             result = {"ok": False, "category": "role_boundary",
@@ -1817,6 +1845,8 @@ async def cad_session(state: AgentState) -> dict:
                     "final_message": "The CAD model repeatedly returned empty source files, so no source was executed."}
             return {**usage, "phase": "cad_session", "cad_invalid_tool_attempts": invalid_attempts,
                 "cad_history": next_history}
+        if value["files"]:
+            usage["rejected_files"] = dict(value["files"])
         try:
             files = dict(snapshot["files"])
             for path in value.get("deletePaths", []):
@@ -1849,6 +1879,7 @@ async def cad_session(state: AgentState) -> dict:
             validate_component_entrypoints(candidate["manifest"], {
                 path: candidate["files"][path] for path in value["files"]})
         except (ValidationError, ValueError) as exc:
+            usage["rejected_files"] = dict(value["files"]) or state.get("rejected_files") or {}
             result = workspace_contract_feedback(manifest, files, exc)
             invalid_attempts = contract_repair_attempt(state.get("cad_contract_repair") or {}, result)
             repair = {**result, "stalledAttempts": invalid_attempts}
@@ -1866,6 +1897,17 @@ async def cad_session(state: AgentState) -> dict:
             return {**usage, "phase": "cad_session", "cad_invalid_tool_attempts": invalid_attempts,
                 "cad_contract_repair": repair, "cad_history": next_history}
         candidate_hash = digest(candidate)
+        if value.get("dryRun"):
+            result = {"ok": True, "previewOnly": True, "saved": False,
+                      "proposedCandidateHash": candidate_hash, "workspaceStatus": workspace_status(candidate)}
+            return {**usage, "phase": "cad_session", "cad_history": bounded_history([
+                *history, tool_message(call, result)])}
+        if candidate_hash == digest(snapshot):
+            result = {"ok": True, "unchanged": True, "candidateHash": candidate_hash,
+                      "message": "No workspace changes. Choose a new edit or build; no edit allowance was consumed."}
+            return {**usage, "phase": "cad_session", "cad_contract_repair": {},
+                    "cad_invalid_tool_attempts": 0, "cad_history": bounded_history([
+                *history, tool_message(call, result)])}
         await run_service.save_candidate(state["run_id"], candidate, candidate_hash)
         await repo.event(state["run_id"], ("CAD updated named component parameters." if name == "update_parameters"
             else "CAD updated a focused part of the code workspace."), stage="cad")
@@ -1877,6 +1919,7 @@ async def cad_session(state: AgentState) -> dict:
             "hierarchyNote": ("Top-level or invalid parent sentinels were normalized to null; parentId must name "
                 "another instance id." if hierarchy_normalized else "")}
         return {**usage, "phase": "cad_session", "candidate_hash": candidate_hash,
+            "rejected_files": {},
             "working_memory": record_observation({"working_memory": usage.get("working_memory") or state.get("working_memory")},
                 name, result, candidate=candidate_hash),
             "cad_invalid_tool_attempts": 0,
@@ -1928,6 +1971,8 @@ async def cad_session(state: AgentState) -> dict:
         return {**usage, "phase": "cad_question", "question": value["question"],
             "pending_cad_call": call, "last_read_path": None, "cad_history": history}
     if name == "build":
+        if value.get("componentId"):
+            return await probe_component({**state, **usage}, snapshot, call, history, value["componentId"])
         if not snapshot["manifest"].get("components") or not snapshot["manifest"].get("rootComponentId"):
             history = bounded_history([*history, tool_message(call, {
                 "ok": False, "category": "empty_workspace",
@@ -2115,6 +2160,54 @@ async def build(state: AgentState) -> dict:
         "built_part_types": state.get("built_part_types", 0)}
 
 
+async def probe_component(state: AgentState, snapshot: dict, call: dict, history: list, component_id: str) -> dict:
+    """Use the same isolated builder/STEP validator without promoting part evidence to assembly evidence."""
+    try:
+        scoped = component_snapshot(snapshot, component_id)
+    except ValueError as exc:
+        return {"phase": "cad_session", "model_calls": state.get("model_calls", 0),
+                "cad_history": bounded_history([*history, tool_message(call, {
+                    "ok": False, "category": "component_probe", "message": str(exc)})])}
+    requirements = [item for item in state.get("requirements", [])
+                    if item.get("componentId") == component_id and item.get("kind") != "assembly_preservation"]
+    expected = identity(scoped, requirements)
+    probes = deepcopy(state.get("component_probes") or {})
+    prior = probes.get(component_id) or {}
+    if prior.get("identity") == expected:
+        result = {**prior, "reused": True, "message": "This source version was already tested; edit it before retrying a failure."}
+        return {"phase": "cad_session", "model_calls": state.get("model_calls", 0),
+                "cad_history": bounded_history([*history, tool_message(call, result)])}
+    run = await run_row(state)
+    limits = (await app_settings()).limits
+    cp = checkpoint_view(state, scoped)
+    cp.update(requirements=requirements, validated=None, lastFailedCandidate=None, lastFailure=None,
+              repairs=0, buildFinal=False, sandbox=state.get("sandbox") or sandbox_name(run["id"], "cad"),
+              validator=sandbox_name(run["id"], "probe-validator"))
+    key = f"graph:component-probe:{component_id}:{digest(expected)[:24]}"
+
+    async def execute():
+        report = await build_candidate(run, cp, limits, key)
+        return {"report": report, "checkpoint": cp}
+
+    output = await operation(run, key, "build", execute, idempotent=True)
+    cp, report = output["checkpoint"], output["report"]
+    result = {"componentId": component_id, "identity": expected, "requirements": requirements,
+              "ok": report.get("ok") is not False, "report": report,
+              "scope": "component_only", "published": False}
+    if report.get("error"):
+        result["error"] = report["error"]
+    probes[component_id] = result
+    await repo.event(run["id"], f"Isolated test of {component_id} completed; full assembly evidence is unchanged.", stage="cad")
+    # Do not sync this checkpoint's validation, requirements or failure identity
+    # into the project. Keep only usage and the reusable execution environment.
+    return {"phase": "cad_session", "component_probes": probes, "attempts": cp["attempts"],
+            "model_calls": state.get("model_calls", 0), "sandbox": cp.get("sandbox"),
+            "sandbox_ready": cp.get("sandboxReady", False),
+            "working_memory": record_observation(state, "component_probe", result, candidate=digest(snapshot)),
+            "cad_history": bounded_history([*history, tool_message(call, result)]),
+            "cad_invalid_tool_attempts": 0}
+
+
 async def validate(state: AgentState) -> dict:
     result = state.get("build_result", {})
     pending = state.get("pending_cad_call") or {"id": "build"}
@@ -2178,6 +2271,54 @@ async def validate(state: AgentState) -> dict:
 
 async def repair(state: AgentState) -> dict:
     return await cad_session(state)
+
+
+class RecoveryPlan(Contract):
+    diagnosis: str = Field(min_length=1, max_length=2000)
+    nextTask: str = Field(min_length=1, max_length=3000)
+    changesFromFailedApproach: str = Field(min_length=1, max_length=2000)
+    verification: str = Field(min_length=1, max_length=2000)
+
+
+async def cad_replan(state: AgentState) -> dict:
+    """Automatic bounded replanning before requiring human recovery input."""
+    snapshot = await run_service.load_candidate(state["run_id"])
+    counts = dict(state.get("recovery_counts") or {})
+    key = recovery_key(state, snapshot)
+    total = state.get("recovery_plan_count", 0)
+    exhausted = total >= 6 or counts.get(key, 0) >= 2
+    if not exhausted:
+        exhausted = state.get("model_calls", 0) + 1 >= (await app_settings()).limits.maxModelCalls
+    if exhausted:
+        return {"phase": "cad_recovery", "final_message": (
+            "Automatic recovery reached its bounded allowance. The candidate, exact requirements and failure evidence "
+            "are preserved. " + state.get("final_message", ""))}
+    context = {"request": state.get("clarified_request") or state["original_request"],
+               "workspace": {"manifest": snapshot["manifest"], "files": sorted(snapshot["files"]),
+                             "candidateHash": digest(snapshot)},
+               "failure": state.get("final_message"), "workspaceRepair": state.get("cad_contract_repair"),
+               "lastBuild": state.get("build_result"), "workspaceStatus": workspace_status(snapshot),
+               "componentTests": probe_context(state, snapshot), "previousPlan": state.get("recovery_plan")}
+    history = [{"role": "user", "content": "Choose a different, focused repair approach using retained evidence. Do not change user requirements."}]
+    call, _, usage = await agent_tool_turn(state, model_role="coordinator", prompt_role="recovery",
+        node="cad-replan", context=context, history=history,
+        tools=[submission_tool("submit_recovery", "Return a focused repair and verification plan.", RecoveryPlan)])
+    counts[key] = counts.get(key, 0) + 1
+    update = {**usage, "recovery_counts": counts, "recovery_plan_count": total + 1}
+    try:
+        if not call or call["name"] != "submit_recovery":
+            raise ValueError("The recovery planner did not submit its plan.")
+        plan = RecoveryPlan.model_validate(call["input"]).model_dump()
+    except (ValueError, ValidationError):
+        return {**update, "phase": "cad_replan", "final_message": "The automatic recovery planner returned an unusable plan."}
+    repair = state.get("cad_contract_repair") or {}
+    await repo.event(state["run_id"], "Forma is re-planning the failed step using saved source and failure evidence.", stage="cad")
+    return {**update, "phase": "cad_session", "recovery_plan": {**plan, "candidateHash": digest(snapshot)},
+            "repairs": 0, "cad_invalid_tool_attempts": 0, "cad_edits_since_build": 0,
+            "cad_contract_repair": {**repair, "stalledAttempts": 0} if repair else {},
+            "pending_cad_call": {}, "last_read_path": None, "final_message": "",
+            "cad_history": bounded_history([*state.get("cad_history", []), {"role": "system", "content":
+                "Automatic recovery plan (an agent proposal, not a human instruction or validation): " + json.dumps(plan)}])}
 
 
 async def cad_recovery(state: AgentState) -> dict:
@@ -2286,6 +2427,8 @@ async def review_session(state: AgentState) -> dict:
         try:
             parsed = parse_tool("cad", name, call["input"])
             value = parsed.model_dump()
+            if value.get("version") == "rejected":
+                raise ValueError("Review uses saved candidate source only. Rejected proposals are not geometry evidence.")
             safe_path(value["path"])
             result = {"path": value["path"], "content": snapshot["files"].get(value["path"])}
         except (ValidationError, ValueError) as exc:
@@ -2417,7 +2560,7 @@ def build_graph(checkpointer):
         ("coordinator_question", coordinator_question), ("engineering_triage", engineering_triage),
         ("clarification", clarification), ("cad_session", cad_session),
         ("cad_question", cad_question), ("engineering_analysis", engineering_analysis),
-        ("approval", approval), ("build", build), ("validate", validate), ("cad_recovery", cad_recovery),
+        ("approval", approval), ("build", build), ("validate", validate), ("cad_recovery", cad_recovery), ("cad_replan", cad_replan),
         ("review_session", review_session), ("publish", publish), ("final", final),
         ("drawing_prepare",drawing_prepare),("drawing_build",drawing_build)):
         graph.add_node(name, node)
@@ -2439,7 +2582,7 @@ def build_graph(checkpointer):
     graph.add_conditional_edges("cad_session", phase_route, {
         "cad_session": "cad_session", "cad_question": "cad_question",
         "engineering_analysis": "engineering_analysis", "build": "build", "validate": "validate",
-        "cad_recovery": "cad_recovery", "final": "final",
+        "cad_recovery": "cad_replan", "final": "final",
     })
     graph.add_edge("cad_question", "cad_session")
     graph.add_conditional_edges("engineering_analysis", phase_route,
@@ -2449,8 +2592,10 @@ def build_graph(checkpointer):
         {"cad_session": "cad_session", "coordinator_session": "coordinator_session", "final": "final"})
     graph.add_edge("build", "validate")
     graph.add_edge("cad_recovery", "cad_session")
+    graph.add_conditional_edges("cad_replan", phase_route,
+        {"cad_session": "cad_session", "cad_replan": "cad_replan", "cad_recovery": "cad_recovery"})
     graph.add_conditional_edges("validate", phase_route,
-        {"cad_session": "cad_session", "cad_recovery": "cad_recovery", "review_session": "review_session", "final": "final"})
+        {"cad_session": "cad_session", "cad_recovery": "cad_replan", "review_session": "review_session", "final": "final"})
     graph.add_conditional_edges("review_session", phase_route, {
         "review_session": "review_session", "cad_session": "cad_session",
         "publish": "publish", "final": "final",

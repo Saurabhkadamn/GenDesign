@@ -253,13 +253,13 @@ def test_generated_workspace_accepts_only_safe_python_source_paths():
     # Provider-facing schemas omit Python/JSON-Schema key constraints; the
     # Candidate Pydantic contract still enforces the safe source-path pattern
     # after the model returns its tool arguments.
-    assert "propertyNames" not in schema["properties"]["files"]
+    assert "propertyNames" in schema["properties"]["files"]
 
 
 def test_tool_schemas_use_gemini_compatible_homogeneous_arrays():
-    from forma_api.tools import model_tools
+    from forma_api.tools import model_tools, provider_tools
 
-    schemas = model_tools("engineering")
+    schemas = provider_tools({"model_id": "google/gemini-test"}, model_tools("engineering"))
     encoded = str(schemas)
     assert "prefixItems" not in encoded
     assert "anyOf" not in encoded
@@ -271,9 +271,9 @@ def test_tool_schemas_use_gemini_compatible_homogeneous_arrays():
 
 
 def test_portable_tuple_schema_keeps_numeric_arity_visible():
-    from forma_api.tools import model_tools
+    from forma_api.tools import model_tools, provider_tools
 
-    delegate = next(t for t in model_tools("coordinator") if t["function"]["name"] == "delegate")
+    delegate = next(t for t in provider_tools({"model_id": "google/gemini-test"}, model_tools("coordinator")) if t["function"]["name"] == "delegate")
     requirement = delegate["function"]["parameters"]["properties"]["requirements"]["items"]
     assert "Exactly 3 numeric values" in requirement["properties"]["dimensions"]["description"]
     assert "Exactly 3 numeric values" in requirement["properties"]["center"]["description"]

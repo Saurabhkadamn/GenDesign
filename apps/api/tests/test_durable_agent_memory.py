@@ -182,12 +182,14 @@ async def test_invalid_action_waits_at_checkpoint_and_resumes_without_losing_can
     compiled=design.build_graph(saver)
     config={"configurable":{"thread_id":"invalid-action-resume"}}
     initial={"run_id":"run","original_request":"Keep the part","candidate_hash":"same",
+        "recovery_plan_count":6,
         "attempts":5,"model_calls":17,"cad_invalid_tool_attempts":2,
         "cad_contract_repair":{"issues":[{"message":"Keep this unresolved contract"}],"stalledAttempts":2},
         "requirements":[{"id":"exact"}],"working_memory":{"notes":{"pendingRequirements":["Keep exact dimensions"]}}}
     await compiled.ainvoke(initial,config)
     await compiled.ainvoke(None,config)
     await compiled.ainvoke(None,config)
+    await compiled.ainvoke(None,config)  # Exhausted automatic re-plan routes to the durable user interrupt.
     waiting=await compiled.ainvoke(None,config)
     assert waiting['__interrupt__'] and waiting['phase']=='cad_recovery'
     assert waiting['model_calls']==18 and waiting['cad_invalid_tool_attempts']==3

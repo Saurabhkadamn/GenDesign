@@ -1,0 +1,35 @@
+# Continuing CAD harness
+
+This release repairs the generic agent harness after the original complex pump stopped at eight model calls, before a CAD build. It preserves the established Python/LangGraph implementation and isolated CadQuery/OCCT executor. No mechanical recipe, fixed component catalog, part lock, dependency change or database migration is introduced.
+
+## Information and execution flow
+
+The exact human brief and updates remain durable. The coordinator proposes measurable requirements and delegates design work. CAD receives the saved manifest, source paths, working notes/tasks, retained failures, the current acceptance evidence and scoped part-test freshness. It chooses a focused edit or diagnostic. The existing execution ledger makes external operations recoverable; source executes only in the isolated worker and fresh STEP validation remains independent.
+
+An edit may upsert only supplied complete manifest entries by ID (`mergeById=true`), replace an intentional full array, replace a source file, or patch exact text after reading current source. The assembled workspace still passes the same atomic contracts before saving. `dryRun=true` validates a proposed edit without saving or execution. Invalid edits do not partially update the project.
+
+Tool declarations preserve patterns, numerical bounds and nullability for ordinary JSON Schema hosts. Only Gemini receives the restricted schema presentation; unavailable constraints are spelled out in descriptions. Positive density and `#RRGGBB` are now visible to the model. This does not claim every host supports strict grammar decoding or that valid JSON establishes correct mechanics.
+
+Large rejected source proposals no longer refill active dialogue. Their complete generation remains private; CAD can selectively read retained rejected source, explicitly labelled unsaved and unverified. Saved workspace files remain authoritative. Small error exchanges retain the normal tool protocol.
+
+`build(componentId=...)` tests a part/surface and its dependency closure using the existing isolated builder and independent STEP validator. The projected execution input never replaces the project candidate, requirement list or assembly validation. Reports carry their own source/requirement/runtime identity. `inspect_geometry(componentId=...)` retrieves scoped evidence with source freshness. Changing source invalidates freshness. Assemblies continue to use `build(final=false)` milestones and a complete build before review/publication.
+
+The old compulsory full build after three edits is replaced by a testing suggestion. Root staging problems remain actionable diagnostics while source inspection and individual part tests remain available. The agent selects the next useful step.
+
+Repeated unusable CAD actions and exhausted local build repair allowances route to an automatic recovery planner. It receives the exact request, saved state, diagnostics and preceding plan; it proposes a different focused repair and verification. Local counters reset after that plan. Candidate identity, total model calls, build attempts and exact requirements remain retained. Planning is bounded to two attempts for an unchanged candidate/failure family and six per run, within the existing total call/execution/resource budgets. Exhaustion still uses the durable user recovery interrupt; no unbounded retry promise is made.
+
+Working tasks are explicitly agent-reported. The acceptance context only marks supported requirements from a report matching the current candidate, requirements and runtime identity. Unsupported checks stay unverified. Part success cannot establish assembly clearance, motion, manufacturability or physical performance. This release does not add missing measurement primitives for shaft distance, GD&T or engineering tolerance chains.
+
+The waiting UI now describes a required response without assuming every pause is a missing design dimension or engineering approval.
+
+## Research basis
+
+Anthropic's [long-running harness research](https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents) motivates incremental work, durable progress and end-to-end testing. Its [context engineering guidance](https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents) motivates selective retrieval and concise useful context. These published application patterns are not evidence of qualified mechanical CAD performance.
+
+## Qualification
+
+Local coverage exercises provider-facing constraints, unchanged unrelated definitions, exact patches, atomic previews/rejections, engineering role boundaries, stale evidence, isolated test state, private rejected-source retrieval, and automatic recovery across a recreated LangGraph checkpoint. The preceding qualified runtime remains `forma-537dd448bdeb66e6`.
+
+The local API suite passed 329 tests. The web suite passed 16 tests; TypeScript checking and ESLint passed. These results precede hosted complex-task qualification.
+
+Hosted acceptance, source commit, deployments, model identity, artifact checks and unresolved engineering findings are recorded under `D:/v1/test-results`. The unchanged original pump remains the complex acceptance task. Local harness tests alone do not qualify that pump or establish unattended completion.

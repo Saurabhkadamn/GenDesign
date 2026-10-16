@@ -42,7 +42,10 @@ class MaterialSpec(Contract):
     """Optional physical properties attached to a CAD definition."""
 
     name: str = Field(min_length=1, max_length=120)
-    densityKgM3: float | None = Field(default=None, gt=0, le=100_000)
+    densityKgM3: float | None = Field(default=None, gt=0, le=100_000, description=(
+        "Physical material density in kg/m^3, greater than zero. Omit or use null when unknown. "
+        "Assembly groups have no bulk density; their mass is derived from physical occurrences. Never use zero as unknown."
+    ))
 
 
 class PartMetadata(Contract):
@@ -132,7 +135,8 @@ class Component(Contract):
     kind: Literal["solid", "surface", "assembly"]
     dependencies: list[SafeId] = Field(default_factory=list, max_length=100)
     parameters: dict[str, Parameter] = Field(default_factory=dict, max_length=200)
-    color: str = Field(default="#b9c4ad", pattern=r"^#[0-9a-fA-F]{6}$")
+    color: str = Field(default="#b9c4ad", pattern=r"^#[0-9a-fA-F]{6}$",
+                       description="Color string in #RRGGBB format, for example #999999. Not 0x999999.")
     material: MaterialSpec | None = None
     partMetadata: PartMetadata | None = None
     bomBehavior: Literal["normal", "purchased", "phantom", "reference"] = "normal"
