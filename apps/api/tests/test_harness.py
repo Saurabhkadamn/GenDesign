@@ -290,3 +290,107 @@ async def test_replan_clears_saturated_dialogue_but_retains_measurement_failures
     snapshot["files"]["parts/base.py"] += "\n# modified"
     historical = probe_context(merged, snapshot)[0]
     assert not historical["currentSource"] and historical["requirementChecks"] == checks
+
+
+def queued_action(name, arguments, call_id):
+    return {"call": {"id": call_id, "name": name, "input": arguments},
+            "message": {"role": "assistant", "content": "", "tool_calls": [{"id": call_id,
+                "type": "function", "function": {"name": name, "arguments": json.dumps(arguments)}}]}}
+
+
+@pytest.mark.asyncio
+async def test_queued_read_then_edit_survives_recreated_graph_without_another_model_call(monkeypatch):
+    snapshot = workspace()
+    original = deepcopy(snapshot)
+    async def load(_): return deepcopy(snapshot)
+    async def save(_run, candidate, _hash): snapshot.update(deepcopy(candidate))
+    async def event(*_, **__): pass
+    async def no_model(*_, **__): pytest.fail('Queued actions must not request another generation')
+    async def seed(_): return {"phase": "cad_session"}
+    monkeypatch.setattr(design.run_service, "load_candidate", load)
+    monkeypatch.setattr(design.run_service, "save_candidate", save)
+    monkeypatch.setattr(design.repo, "event", event)
+    monkeypatch.setattr(design, "agent_tool_turn", no_model)
+    monkeypatch.setattr(design, "coordinator", seed)
+    monkeypatch.setattr(design, "coordinator_session", seed)
+    actions = [queued_action('read_file', {'path': 'parts/base.py'}, 'read'),
+               queued_action('apply_changes', {'patches': [{'path': 'parts/base.py', 'oldText': "return parameters['length']",
+                    'newText': "return parameters['length'] * 2"}]}, 'edit')]
+    saver = InMemorySaver()
+    config = {"configurable": {"thread_id": "queued-actions"}}
+    graph = design.build_graph(saver)
+    await graph.ainvoke({'run_id': 'run', 'original_request': 'Change the base', 'model_calls': 8,
+                        'candidate_hash': digest(snapshot), 'cad_pending_actions': actions}, config)
+    await graph.ainvoke(None, config)
+    first = await graph.ainvoke(None, config)
+    assert snapshot == original and len(first['cad_pending_actions']) == 1
+    graph = design.build_graph(saver)
+    result = await graph.ainvoke(None, config)
+    assert result['model_calls'] == 8 and result['cad_pending_actions'] == []
+    assert '* 2' in snapshot['files']['parts/base.py']
+    assert snapshot['files']['parts/lid.py'] == original['files']['parts/lid.py']
+    assert result['candidate_hash'] == digest(snapshot)
+
+
+@pytest.mark.asyncio
+async def test_failed_queued_prerequisite_cancels_edit_and_retains_unsaved_proposal(monkeypatch):
+    snapshot = workspace()
+    async def load(_): return deepcopy(snapshot)
+    async def no_model(*_, **__): pytest.fail('Queued prerequisite does not need a model')
+    monkeypatch.setattr(design.run_service, 'load_candidate', load)
+    monkeypatch.setattr(design, 'agent_tool_turn', no_model)
+    source = 'def build(parameters, dependencies):\n    return None'
+    actions = [queued_action('read_file', {'path': 'parts/missing.py'}, 'missing'),
+               queued_action('apply_changes', {'files': {'parts/unsaved.py': source}}, 'must-not-run')]
+    state = {'run_id': 'run', 'original_request': 'Preserve geometry', 'model_calls': 7,
+             'cad_pending_actions': actions, 'cad_history': []}
+    result = await design.cad_session(state)
+    assert result['cad_pending_actions'] == [] and result['model_calls'] == 7
+    assert result['rejected_files'] == {'parts/unsaved.py': source}
+    assert 'None of these actions executed' in result['cad_history'][-1]['content']
+    assert 'candidate_hash' not in result and snapshot == workspace()
+
+
+@pytest.mark.asyncio
+async def test_queued_repeated_read_can_reach_prepared_edit_without_spurious_replan(monkeypatch):
+    snapshot = workspace()
+    async def load(_): return deepcopy(snapshot)
+    monkeypatch.setattr(design.run_service, 'load_candidate', load)
+    read = queued_action('read_file', {'path': 'parts/base.py', 'version': 'saved'}, 'read-again')
+    edit = queued_action('apply_changes', {'patches': [{'path': 'parts/base.py', 'oldText': "return parameters['length']",
+                           'newText': "return parameters['length'] + 1"}]}, 'prepared-edit')
+    state = {'run_id': 'run', 'original_request': 'Edit the base', 'model_calls': 8,
+             'last_read_path': 'parts/base.py', 'cad_pending_actions': [read, edit]}
+    progress = record_observation_action(state, snapshot, 'read_file', {'path': 'parts/base.py', 'version': 'saved'})
+    progress['repeats'] = 2
+    state['cad_observation_progress'] = progress
+    result = await design.cad_session(state)
+    assert result['phase'] == 'cad_session' and len(result['cad_pending_actions']) == 1
+    assert json.loads(result['cad_history'][-1]['content'])['content'] == snapshot['files']['parts/base.py']
+
+
+@pytest.mark.asyncio
+async def test_new_human_guidance_cancels_stale_queued_edit_before_execution(monkeypatch):
+    async def forbidden(*_, **__): pytest.fail('Stale queued action must not execute or call the model')
+    monkeypatch.setattr(design, 'cad_session_turn', forbidden)
+    entry = queued_action('apply_changes', {'files': {'parts/base.py': 'old proposal'}}, 'stale-edit')
+    entry['requestHash'] = digest('Previous request')
+    result = await design.cad_session({'original_request': 'Previous request', 'clarified_request': 'New human correction',
+                                     'cad_pending_actions': [entry], 'model_calls': 8})
+    assert result['cad_pending_actions'] == [] and result['model_calls'] == 8
+    assert 'Human guidance changed' in result['cad_history'][-1]['content']
+
+
+@pytest.mark.asyncio
+async def test_queue_cancellation_keeps_pending_build_tool_protocol_intact(monkeypatch):
+    build = queued_action('build', {'final': True}, 'build')
+    later = queued_action('apply_changes', {'files': {'parts/base.py': 'later proposal'}}, 'later')
+    pending_history = [{'role': 'user', 'content': 'Build'}, build['message']]
+    async def handoff(_):
+        return {'phase': 'validate', 'cad_history': deepcopy(pending_history), 'pending_cad_call': build['call'],
+                'cad_pending_actions': [later], 'model_calls': 9}
+    monkeypatch.setattr(design, 'cad_session_turn', handoff)
+    result = await design.cad_session({'original_request': 'Build'})
+    assert result['cad_pending_actions'] == [] and result['cad_history'] == pending_history
+    assert result['pending_cad_call']['id'] == 'build'
+    assert result['cad_queue_feedback']['cancelled'] == [{'id': 'later', 'name': 'apply_changes'}]

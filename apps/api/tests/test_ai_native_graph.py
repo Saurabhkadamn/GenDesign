@@ -24,7 +24,7 @@ def state(**updates):
 
 
 @pytest.mark.asyncio
-async def test_multiple_provider_calls_disclose_unexecuted_actions(monkeypatch, graph_mocks):
+async def test_multiple_provider_calls_checkpoint_remaining_actions(monkeypatch, graph_mocks):
     calls = [
         {"id": "read-first", "name": "read_file", "input": {"path": "parts/first.py"}},
         {"id": "read-second", "name": "read_file", "input": {"path": "parts/second.py"}},
@@ -44,9 +44,10 @@ async def test_multiple_provider_calls_disclose_unexecuted_actions(monkeypatch, 
     assert [c["id"] for c in history[-1]["tool_calls"]] == ["read-first"]
     feedback = design.tool_message(call, {"ok": True, "content": "first source"})
     execution = json.loads(feedback["content"])["toolExecution"]
-    assert execution["notExecuted"] == [
+    assert execution["queued"] == [
         {"id": "read-second", "name": "read_file"}, {"id": "edit-third", "name": "apply_changes"}]
-    assert "not executed or queued" in execution["instruction"]
+    assert [item["call"] for item in usage["cad_pending_actions"]] == calls[1:]
+    assert "not completed evidence" in execution["instruction"]
     assert "secret source" not in feedback["content"]
     assert "deferred_calls" not in calls[0]  # cached provider result remains immutable
     assert usage["model_calls"] == 1

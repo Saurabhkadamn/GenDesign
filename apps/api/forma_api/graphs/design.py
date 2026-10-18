@@ -588,7 +588,17 @@ async def agent_tool_turn(state: AgentState, *, model_role: str, prompt_role: st
 
     result = await operation(run, f"graph:{node}:{ordinal}", "model", call)
     call_value = deepcopy(result["calls"][0]) if result.get("calls") else None
-    if call_value and len(result["calls"]) > 1:
+    pending_actions = []
+    if call_value and node == "cad-session" and len(result["calls"]) > 1:
+        # Keep provider-returned actions durable. One graph transition executes
+        # one action; subsequent actions do not need another model generation.
+        for following in result["calls"][1:]:
+            message = deepcopy(result["message"])
+            message["tool_calls"] = [item for item in message.get("tool_calls", []) if item.get("id") == following["id"]]
+            pending_actions.append({"call": deepcopy(following), "message": compact_narrative(message),
+                                    "requestHash": digest(state.get("clarified_request") or state["original_request"])})
+        call_value["queued_calls"] = [{"id": item["id"], "name": item["name"]} for item in result["calls"][1:]]
+    elif call_value and len(result["calls"]) > 1:
         # A durable graph step executes one action. Providers can ignore the
         # single-action instruction; never imply the remaining calls executed.
         call_value["deferred_calls"] = [
@@ -612,6 +622,7 @@ async def agent_tool_turn(state: AgentState, *, model_role: str, prompt_role: st
         "input_tokens": result["inputTokens"], "output_tokens": result["outputTokens"],
     }, conflict="run_id,ordinal")
     return call_value, next_history, {
+        **({"cad_pending_actions": pending_actions, "cad_queue_feedback": {}} if node == "cad-session" else {}),
         "working_memory": memory,
         "context_estimated_tokens": estimate_tokens([messages, tools]),
         "model_calls": ordinal + 1,
@@ -620,6 +631,9 @@ async def agent_tool_turn(state: AgentState, *, model_role: str, prompt_role: st
 
 
 def tool_message(call: dict, result: dict) -> dict:
+    if call.get("queued_calls"):
+        result = {**result, "toolExecution": {"selectedCallId": call["id"], "queued": call["queued_calls"],
+                  "instruction": "Only this action completed. Remaining actions are checkpointed for sequential execution; they are not completed evidence."}}
     if call.get("deferred_calls"):
         result = {**result, "toolExecution": {
             "selectedCallId": call["id"],
@@ -1526,7 +1540,7 @@ def retained_proposal_files(arguments) -> dict[str, str]:
 def observation_result(state: AgentState, snapshot: dict, call: dict, arguments: dict,
                        history: list, usage: dict, result: dict) -> dict:
     progress = record_observation_action(state, snapshot, call["name"], arguments)
-    stalled = progress["repeats"] >= 3
+    stalled = progress["repeats"] >= 3 and not usage.get("cad_pending_actions")
     feedback = {**result, "observationProgress": {"repeatedObservations": progress["repeats"],
                 "replanning": stalled}}
     message = ("The CAD agent cycled through unchanged observations without an edit or new test evidence. "
@@ -1538,6 +1552,50 @@ def observation_result(state: AgentState, snapshot: dict, call: dict, arguments:
 
 
 async def cad_session(state: AgentState) -> dict:
+    """Settle one checkpointed CAD action, cancelling dependent actions on failure."""
+    pending = state.get("cad_pending_actions") or []
+    if pending and pending[0].get("requestHash") not in {
+            None, digest(state.get("clarified_request") or state["original_request"])}:
+        return {"phase": "cad_session", "cad_pending_actions": [],
+                "model_calls": state.get("model_calls", 0),
+                "cad_history": bounded_history([*state.get("cad_history", []), {"role": "system", "content":
+                    "Human guidance changed after the queued proposal. Remaining queued actions were cancelled without execution. "
+                    "Use the updated exact request and saved source for the next action."}])}
+    result = await cad_session_turn(state)
+    pending = result.get("cad_pending_actions", state.get("cad_pending_actions") or [])
+    if not pending:
+        return result
+    history = result.get("cad_history") or []
+    feedback = {}
+    if history and history[-1].get("role") == "tool":
+        try:
+            feedback = json.loads(history[-1].get("content") or "{}")
+        except (ValueError, TypeError):
+            pass
+    if result.get("phase") != "cad_session" or feedback.get("ok") is False:
+        cancelled = [{"id": item["call"]["id"], "name": item["call"]["name"]} for item in pending]
+        result["cad_pending_actions"] = []
+        result["cad_queue_feedback"] = {"cancelled": cancelled, "executed": False,
+                                        "reason": "A prerequisite failed or control moved to another graph stage."}
+        # Preserve unsaved source proposals for selective retrieval, never as
+        # accepted source or permission to execute after a failed prerequisite.
+        if not result.get("rejected_files"):
+            proposed = {}
+            for item in pending:
+                if item["call"]["name"] == "apply_changes":
+                    proposed.update(retained_proposal_files(item["call"].get("input")))
+            if proposed:
+                result["rejected_files"] = proposed
+        if history and history[-1].get("role") == "tool":
+            result["cad_history"] = bounded_history([*history, {"role": "system", "content":
+                "Queued CAD actions cancelled after a failed prerequisite or control handoff. None of these actions executed: " +
+                json.dumps(cancelled) + ". Use the actual preceding result before choosing a repair. Unsaved proposed source may be selectively read as version='rejected'."}])
+        # A build/engineering handoff may still owe the selected tool its result.
+        # Keep that pending protocol intact; cancellation metadata is separate.
+    return result
+
+
+async def cad_session_turn(state: AgentState) -> dict:
     """Let the CAD model choose one incremental workspace/tool action."""
     snapshot = await run_service.load_candidate(state["run_id"])
     bound = normalize_assembly_requirements(state.get("requirements", []), snapshot["manifest"])
@@ -1565,6 +1623,7 @@ async def cad_session(state: AgentState) -> dict:
         "acceptanceLedger": acceptance_context(state, snapshot),
         "componentTests": probe_context(state, snapshot),
         "observationProgress": observation_context(state, snapshot),
+        "queuedActionStatus": state.get("cad_queue_feedback") or None,
         "recoveryPlan": state.get("recovery_plan") or None,
         "rejectedSource": {"paths": sorted(state.get("rejected_files") or {}),
                            "instruction": "Unsaved proposal source only; use read_file(version='rejected') selectively. Saved source is authoritative."},
@@ -1639,10 +1698,20 @@ async def cad_session(state: AgentState) -> dict:
     if not older_memory:
         tools=[item for item in tools if item['function']['name']!='read_working_memory']
         context['memoryAvailability']='All retained outcomes are already included in current working memory; there are no older outcomes to retrieve. Advance the task using the request and workspace.'
-    call, history, usage = await agent_tool_turn(
-        state, model_role="cad", prompt_role="cad", node="cad-session",
-        context=context, history=history, tools=tools,
-    )
+    pending_actions = state.get("cad_pending_actions") or []
+    if pending_actions:
+        queued = pending_actions[0]
+        call = deepcopy(queued["call"])
+        history = bounded_history([*history, deepcopy(queued["message"])], allow_pending=True)
+        usage = {"model_calls": state.get("model_calls", 0), "search_count": state.get("search_count", 0),
+                 "cad_pending_actions": deepcopy(pending_actions[1:])}
+        if pending_actions[1:]:
+            call["queued_calls"] = [{"id": item["call"]["id"], "name": item["call"]["name"]} for item in pending_actions[1:]]
+    else:
+        call, history, usage = await agent_tool_turn(
+            state, model_role="cad", prompt_role="cad", node="cad-session",
+            context=context, history=history, tools=tools,
+        )
     if not call:
         invalid_attempts = state.get("cad_invalid_tool_attempts", 0) + 1
         history = bounded_history([*history, {"role": "user", "content":
@@ -1719,7 +1788,9 @@ async def cad_session(state: AgentState) -> dict:
         return {**usage, "phase": "cad_session", "cad_invalid_tool_attempts": invalid_attempts,
             "cad_history": next_history}
 
-    if repeated_tool_action(history, call):
+    queued_observation = bool(usage.get("cad_pending_actions")) and call["name"] in {
+        "read_file", "search_files", "diagnose_workspace", "inspect_geometry"}
+    if repeated_tool_action(history, call) and not queued_observation:
         invalid_attempts = state.get("cad_invalid_tool_attempts", 0) + 1
         feedback = {
             "ok": False,
@@ -1761,7 +1832,7 @@ async def cad_session(state: AgentState) -> dict:
     if name == "diagnose_workspace":
         return observation_result(state, snapshot, call, value, history, usage, workspace_status(snapshot))
     read_key = ("rejected:" if value.get("version") == "rejected" else "") + str(value.get("path", ""))
-    if name == "read_file" and state.get("last_read_path") == read_key:
+    if name == "read_file" and state.get("last_read_path") == read_key and not queued_observation:
         feedback = {"ok": False, "category": "repeated_tool_action",
             "message": "This file was just read in the previous CAD turn.",
             "repairGuidance": "Use the returned source now. Patch it with apply_changes or build the candidate."}
@@ -2333,6 +2404,7 @@ async def cad_replan(state: AgentState) -> dict:
             "repairs": 0, "cad_invalid_tool_attempts": 0, "cad_edits_since_build": 0,
             "cad_contract_repair": {**repair, "stalledAttempts": 0} if repair else {},
             "pending_cad_call": {}, "last_read_path": None, "final_message": "",
+            "cad_pending_actions": [],
             "cad_observation_progress": progress,
             # A fresh focused dialogue avoids carrying the same saturated read
             # cycle back into CAD. Exact request, source, notes, receipts and

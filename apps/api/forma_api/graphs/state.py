@@ -47,6 +47,8 @@ class AgentState(TypedDict, total=False):
     cad_invalid_tool_attempts: int
     cad_contract_repair: dict[str, Any]
     cad_observation_progress: dict[str, Any]
+    cad_pending_actions: list[dict[str, Any]]
+    cad_queue_feedback: dict[str, Any]
     component_probes: dict[str, Any]
     recovery_counts: dict[str, int]
     recovery_plan_count: int
