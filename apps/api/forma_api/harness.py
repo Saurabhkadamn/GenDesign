@@ -49,11 +49,51 @@ def probe_context(state: dict, snapshot: dict) -> list[dict]:
             current = identity(component_snapshot(snapshot, cid), probe.get("requirements", [])) == probe.get("identity")
         except ValueError:
             current = False
+        report = probe.get("report") or {}
         result.append({"componentId": cid, "currentSource": current, "ok": probe.get("ok"),
                        "identity": probe.get("identity"), "error": probe.get("error"),
-                       "measurementAvailable": bool((probe.get("report") or {}).get("inspection")),
-                       "instruction": "Part evidence only. Full assembly and requested configurations still need validation."})
+                       "measurementAvailable": bool(report.get("inspection")),
+                       "measurements": report.get("components") or {},
+                       "requirementChecks": report.get("requirements") or [],
+                       "allRequirementsVerified": report.get("allRequirementsVerified", False),
+                       "instruction": "ok describes CAD integrity only. Failed requirement checks still need attention; "
+                                      "stale measurements are historical. Part evidence cannot validate the assembly."})
     return result
+
+
+def observation_epoch(state: dict, snapshot: dict) -> str:
+    """New source, evidence or human guidance renews the observation window."""
+    return digest({"candidate": digest(snapshot), "validation": state.get("validation") or {},
+                   "probes": state.get("component_probes") or {},
+                   "rejected": state.get("rejected_files") or {},
+                   "request": state.get("clarified_request") or state.get("original_request", "")})
+
+
+def observation_context(state: dict, snapshot: dict) -> dict:
+    progress = state.get("cad_observation_progress") or {}
+    if progress.get("epoch") != observation_epoch(state, snapshot):
+        progress = {}
+    return {"reviewed": list((progress.get("seen") or {}).values()),
+            "repeatedObservations": progress.get("repeats", 0),
+            "instruction": "These reads/inspections already completed for unchanged source and evidence. "
+                           "Re-read when needed, then use the result for a focused edit or test. "
+                           "Cycling through the same observations triggers a fresh repair plan, not a part lock."}
+
+
+def record_observation_action(state: dict, snapshot: dict, name: str, arguments: dict) -> dict:
+    """Recognize nonconsecutive observation cycles even after dialogue eviction."""
+    epoch = observation_epoch(state, snapshot)
+    progress = deepcopy(state.get("cad_observation_progress") or {})
+    if progress.get("epoch") != epoch:
+        progress = {"epoch": epoch, "seen": {}, "repeats": 0}
+    key = digest({"tool": name, "arguments": arguments})
+    seen = progress["seen"]
+    progress["repeats"] = progress["repeats"] + 1 if key in seen else 0
+    seen[key] = {"tool": name, "arguments": arguments}
+    # Bound metadata only; source and evidence remain in their own stores.
+    if len(seen) > 256:
+        del seen[next(iter(seen))]
+    return progress
 
 
 def recovery_key(state: dict, snapshot: dict) -> str:

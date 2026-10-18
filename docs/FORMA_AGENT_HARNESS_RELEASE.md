@@ -33,3 +33,15 @@ Local coverage exercises provider-facing constraints, unchanged unrelated defini
 The local API suite passed 329 tests. The web suite passed 16 tests; TypeScript checking and ESLint passed. These results precede hosted complex-task qualification.
 
 Hosted acceptance, source commit, deployments, model identity, artifact checks and unresolved engineering findings are recorded under `D:/v1/test-results`. The unchanged original pump remains the complex acceptance task. Local harness tests alone do not qualify that pump or establish unattended completion.
+
+### October 18 follow-up
+
+The October 16 preview run `bbb81ff9-f74e-428f-b437-9c351552b4b1` consumed its configured 96 model calls and paused. It saved 14 definitions/source files and 29 instances, with a single-part root; no revision or complete assembly exports were published. Three isolated housing builds ran. Two failed on generated edge selection/filleting; the third passed B-rep integrity but failed its proposed size requirement. Independent measurements were 90 × 130 × 7.48 mm; this is not the requested 20.06 mm housing thickness, nor proof of bore clearance. The coordinator's proposed bounding-box requirements also do not establish shaft spacing or gear diameters.
+
+Calls 50–95 were source reads without further edits or new CAD evidence. The previous immediate-repeat guard missed cycles through multiple unchanged files. Recovery also retained the saturated dialogue, and the durable part-test summary omitted failed requirement details after the full tool report left recent context.
+
+The follow-up tracks observation receipts in typed checkpoint state, independently of rolling dialogue. Three repeated observations following the last newly informative observation route to the existing bounded automatic planner. Initial inspection of 60 distinct files is allowed; source edits, new test evidence and human updates renew the observation window. Reads still return their source. No mechanical rule or part lock is added, and total call/recovery limits remain enforced.
+
+Recovery now starts a focused dialogue while retaining the exact request, source, notes, receipts and validation in authoritative context. Part-test summaries retain measured component extents, requirement statuses and explicit verification status. CAD integrity success is explicitly distinguished from dimensional acceptance; stale measurements remain historical. Missing-file patch errors now explain how unsaved proposals differ from saved source.
+
+The API suite passed 332 tests, including checkpoint recreation during a nonconsecutive read cycle, initial 60-file inspection, evidence/source freshness and recovery with retained failed measurements. A fresh hosted run is still required to qualify this follow-up. The original pump remains incomplete and unverified.

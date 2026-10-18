@@ -8,7 +8,8 @@ from forma_api import engine
 from forma_api.contracts import AppSettings, Snapshot
 from forma_api.execution import digest, identity
 from forma_api.graphs import design
-from forma_api.harness import acceptance_context, component_snapshot, probe_context, recovery_key
+from forma_api.harness import (acceptance_context, component_snapshot, probe_context, recovery_key,
+                              observation_context, record_observation_action)
 from forma_api.tools import ApplyChanges, json_schema, model_tools, provider_tools, source_patch, updated_manifest
 
 
@@ -87,6 +88,8 @@ def test_atomic_upsert_and_exact_patch_preserve_unrelated_state():
     assert original == before
     with pytest.raises(ValueError, match="exactly once"):
         source_patch(original["files"], ApplyChanges(patches=[{"path": "parts/base.py", "oldText": "absent", "newText": "oops"}]))
+    with pytest.raises(ValueError, match="Rejected proposals are not saved files"):
+        source_patch(original["files"], ApplyChanges(patches=[{"path": "parts/unsaved.py", "oldText": "absent", "newText": "oops"}]))
     bad = ApplyChanges(mergeById=True, manifest={"rootComponentId": "not_registered"})
     with pytest.raises(ValueError, match="root"):
         Snapshot.model_validate({"files": original["files"], "manifest": updated_manifest(original["manifest"], bad)})
@@ -189,3 +192,101 @@ async def test_automatic_replan_survives_checkpoint_and_preserves_total_usage(mo
     # Repeated planning of unchanged failures is bounded; source remains available.
     limited = await design.cad_replan({**result, "recovery_counts": {recovery_key(result, snapshot): 2}})
     assert limited["phase"] == "cad_recovery" and "model_calls" not in limited
+
+
+def test_large_first_inspection_is_allowed_but_unchanged_cycles_survive_history_eviction():
+    snapshot = workspace()
+    state = {"original_request": "Preserve every part", "cad_history": []}
+    # Sixty different files may legitimately need inspection. No file-count or
+    # consecutive-read cap turns that initial inspection into an agent failure.
+    for index in range(60):
+        progress = record_observation_action(state, snapshot, "read_file", {"path": f"parts/p{index}.py", "version": "saved"})
+        state["cad_observation_progress"] = progress
+        assert progress["repeats"] == 0
+    for index in range(3):
+        progress = record_observation_action(state, snapshot, "read_file", {"path": f"parts/p{index}.py", "version": "saved"})
+        state["cad_observation_progress"] = progress
+    assert progress["repeats"] == 3
+    assert len(observation_context(state, snapshot)["reviewed"]) == 60
+    # Neither dialogue eviction nor notes erase receipts. Actual source or new
+    # test evidence does renew the observation window, without locking a part.
+    state["cad_history"] = []
+    state["working_memory"] = {"notes": {"next": "read again"}}
+    assert observation_context(state, snapshot)["repeatedObservations"] == 3
+    state["component_probes"] = {"base": {"identity": {"candidate": "new-evidence"}}}
+    assert not observation_context(state, snapshot)["reviewed"]
+    snapshot["files"]["parts/base.py"] += "\n# changed"
+    assert record_observation_action(state, snapshot, "read_file", {"path": "parts/base.py"})["repeats"] == 0
+
+
+@pytest.mark.asyncio
+async def test_cad_read_cycle_routes_to_focused_replan_without_losing_source(monkeypatch):
+    snapshot = workspace()
+    calls = iter(["parts/base.py", "parts/lid.py", "parts/base.py", "parts/lid.py", "parts/base.py"])
+    async def load(_): return deepcopy(snapshot)
+    async def turn(state, **kwargs):
+        assert "observationProgress" in kwargs["context"]
+        path = next(calls)
+        call = {"id": f"read-{state.get('model_calls', 0)}", "name": "read_file", "input": {"path": path}}
+        history = [{"role": "assistant", "tool_calls": [{"id": call["id"], "type": "function",
+                   "function": {"name": "read_file", "arguments": json.dumps(call["input"])}}]}]
+        return call, history, {"model_calls": state.get("model_calls", 0) + 1}
+    monkeypatch.setattr(design.run_service, "load_candidate", load)
+    monkeypatch.setattr(design, "agent_tool_turn", turn)
+    saver = InMemorySaver()
+    async def seed(_): return {"phase": "cad_session"}
+    monkeypatch.setattr(design, "coordinator", seed)
+    monkeypatch.setattr(design, "coordinator_session", seed)
+    graph = design.build_graph(saver)
+    config = {"configurable": {"thread_id": "read-cycle"}}
+    state = {"run_id": "run", "original_request": "Preserve exact geometry", "model_calls": 0}
+    await graph.ainvoke(state, config)
+    await graph.ainvoke(None, config)
+    for _ in range(5):
+        result = await graph.ainvoke(None, config)
+        # Recreate the graph: receipts are typed checkpoint state, not process memory.
+        graph = design.build_graph(saver)
+    assert result["phase"] == "cad_recovery" and result["model_calls"] == 5
+    assert (await graph.aget_state(config)).next == ("cad_replan",)
+    feedback = json.loads(result["cad_history"][-1]["content"])
+    assert feedback["content"] == snapshot["files"]["parts/base.py"]
+    assert feedback["observationProgress"]["replanning"]
+    assert snapshot == workspace()
+
+
+@pytest.mark.asyncio
+async def test_replan_clears_saturated_dialogue_but_retains_measurement_failures_and_notes(monkeypatch):
+    snapshot = workspace()
+    checks = [{"id": "length", "status": "failed", "evidence": {"measuredMm": [7, 20, 5]}}]
+    probes = {"base": {"ok": True, "identity": identity(component_snapshot(snapshot, "base"), []),
+                       "requirements": [], "report": {"requirements": checks,
+                       "components": {"base": {"dimensions": [7, 20, 5]}}}}}
+    state = {"run_id": "run", "original_request": "Keep exact length 10", "model_calls": 10,
+             "component_probes": probes, "cad_history": [{"role": "assistant", "content": "old source read" * 1000}],
+             "working_memory": {"notes": {"nextAction": "Repair measured length"}},
+             "cad_observation_progress": {"epoch": "prior", "seen": {"read": {"tool": "read_file"}}, "repeats": 3}}
+    async def load(_): return deepcopy(snapshot)
+    async def settings(): return AppSettings()
+    async def event(*_, **__): pass
+    async def turn(current, **kwargs):
+        test = kwargs["context"]["componentTests"][0]
+        assert test["ok"] and test["requirementChecks"] == checks
+        assert test["measurements"]["base"]["dimensions"] == [7, 20, 5]
+        assert kwargs["context"]["workingMemory"]["notes"]["nextAction"] == "Repair measured length"
+        return {"name": "submit_recovery", "input": {"diagnosis": "Repeated inspection", "nextTask": "Repair length",
+                "changesFromFailedApproach": "Use measured mismatch", "verification": "Probe base"}}, [], {"model_calls": 11}
+    monkeypatch.setattr(design.run_service, "load_candidate", load)
+    monkeypatch.setattr(design, "app_settings", settings)
+    monkeypatch.setattr(design.repo, "event", event)
+    monkeypatch.setattr(design, "agent_tool_turn", turn)
+    result = await design.cad_replan(state)
+    assert result["phase"] == "cad_session" and result["model_calls"] == 11
+    assert "old source read" not in json.dumps(result["cad_history"])
+    assert result["cad_history"][0]["content"] == state["original_request"]
+    assert result["cad_observation_progress"]["repeats"] == 0
+    assert "read" in result["cad_observation_progress"]["seen"]
+    merged = {**state, **result}
+    assert merged["component_probes"] == probes and merged["working_memory"] == state["working_memory"]
+    snapshot["files"]["parts/base.py"] += "\n# modified"
+    historical = probe_context(merged, snapshot)[0]
+    assert not historical["currentSource"] and historical["requirementChecks"] == checks

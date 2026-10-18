@@ -90,7 +90,10 @@ def source_patch(previous: dict[str, str], change: ApplyChanges) -> ApplyChanges
         if patch.path in change.files or patch.path in change.deletePaths:
             raise ValueError("A patched path cannot also be replaced or deleted in the same action.")
         content = files.get(patch.path, previous.get(patch.path))
-        if content is None or content.count(patch.oldText) != 1:
+        if content is None:
+            raise ValueError(f"No saved source exists at {patch.path}. Rejected proposals are not saved files; "
+                             "read version='rejected' if available, then submit full source and its manifest entry.")
+        if content.count(patch.oldText) != 1:
             raise ValueError(f"Patch for {patch.path} must match exactly once; read current source and retry.")
         files[patch.path] = content.replace(patch.oldText, patch.newText, 1)
     return change.model_copy(update={"files": files})
