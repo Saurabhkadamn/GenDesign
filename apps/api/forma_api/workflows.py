@@ -68,14 +68,27 @@ async def pause_interrupted(*, run_id: str, worker: str, diagnostic: str = "") -
 @wf.workflow
 async def design_workflow(*, run_id: str, worker: str, resume: dict | None = None):
     pending_resume = resume
+    transitions = 0
+    busy_delay = 5
     try:
-        for _ in range(120):
+        # Budget completed graph transitions, not queue polling. A queued run
+        # may wait behind a long build without consuming any model allowance.
+        # The graph enforces its own call/repair/resource limits; leave room
+        # for non-model build/validation/recovery nodes within those budgets.
+        while transitions < 512:
             state = await advance(run_id=run_id, worker=worker, resume=pending_resume)
+            if state == "busy":
+                await workflow.sleep(f"{busy_delay} seconds")
+                busy_delay = min(busy_delay * 2, 60)
+                continue
+            # A busy worker did not claim or consume the human response.
             pending_resume = None
+            busy_delay = 5
+            transitions += 1
             if state in ("done", "waiting_input"):
                 return {"runId": run_id, "state": state}
-            if state == "busy":
-                await workflow.sleep("5 seconds")
+            if state != "next":
+                raise ValueError("Unexpected graph scheduling state")
     except Exception as exc:
         # Never hide a workflow/runtime exception behind a generic pause. The
         # checkpoint remains authoritative, while the bounded diagnostic makes
