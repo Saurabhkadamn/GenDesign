@@ -231,6 +231,11 @@ async def dispatch(path: str, request: Request, response: Response):
                 from .engine import cancel_run
                 await cancel_run(run["id"])
                 return {"ok": True}
+            if parts[2] == "wake":
+                if profile["role"] != "admin":
+                    raise HTTPException(403, "Administrator access required for scheduler recovery.")
+                from .workflow_recovery import wake_queued_run
+                return await wake_queued_run(run)
             if parts[2] == "continue":
                 from .services.runs import resume
                 from .graphs.runner import dispatch_run
