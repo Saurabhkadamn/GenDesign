@@ -1303,7 +1303,7 @@ def normalize_instance_hierarchy(manifest: dict) -> tuple[dict, bool]:
 
 
 CAD_SESSION_TOOL_NAMES = {
-    "read_file", "search_files", "apply_changes", "update_parameters", "build",
+    "read_file", "search_files", "apply_changes", "update_parameters", "build", "test_component",
     "inspect_geometry", "request_engineering", "respond_to_review", "ask_user", "update_working_notes", "read_working_memory", "diagnose_workspace",
 }
 MAX_CAD_EDITS_WITHOUT_BUILD = 3
@@ -1657,7 +1657,7 @@ async def cad_session_turn(state: AgentState) -> dict:
             "stagedTypeCount": staged,
             "instruction": ("Work on a small dependency-related group per edit. Use mergeById=true for focused manifest edits. A partial manifest "
                 "must be internally consistent for the components already staged; it need not describe "
-                "the entire final assembly yet. Test parts using build(componentId=...) and assembly milestones using build(final=false), then add the remaining "
+                "the entire final assembly yet. Test parts using test_component(componentId=...) and assembly milestones using build(final=false), then add the remaining "
                 "parts. A passing partial build will not publish the design."),
         }
     if edits_since_build >= MAX_CAD_EDITS_WITHOUT_BUILD and buildable:
@@ -2054,9 +2054,15 @@ async def cad_session_turn(state: AgentState) -> dict:
                 "pending_cad_call": {}, "cad_history": history}
         return {**usage, "phase": "cad_question", "question": value["question"],
             "pending_cad_call": call, "last_read_path": None, "cad_history": history}
+    if name == "test_component" or name == "build" and value.get("componentId"):
+        if name == "build" and value.get("final", True):
+            return {**usage, "phase": "cad_session", "cad_history": bounded_history([*history, tool_message(call, {
+                "ok": False, "category": "build_scope",
+                "message": "A final build cannot be scoped to componentId. No build executed.",
+                "repairGuidance": "Call build({final:true}) without componentId for the complete design. For isolated diagnostics use test_component({componentId:...})."})])}
+        result = await probe_component({**state, **usage}, snapshot, call, history, value["componentId"])
+        return {**usage, **result}
     if name == "build":
-        if value.get("componentId"):
-            return await probe_component({**state, **usage}, snapshot, call, history, value["componentId"])
         if not snapshot["manifest"].get("components") or not snapshot["manifest"].get("rootComponentId"):
             history = bounded_history([*history, tool_message(call, {
                 "ok": False, "category": "empty_workspace",
@@ -2258,9 +2264,10 @@ async def probe_component(state: AgentState, snapshot: dict, call: dict, history
     probes = deepcopy(state.get("component_probes") or {})
     prior = probes.get(component_id) or {}
     if prior.get("identity") == expected:
-        result = {**prior, "reused": True, "message": "This source version was already tested; edit it before retrying a failure."}
-        return {"phase": "cad_session", "model_calls": state.get("model_calls", 0),
-                "cad_history": bounded_history([*history, tool_message(call, result)])}
+        result = {**prior, "reused": True, "message": "This exact part source already has scoped evidence. Edit before retrying a failure. To complete the whole design, call build(final=true) without componentId; this test cannot publish."}
+        return observation_result(state, snapshot, {**call, "name": "test_component"}, {"componentId": component_id},
+            history, {"model_calls": state.get("model_calls", 0),
+                      "cad_pending_actions": state.get("cad_pending_actions") or []}, result)
     run = await run_row(state)
     limits = (await app_settings()).limits
     cp = checkpoint_view(state, scoped)

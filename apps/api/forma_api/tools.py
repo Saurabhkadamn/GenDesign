@@ -140,6 +140,14 @@ def parameter_patch(previous: dict, update: UpdateParameters) -> ApplyChanges:
     return ApplyChanges(files={}, manifest=Manifest.model_validate({"components": components}))
 
 
+class ComponentTest(Contract):
+    componentId: SafeId
+
+
+class FullBuild(Contract):
+    final: bool = Field(default=True, description="False for an assembly milestone; true to build the complete design for review and publication. No componentId: the saved root defines this scope.")
+
+
 class Build(Contract):
     componentId: SafeId | None = Field(default=None, description=(
         "Optional isolated part/surface diagnostic: build this definition and its dependency closure without "
@@ -215,7 +223,8 @@ SPECS = {
     "apply_changes": (ApplyChanges, "Atomically stage a focused edit. Prefer mergeById=true to upsert changed definitions/occurrences while preserving others; use patches for exact text edits or files for full source. dryRun=true previews validation without saving. Omitted manifest fields remain unchanged. No code is executed."),
     "update_parameters": (UpdateParameters, "Atomically change existing named component parameters without rewriting source or assembly relationships. Read the component source first. New parameters require apply_changes. Rebuild and validate before publication."),
     "respond_to_review": (ReviewResponse, "Read-only response when a specific repair finding contradicts current validated evidence. Return the unchanged validated candidate to its reviewer for reassessment once per finding. Does not edit, validate or publish geometry."),
-    "build": (Build, "Build and validate the current CAD workspace. Use final=false for an intermediate assembly milestone, or final=true only when the requested design is represented."),
+    "build": (Build, "Build the complete saved CAD root. final=false tests an assembly milestone; final=true sends the complete design for review/publication. Do not supply componentId. Use test_component for isolated part diagnostics."),
+    "test_component": (ComponentTest, "Test one part/surface and dependencies in isolation. Returns scoped evidence only; never publishes or validates the complete design. Use build(final=true) without componentId for final review."),
     "inspect_geometry": (InspectGeometry, "Inspect the current candidate's build report and requirement evidence. CAD may supply componentId to retrieve a scoped part-probe report with freshness labels."),
     "inspect_project": (Empty, "Inspect the current project, previous conversation, selected parts, revision, and verification evidence."),
     "request_engineering": (RequestEngineering, "Ask the engineering agent for calculations or design parameters, then return to CAD."),
@@ -228,7 +237,7 @@ SPECS = {
 }
 ROLE_TOOLS = {
     "coordinator": ("inspect_project", "read_file", "search_files", "delegate", "inspect_geometry", "publish_revision", "restore_revision", "ask_user", "finish"),
-    "cad": ("read_file", "search_files", "apply_changes", "update_parameters", "respond_to_review", "build", "inspect_geometry", "request_engineering", "ask_user", "finish"),
+    "cad": ("read_file", "search_files", "apply_changes", "update_parameters", "respond_to_review", "build", "test_component", "inspect_geometry", "request_engineering", "ask_user", "finish"),
     "engineering": ("read_file", "search_files", "apply_changes", "calculate", "inspect_geometry", "ask_user", "finish"),
 }
 
@@ -399,7 +408,7 @@ def provider_tools(config: dict, tools: list[dict]) -> list[dict]:
 def model_tools(role: Role, *, review_response: bool = False, working_memory: bool = False) -> list[dict]:
     names = (*ROLE_TOOLS[role], "update_working_notes", "read_working_memory", "diagnose_workspace") if working_memory and role in {"cad", "coordinator"} else ROLE_TOOLS[role]
     return [{"type": "function", "function": {"name": name, "description": SPECS[name][1],
-            "parameters": json_schema(SPECS[name][0].model_json_schema())}} for name in names
+            "parameters": json_schema((FullBuild if name == "build" else SPECS[name][0]).model_json_schema())}} for name in names
             if name != "respond_to_review" or review_response]
 
 
