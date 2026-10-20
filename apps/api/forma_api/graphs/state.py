@@ -53,6 +53,7 @@ class AgentState(TypedDict, total=False):
     recovery_counts: dict[str, int]
     recovery_plan_count: int
     recovery_plan: dict[str, Any]
+    recovery_source_paths: list[str]
     rejected_files: dict[str, str]
     last_read_path: str | None
     review_history: list[dict[str, Any]]

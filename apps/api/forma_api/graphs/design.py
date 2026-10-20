@@ -27,7 +27,7 @@ from ..workspace_diagnostics import contract_repair_attempt, workspace_contract_
 from ..source_contracts import validate_component_entrypoints
 from ..workspace_status import workspace_status
 from ..harness import (acceptance_context, component_snapshot, probe_context, recovery_key,
-                      observation_context, record_observation_action)
+                      observation_context, record_observation_action, recovery_source_context)
 from ..agent_memory import (user_update, memory_context, capture_history, record_observation,
                             fit_dialogue, compact_narrative, update_notes, estimate_tokens, read_memory, notes_just_saved, older_outcomes_available)
 from .state import AgentState
@@ -1539,10 +1539,11 @@ def retained_proposal_files(arguments) -> dict[str, str]:
 
 def observation_result(state: AgentState, snapshot: dict, call: dict, arguments: dict,
                        history: list, usage: dict, result: dict) -> dict:
-    progress = record_observation_action(state, snapshot, call["name"], arguments)
-    stalled = progress["repeats"] >= 3 and not usage.get("cad_pending_actions")
+    progress = record_observation_action(state, snapshot, call["name"], arguments,
+                                         decision=usage.get("model_calls"))
+    stalled = progress.get("repeatDecisions", 0) >= 3 and not usage.get("cad_pending_actions")
     feedback = {**result, "observationProgress": {"repeatedObservations": progress["repeats"],
-                "replanning": stalled}}
+                "repeatedDecisions": progress.get("repeatDecisions", 0), "replanning": stalled}}
     message = ("The CAD agent cycled through unchanged observations without an edit or new test evidence. "
                "Choose a focused next action using the retained source, measurements and exact request.")
     return {**usage, "phase": "cad_recovery" if stalled else "cad_session",
@@ -1625,6 +1626,7 @@ async def cad_session_turn(state: AgentState) -> dict:
         "observationProgress": observation_context(state, snapshot),
         "queuedActionStatus": state.get("cad_queue_feedback") or None,
         "recoveryPlan": state.get("recovery_plan") or None,
+        "recoverySourceContext": recovery_source_context(state, snapshot, paths=state.get("recovery_source_paths") or []),
         "rejectedSource": {"paths": sorted(state.get("rejected_files") or {}),
                            "instruction": "Unsaved proposal source only; use read_file(version='rejected') selectively. Saved source is authoritative."},
         "delegatedTask": state.get("coordinator_task", ""),
@@ -1671,7 +1673,8 @@ async def cad_session_turn(state: AgentState) -> dict:
                  if item.get("id") == manifest.get("rootComponentId")), None)
     if len(physical_components) > 1 and (root or {}).get("kind") != "assembly":
         context["assemblyRootRepair"] = (
-            "This workspace has multiple physical parts, but rootComponentId names a single part. "
+            ("This workspace has multiple physical parts, but rootComponentId is not set. " if not root else
+             "This workspace has multiple physical parts, but rootComponentId names a single part. ") +
             "The root STEP cannot contain all manifest instances. Before a full assembly build, "
             "use apply_changes to add an assemblies/ Python source with build(parameters, dependencies) "
             "returning a CadQuery Assembly; add every currently staged part under its exact manifest "
@@ -2384,7 +2387,9 @@ async def cad_replan(state: AgentState) -> dict:
         return {"phase": "cad_recovery", "final_message": (
             "Automatic recovery reached its bounded allowance. The candidate, exact requirements and failure evidence "
             "are preserved. " + state.get("final_message", ""))}
+    source_context = recovery_source_context(state, snapshot)
     context = {"request": state.get("clarified_request") or state["original_request"],
+               "recoverySourceContext": source_context,
                "workspace": {"manifest": snapshot["manifest"], "files": sorted(snapshot["files"]),
                              "candidateHash": digest(snapshot)},
                "failure": state.get("final_message"), "workspaceRepair": state.get("cad_contract_repair"),
@@ -2405,7 +2410,8 @@ async def cad_replan(state: AgentState) -> dict:
     except (ValueError, ValidationError):
         return {**update, "phase": "cad_replan", "final_message": "The automatic recovery planner returned an unusable plan."}
     repair = state.get("cad_contract_repair") or {}
-    progress = {**(state.get("cad_observation_progress") or {}), "repeats": 0}
+    progress = {**(state.get("cad_observation_progress") or {}), "repeats": 0,
+                "repeatDecisions": 0, "lastRepeatedDecision": None}
     await repo.event(state["run_id"], "Forma is re-planning the failed step using saved source and failure evidence.", stage="cad")
     return {**update, "phase": "cad_session", "recovery_plan": {**plan, "candidateHash": digest(snapshot)},
             "repairs": 0, "cad_invalid_tool_attempts": 0, "cad_edits_since_build": 0,
@@ -2413,6 +2419,7 @@ async def cad_replan(state: AgentState) -> dict:
             "pending_cad_call": {}, "last_read_path": None, "final_message": "",
             "cad_pending_actions": [],
             "cad_observation_progress": progress,
+            "recovery_source_paths": list(source_context["files"]),
             # A fresh focused dialogue avoids carrying the same saturated read
             # cycle back into CAD. Exact request, source, notes, receipts and
             # validation are independently retained in authoritative context.
@@ -2428,7 +2435,13 @@ async def cad_recovery(state: AgentState) -> dict:
     history = bounded_history([*state.get("cad_history", []), {"role": "user", "content":
         "Continue from the retained candidate. Isolate and re-plan the failed operation before building. " + message}])
     repair = state.get("cad_contract_repair") or {}
+    snapshot = await run_service.load_candidate(state["run_id"])
+    sources = recovery_source_context(state, snapshot)
     return {"phase": "cad_session", "repairs": 0, "cad_history": history,
+            "recovery_source_paths": list(sources["files"]),
+            "recovery_plan": {},
+            "cad_observation_progress": {**(state.get("cad_observation_progress") or {}),
+                "repeats": 0, "repeatDecisions": 0, "lastRepeatedDecision": None},
             "cad_invalid_tool_attempts": 0,
             "cad_contract_repair": {**repair, "stalledAttempts": 0} if repair else {},
             **user_update(state, message),

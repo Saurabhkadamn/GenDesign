@@ -34,14 +34,17 @@ async def test_successful_milestone_resets_only_repair_allowance():
 
 
 @pytest.mark.asyncio
-async def test_durable_recovery_waits_then_resumes_same_candidate_without_rebuild():
+async def test_durable_recovery_waits_then_resumes_same_candidate_without_rebuild(monkeypatch):
+    async def load(_): return {"files": {}, "manifest": {"components": []}}
+    monkeypatch.setattr(design.run_service, "load_candidate", load)
+
     graph = StateGraph(AgentState)
     graph.add_node("recovery", design.cad_recovery)
     graph.add_edge(START, "recovery")
     graph.add_edge("recovery", END)
     compiled = graph.compile(checkpointer=InMemorySaver())
     config = {"configurable": {"thread_id": "repair-test"}}
-    state = {"final_message": "Worker failed; candidate retained", "candidate_hash": "same-draft",
+    state = {"run_id": "run", "final_message": "Worker failed; candidate retained", "candidate_hash": "same-draft",
         "repairs": 3, "attempts": 3, "model_calls": 17, "last_failed_candidate": {"candidate": "same-draft"},
         "build_result": {"ok": False}, "cad_history": [], "cad_edits_since_build": 3}
     waiting = await compiled.ainvoke(state, config)

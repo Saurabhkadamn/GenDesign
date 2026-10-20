@@ -54,7 +54,9 @@ async def test_reused_probe_cycles_replan_instead_of_spending_an_unbounded_call_
  scoped=design.component_snapshot(source,'plate')
  state={'run_id':'run','original_request':'Publish','component_probes':{'plate':{'identity':identity(scoped,[]),'ok':True}},'model_calls':6}
  for i in range(4):
+  # Each independent provider decision consumes its own model ordinal.
+  state['model_calls']=6+i
   call={'id':f'p{i}','name':'test_component','input':{'componentId':'plate'}}
   history=[{'role':'assistant','tool_calls':[{'id':call['id'],'type':'function','function':{'name':'test_component','arguments':json.dumps(call['input'])}}]}]
   state.update(await design.probe_component(state,source,call,history,'plate'))
- assert state['phase']=='cad_recovery' and state['model_calls']==6
+ assert state['phase']=='cad_recovery' and state['model_calls']==9

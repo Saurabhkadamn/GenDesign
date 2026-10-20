@@ -28,7 +28,10 @@ def test_human_updates_survive_history_trimming_without_changing_exact_values():
 
 
 @pytest.mark.asyncio
-async def test_real_recovery_checkpoint_keeps_updates_across_multiple_resumes():
+async def test_real_recovery_checkpoint_keeps_updates_across_multiple_resumes(monkeypatch):
+    async def load(_): return {"files": {}, "manifest": {"components": []}}
+    monkeypatch.setattr(design.run_service, "load_candidate", load)
+
     graph = StateGraph(AgentState)
     graph.add_node("recovery", design.cad_recovery)
     graph.add_edge(START, "recovery")
@@ -36,7 +39,7 @@ async def test_real_recovery_checkpoint_keeps_updates_across_multiple_resumes():
     saver = InMemorySaver()
     config = {"configurable":{"thread_id":"human-memory"}}
     compiled = graph.compile(checkpointer=saver)
-    initial = {"original_request":"Original dimensions", "final_message":"Failed build",
+    initial = {"run_id":"run", "original_request":"Original dimensions", "final_message":"Failed build",
                "candidate_hash":"retained", "attempts":4, "model_calls":23}
     await compiled.ainvoke(initial, config)
     first = await compiled.ainvoke(Command(resume={"kind":"continue","message":"Keep 5.290 degrees."}), config)

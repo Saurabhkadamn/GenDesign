@@ -1,4 +1,5 @@
 """General harness state and scoped evidence; no generated geometry or design recipes."""
+import json
 from copy import deepcopy
 
 from .contracts import Snapshot
@@ -75,12 +76,14 @@ def observation_context(state: dict, snapshot: dict) -> dict:
         progress = {}
     return {"reviewed": list((progress.get("seen") or {}).values()),
             "repeatedObservations": progress.get("repeats", 0),
+            "repeatedDecisions": progress.get("repeatDecisions", 0),
             "instruction": "These reads/inspections already completed for unchanged source and evidence. "
                            "Re-read when needed, then use the result for a focused edit or test. "
                            "Cycling through the same observations triggers a fresh repair plan, not a part lock."}
 
 
-def record_observation_action(state: dict, snapshot: dict, name: str, arguments: dict) -> dict:
+def record_observation_action(state: dict, snapshot: dict, name: str, arguments: dict,
+                              *, decision: int | None = None) -> dict:
     """Recognize nonconsecutive observation cycles even after dialogue eviction."""
     epoch = observation_epoch(state, snapshot)
     progress = deepcopy(state.get("cad_observation_progress") or {})
@@ -88,7 +91,17 @@ def record_observation_action(state: dict, snapshot: dict, name: str, arguments:
         progress = {"epoch": epoch, "seen": {}, "repeats": 0}
     key = digest({"tool": name, "arguments": arguments})
     seen = progress["seen"]
-    progress["repeats"] = progress["repeats"] + 1 if key in seen else 0
+    repeated = key in seen
+    progress["repeats"] = progress["repeats"] + 1 if repeated else 0
+    # A provider may return many reads in one generation. Give it the results
+    # before treating that single decision as multiple unsuccessful attempts.
+    if repeated:
+        marker = decision if decision is not None else f"observation:{progress['repeats']}"
+        if marker != progress.get("lastRepeatedDecision"):
+            progress["repeatDecisions"] = progress.get("repeatDecisions", 0) + 1
+        progress["lastRepeatedDecision"] = marker
+    else:
+        progress.update(repeatDecisions=0, lastRepeatedDecision=None)
     seen[key] = {"tool": name, "arguments": arguments}
     # Bound metadata only; source and evidence remain in their own stores.
     if len(seen) > 256:
@@ -102,3 +115,40 @@ def recovery_key(state: dict, snapshot: dict) -> str:
     category = repair.get("category") or error.get("category") or "tool_action"
     issues = sorted((item.get("code", ""), item.get("path", "")) for item in repair.get("issues", []))
     return digest({"candidate": digest(snapshot), "category": category, "issues": issues})
+
+
+def recovery_source_context(state: dict, snapshot: dict, *, paths: list[str] | None = None,
+                            max_bytes: int = 48_000, max_files: int = 16) -> dict:
+    """Retrieve bounded current source after dialogue reset; never promote it to evidence."""
+    selected = list(paths if paths is not None else state.get("recovery_source_paths") or [])
+    if paths is None:
+        for message in state.get("cad_history") or []:
+            if message.get("role") != "tool":
+                continue
+            try:
+                result = json.loads(message.get("content") or "{}")
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(result, dict):
+                continue
+            path = result.get("path")
+            if (result.get("ok") is True and result.get("saved") is True
+                    and isinstance(path, str) and path in snapshot["files"]
+                    and result.get("content") == snapshot["files"][path]):
+                selected = [item for item in selected if item != path] + [path]
+    files, omitted, size = {}, [], 0
+    for path in reversed(list(dict.fromkeys(selected))):
+        source = snapshot["files"].get(path)
+        if not isinstance(source, str) or not path.endswith(".py") or path.startswith("calculations/"):
+            continue
+        entry_size = len(json.dumps({path: source}, ensure_ascii=False).encode("utf-8"))
+        if len(files) >= max_files or size + entry_size > max_bytes:
+            omitted.append(path)
+            continue
+        files[path] = source
+        size += entry_size
+    return {"candidateHash": digest(snapshot), "files": files, "omittedPaths": omitted,
+            "instruction": "Current saved source for paths selected from completed reads. This is source context, "
+                           "not build or geometry evidence. Use it directly for a focused edit or test; do not "
+                           "re-read every file after recovery. Other source remains available through read_file. "
+                           "Earlier missing-source errors may be obsolete; compare them with the current file inventory."}
