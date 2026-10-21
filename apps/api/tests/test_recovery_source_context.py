@@ -90,7 +90,10 @@ async def test_replayed_read_batch_reaches_next_model_decision_without_premature
 async def test_recovery_source_handoff_survives_checkpoint_and_reaches_cad(monkeypatch):
     snapshot = workspace(2)
     reads = [read_result(p, s) for p, s in snapshot["files"].items()]
-    initial = {"run_id": "run", "original_request": "Keep exact requirements", "model_calls": 10,
+    initial = {"run_id": "run", "original_request": "Keep exact requirements",
+               "clarified_request": "Keep exact requirements\n\nUser continuation: 14 parts are missing",
+               "user_updates": [{"kind": "continuation", "message": "14 parts are missing"}],
+               "model_calls": 10,
                "cad_history": [{"role": "assistant", "content": "obsolete failed proposal" * 1000}, *reads],
                "cad_observation_progress": {"seen": {}, "repeats": 20, "repeatDecisions": 3}}
     async def load(_): return deepcopy(snapshot)
@@ -98,11 +101,17 @@ async def test_recovery_source_handoff_survives_checkpoint_and_reaches_cad(monke
     async def event(*_, **__): pass
     async def turn(state, **kwargs):
         assert kwargs["context"]["recoverySourceContext"]["files"] == snapshot["files"]
+        assert kwargs["context"]["request"] == "Keep exact requirements"
+        assert kwargs["context"]["humanUpdates"] == initial["user_updates"]
+        assert kwargs["context"]["currentCandidate"]["componentCount"] == 2
+        assert kwargs["context"]["currentCandidate"]["instanceCount"] == 0
+        assert kwargs["context"]["currentCandidate"]["savedSourcePaths"] == sorted(snapshot["files"])
         if kwargs["prompt_role"] == "recovery":
             return {"name": "submit_recovery", "input": {"diagnosis": "Sources exist; root missing",
                 "nextTask": "Test a saved component", "changesFromFailedApproach": "Use retained source",
                 "verification": "Independent part test"}}, [], {"model_calls": 11}
         assert "obsolete failed proposal" not in json.dumps(kwargs["history"])
+        assert "Current saved candidate" in json.dumps(kwargs["history"])
         return {"id": "diagnose", "name": "diagnose_workspace", "input": {}}, [], {"model_calls": 12}
     monkeypatch.setattr(design.run_service, "load_candidate", load)
     monkeypatch.setattr(design, "app_settings", settings)

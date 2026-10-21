@@ -1620,7 +1620,9 @@ async def cad_session_turn(state: AgentState) -> dict:
     buildable = bool(snapshot["manifest"].get("components")
                      and snapshot["manifest"].get("rootComponentId"))
     context = {
-        "request": state.get("clarified_request") or state["original_request"],
+        "currentCandidate": current_candidate_facts(snapshot),
+        "request": state["original_request"],
+        "humanUpdates": human_followups(state),
         "acceptanceLedger": acceptance_context(state, snapshot),
         "componentTests": probe_context(state, snapshot),
         "observationProgress": observation_context(state, snapshot),
@@ -2374,6 +2376,24 @@ class RecoveryPlan(Contract):
     verification: str = Field(min_length=1, max_length=2000)
 
 
+def human_followups(state: AgentState) -> list[dict]:
+    """Keep design changes while labeling old workspace claims as historical."""
+    updates = state.get("user_updates") or []
+    if updates:
+        return updates
+    clarified = state.get("clarified_request")
+    return [{"kind": "legacy_clarification", "message": clarified}] if clarified and clarified != state.get("original_request") else []
+
+
+def current_candidate_facts(snapshot: dict) -> dict:
+    """Small authoritative inventory, independent of past dialogue or plans."""
+    manifest = snapshot["manifest"]
+    return {"candidateHash": digest(snapshot), "componentCount": len(manifest.get("components") or []),
+            "instanceCount": len(manifest.get("instances") or []),
+            "rootComponentId": manifest.get("rootComponentId"),
+            "savedSourcePaths": sorted(snapshot["files"])}
+
+
 async def cad_replan(state: AgentState) -> dict:
     """Automatic bounded replanning before requiring human recovery input."""
     snapshot = await run_service.load_candidate(state["run_id"])
@@ -2388,7 +2408,10 @@ async def cad_replan(state: AgentState) -> dict:
             "Automatic recovery reached its bounded allowance. The candidate, exact requirements and failure evidence "
             "are preserved. " + state.get("final_message", ""))}
     source_context = recovery_source_context(state, snapshot)
-    context = {"request": state.get("clarified_request") or state["original_request"],
+    current = current_candidate_facts(snapshot)
+    updates = human_followups(state)
+    context = {"currentCandidate": current,
+               "request": state["original_request"], "humanUpdates": updates,
                "recoverySourceContext": source_context,
                "workspace": {"manifest": snapshot["manifest"], "files": sorted(snapshot["files"]),
                              "candidateHash": digest(snapshot)},
@@ -2423,7 +2446,9 @@ async def cad_replan(state: AgentState) -> dict:
             # A fresh focused dialogue avoids carrying the same saturated read
             # cycle back into CAD. Exact request, source, notes, receipts and
             # validation are independently retained in authoritative context.
-            "cad_history": [{"role": "user", "content": state.get("clarified_request") or state["original_request"]},
+            "cad_history": [{"role": "user", "content": state["original_request"]},
+                {"role": "system", "content": "Human follow-ups retain design requirements, but any workspace counts or missing-file claims in them are historical: " + json.dumps(updates)},
+                {"role": "system", "content": "Current saved candidate, authoritative for staged workspace facts: " + json.dumps(current)},
                 {"role": "system", "content": "Automatic recovery plan (an agent proposal, not a human instruction or validation): " + json.dumps(plan)}]}
 
 

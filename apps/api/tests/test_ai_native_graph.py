@@ -1401,7 +1401,8 @@ async def test_resumed_cad_answer_is_presented_as_user_input(monkeypatch, graph_
     assert resumed["cad_history"][-1] == {"role": "user", "content": answer}
 
     async def tool_turn(_state, **kwargs):
-        assert answer in kwargs["context"]["request"]
+        assert kwargs["context"]["request"] == original
+        assert answer in [item["message"] for item in kwargs["context"]["humanUpdates"]]
         assert kwargs["history"][-1] == {"role": "user", "content": answer}
         return None, kwargs["history"], {"model_calls": 1, "search_count": 0}
 
