@@ -1029,6 +1029,50 @@ async def test_cad_session_withholds_repeated_observation_tools_after_six_decisi
 
 
 @pytest.mark.asyncio
+async def test_six_distinct_source_reads_force_an_edit_on_the_next_model_turn(monkeypatch, graph_mocks):
+    request = "Build a cube and use its saved source to make a focused correction."
+    graph_mocks["candidate"] = {"manifest": {
+        "schemaVersion": 1, "units": "mm", "components": [{"id": "cube", "name": "Cube",
+            "source": "parts/cube.py", "kind": "solid", "dependencies": [], "parameters": {}}],
+        "instances": [], "rootComponentId": "cube", "references": [], "joints": [],
+        "configurations": [], "featureOperations": [],
+    }, "files": {"parts/cube.py": "def build(parameters, dependencies):\n    return None"}}
+    graph_mocks["candidate"]["files"].update({f"parts/observation_{index}.py": f"value = {index}"
+        for index in range(6)})
+    current = state(original_request=request,
+        cad_history=[{"role": "user", "content": request}])
+    decisions = []
+
+    async def turn(_config, messages, tools, **_kwargs):
+        names = [item["function"]["name"] for item in tools]
+        decision = len(decisions)
+        if decision < 6:
+            name = "read_file"
+            arguments = {"path": f"parts/observation_{decision}.py"}
+        else:
+            name = "apply_changes"
+            arguments = {"files": [{"path": "parts/cube.py",
+                "content": "def build(parameters, dependencies):\n    return 1"}],
+                "manifest": None, "deletePaths": []}
+        tool_call = {"id": f"decision-{decision}", "type": "function",
+            "function": {"name": name, "arguments": json.dumps(arguments)}}
+        decisions.append({"tools": names, "action": name})
+        return {"message": {"role": "assistant", "content": "", "tool_calls": [tool_call]},
+            "calls": [{"id": tool_call["id"], "name": name, "input": arguments}],
+            "inputTokens": 2, "outputTokens": 2, "webSearchRequests": 0}
+
+    monkeypatch.setattr(design.models, "turn", turn)
+    for _ in range(7):
+        current.update(await design.cad_session(current))
+
+    assert [item["action"] for item in decisions] == ["read_file"] * 6 + ["apply_changes"]
+    assert "read_file" not in decisions[-1]["tools"]
+    assert "apply_changes" in decisions[-1]["tools"]
+    assert graph_mocks["candidate"]["files"]["parts/cube.py"] == (
+        "def build(parameters, dependencies):\n    return 1")
+
+
+@pytest.mark.asyncio
 async def test_second_part_requires_real_assembly_root_before_rebuild(monkeypatch, graph_mocks):
     graph_mocks["candidate"] = {"manifest": {
         "schemaVersion": 1, "units": "mm", "rootComponentId": "base",

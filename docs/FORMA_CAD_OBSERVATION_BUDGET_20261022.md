@@ -13,7 +13,7 @@ The hosted external gear-pump run stopped after repeated reads of unchanged sour
 
 ## Verification
 
-- Current harness API suite: **370 passed**, including an integration regression that verifies observation tools disappear at the threshold while edits, tests, builds, engineering analysis, and user questions remain available.
+- Current harness API suite: **371 passed**, including an integration regression that simulates six distinct source-read turns and verifies the seventh turn makes a substantive source edit with observation tools withheld.
 - Local external gear-pump prototype: 29 named solids; all three STEP states reopen as valid 29-solid files; all-pairs collision checks pass at 0°, 5.29°, and 10.59°.
 - The supplied axial-clearance tolerance chain still fails at worst case: 0.060–0.090 mm against a 0.040–0.080 mm requirement. The original dimensions remain unchanged in the test deliverables.
 - No hosted pump build, publication, or release has been verified by this change. The old hosted run cannot be resumed under the current runtime identity.
