@@ -1631,6 +1631,7 @@ async def cad_session_turn(state: AgentState) -> dict:
         "currentCandidate": current_candidate_facts(snapshot),
         "request": state["original_request"],
         "humanUpdates": human_followups(state),
+        "activeFailure": active_build_failure(state.get("build_result")),
         "acceptanceLedger": acceptance_context(state, snapshot),
         "componentTests": compact_probe_context(state, snapshot),
         "observationProgress": observation_context(state, snapshot),
@@ -2428,6 +2429,29 @@ def compact_build_context(value: dict | None) -> dict | None:
         "error": compact_error or None}
 
 
+def active_build_failure(value: dict | None) -> dict | None:
+    """Expose the newest actionable build failure as the repair target."""
+    if not value or value.get("ok") is True:
+        return None
+    error = value.get("error") or {}
+    if isinstance(error, str):
+        error = {"diagnostic": error}
+    if not isinstance(error, dict):
+        return None
+    location = error.get("location") if isinstance(error.get("location"), dict) else {}
+    path = error.get("file") or error.get("path") or location.get("file")
+    diagnostic = error.get("diagnostic") or error.get("message") or ""
+    return {
+        "category": error.get("category"),
+        "file": path,
+        "line": error.get("line") or location.get("line"),
+        "diagnostic": str(diagnostic)[-1800:],
+        "instruction": ("This is the newest failed build operation and takes priority over older repair directions. "
+                        "Inspect and repair this exact file/operation, then test it or rebuild. Do not return to an "
+                        "older file-specific repair unless this current failure proves it is required."),
+    }
+
+
 def compact_probe_context(state: dict, snapshot: dict) -> list[dict]:
     probes = probe_context(state, snapshot)
     compact = []
@@ -2474,8 +2498,10 @@ async def cad_replan(state: AgentState) -> dict:
         paths=focused_recovery_paths(state, snapshot), max_bytes=12_000, max_files=4)
     current = current_candidate_facts(snapshot)
     updates = human_followups(state)
+    active_failure = active_build_failure(state.get("build_result"))
     context = {"currentCandidate": current,
                "request": state["original_request"], "humanUpdates": updates,
+               "activeFailure": active_failure,
                "recoverySourceContext": source_context,
                "workspace": {"manifest": compact_manifest_context(snapshot["manifest"]), "files": sorted(snapshot["files"]),
                              "candidateHash": digest(snapshot)},
@@ -2512,9 +2538,12 @@ async def cad_replan(state: AgentState) -> dict:
             # cycle back into CAD. Exact request, source, notes, receipts and
             # validation are independently retained in authoritative context.
             "cad_history": [{"role": "user", "content": state["original_request"]},
-                {"role": "system", "content": "Human follow-ups retain design requirements, but any workspace counts or missing-file claims in them are historical: " + json.dumps(updates)},
+                {"role": "system", "content": "Human follow-ups retain durable design requirements. Their file-specific repair steps are historical; "
+                    "the newest build failure supersedes them when it names a different operation: " + json.dumps(updates)},
                 {"role": "system", "content": "Current saved candidate, authoritative for staged workspace facts: " + json.dumps(current)},
-                {"role": "system", "content": "Automatic recovery plan (an agent proposal, not a human instruction or validation): " + json.dumps(plan)}]}
+                {"role": "system", "content": "Automatic recovery plan (an agent proposal, not a human instruction or validation): " + json.dumps(plan)},
+                {"role": "system", "content": "AUTHORITATIVE CURRENT BUILD FAILURE: " + json.dumps(active_failure) +
+                    ". Repair this latest failing operation before revisiting any earlier file-specific instruction."}]}
 
 
 async def cad_recovery(state: AgentState) -> dict:

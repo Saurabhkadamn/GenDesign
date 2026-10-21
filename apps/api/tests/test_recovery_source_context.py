@@ -13,6 +13,16 @@ from forma_api.harness import (recovery_source_context, record_observation_actio
 from forma_api.agent_memory import memory_context, fit_dialogue, estimate_tokens
 
 
+def test_active_build_failure_is_the_authoritative_repair_target():
+    failure = design.active_build_failure({"ok": False, "error": {
+        "category": "geometry", "location": {"file": "parts/drive_gear_shaft.py", "line": 49},
+        "diagnostic": "No rear face selected"}})
+    assert failure["file"] == "parts/drive_gear_shaft.py"
+    assert failure["line"] == 49
+    assert "newest failed build operation" in failure["instruction"]
+    assert design.active_build_failure({"ok": True, "error": {"file": "parts/old.py"}}) is None
+
+
 def workspace(count=14):
     files = {f"parts/p{i}.py": f"def build(parameters, dependencies):\n    return {i}\n" for i in range(count)}
     return Snapshot.model_validate({"files": files, "manifest": {"components": [
@@ -155,8 +165,10 @@ async def test_recovery_source_handoff_survives_checkpoint_and_reaches_cad(monke
     reads = [read_result(p, s) for p, s in snapshot["files"].items()]
     initial = {"run_id": "run", "original_request": "Keep exact requirements",
                "clarified_request": "Keep exact requirements\n\nUser continuation: 14 parts are missing",
-               "user_updates": [{"kind": "continuation", "message": "14 parts are missing"}],
+               "user_updates": [{"kind": "continuation", "message": "14 parts are missing; earlier repair targeted parts/p0.py"}],
                "model_calls": 10,
+               "build_result": {"ok": False, "error": {"category": "geometry",
+                   "location": {"file": "parts/p1.py", "line": 12}, "diagnostic": "Current edge fillet failed"}},
                "cad_history": [{"role": "assistant", "content": "obsolete failed proposal" * 1000}, *reads],
                "cad_observation_progress": {"seen": {}, "repeats": 20, "repeatDecisions": 3}}
     async def load(_): return deepcopy(snapshot)
@@ -166,6 +178,7 @@ async def test_recovery_source_handoff_survives_checkpoint_and_reaches_cad(monke
         assert list(kwargs["context"]["recoverySourceContext"]["files"]) == ["parts/p1.py"]
         assert kwargs["context"]["request"] == "Keep exact requirements"
         assert kwargs["context"]["humanUpdates"] == initial["user_updates"]
+        assert kwargs["context"]["activeFailure"]["file"] == "parts/p1.py"
         assert kwargs["context"]["currentCandidate"]["componentCount"] == 2
         assert kwargs["context"]["currentCandidate"]["instanceCount"] == 0
         assert "savedSourcePaths" not in kwargs["context"]["currentCandidate"]
@@ -175,6 +188,8 @@ async def test_recovery_source_handoff_survives_checkpoint_and_reaches_cad(monke
                 "verification": "Independent part test"}}, [], {"model_calls": 11}
         assert "obsolete failed proposal" not in json.dumps(kwargs["history"])
         assert "Current saved candidate" in json.dumps(kwargs["history"])
+        assert "AUTHORITATIVE CURRENT BUILD FAILURE" in kwargs["history"][-1]["content"]
+        assert "parts/p1.py" in kwargs["history"][-1]["content"]
         return {"id": "diagnose", "name": "diagnose_workspace", "input": {}}, [], {"model_calls": 12}
     monkeypatch.setattr(design.run_service, "load_candidate", load)
     monkeypatch.setattr(design, "app_settings", settings)
