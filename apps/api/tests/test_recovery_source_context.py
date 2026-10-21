@@ -141,21 +141,21 @@ def test_observation_only_budget_counts_model_decisions_and_forces_progress():
     state = {"original_request": "Preserve the requested tolerances",
              "cad_observation_progress": {"epoch": observation_epoch(
                  {"original_request": "Preserve the requested tolerances"}, snapshot),
-                 "seen": {}, "repeats": 0, "observationOnlyDecisions": 5}}
+                 "seen": {}, "repeats": 0, "observationOnlyDecisions": 2}}
 
     # A provider can return a batch of many file reads in one generation.
     progress = record_observation_decision(state["cad_observation_progress"], batch_complete=False)
-    assert progress["observationOnlyDecisions"] == 5
+    assert progress["observationOnlyDecisions"] == 2
     progress = record_observation_decision(progress, batch_complete=True)
     state["cad_observation_progress"] = progress
-    assert observation_context(state, snapshot)["observationOnlyDecisions"] == 6
+    assert observation_context(state, snapshot)["observationOnlyDecisions"] == 3
 
     tools = [{"function": {"name": name}} for name in (
         "read_file", "search_files", "inspect_geometry", "diagnose_workspace",
         "read_working_memory", "apply_changes", "test_component", "build",
         "request_engineering", "ask_user",
     )]
-    bounded = design.bound_cad_observation_tools(tools, 6)
+    bounded = design.bound_cad_observation_tools(tools, 3)
     assert [tool["function"]["name"] for tool in bounded] == [
         "apply_changes", "test_component", "build", "request_engineering", "ask_user"]
     assert observation_context(state, workspace(3))["observationOnlyDecisions"] == 0

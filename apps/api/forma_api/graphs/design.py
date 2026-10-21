@@ -1315,7 +1315,7 @@ CAD_SESSION_TOOL_NAMES = {
     "inspect_geometry", "request_engineering", "respond_to_review", "ask_user", "update_working_notes", "read_working_memory", "diagnose_workspace",
 }
 MAX_CAD_EDITS_WITHOUT_BUILD = 3
-MAX_CAD_OBSERVATION_DECISIONS = 6
+MAX_CAD_OBSERVATION_DECISIONS = 3
 CAD_NO_PROGRESS_OBSERVATION_TOOLS = {
     "read_file", "search_files", "inspect_geometry", "diagnose_workspace", "read_working_memory",
 }
@@ -1696,7 +1696,7 @@ async def cad_session_turn(state: AgentState) -> dict:
         context["observationLimit"] = {
             "completedObservationOnlyDecisions": observation_decisions,
             "maximum": observation_limit,
-            "instruction": ("The unchanged candidate and evidence have already had six observation-only model decisions. "
+            "instruction": ("The unchanged candidate and evidence have already had three observation-only model decisions. "
                 "Use a focused edit, part test, assembly build, engineering request, or ask a specific question. "
                 "Do not repeat reads or workspace inventory."),
         }

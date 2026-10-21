@@ -1008,7 +1008,7 @@ async def test_cad_session_withholds_repeated_observation_tools_after_six_decisi
     current = state(original_request=request, cad_history=[{"role": "user", "content": request}])
     current["cad_observation_progress"] = {
         "epoch": observation_epoch(current, candidate), "seen": {}, "repeats": 0,
-        "observationOnlyDecisions": 6,
+        "observationOnlyDecisions": design.MAX_CAD_OBSERVATION_DECISIONS,
     }
     seen = {}
 
@@ -1025,11 +1025,11 @@ async def test_cad_session_withholds_repeated_observation_tools_after_six_decisi
     assert not {"read_file", "search_files", "inspect_geometry", "diagnose_workspace",
                 "read_working_memory"}.intersection(seen["tools"])
     assert {"apply_changes", "build", "test_component", "ask_user"}.issubset(seen["tools"])
-    assert seen["context"]["observationLimit"]["maximum"] == 6
+    assert seen["context"]["observationLimit"]["maximum"] == 3
 
 
 @pytest.mark.asyncio
-async def test_six_distinct_source_reads_force_an_edit_on_the_next_model_turn(monkeypatch, graph_mocks):
+async def test_three_distinct_source_reads_force_an_edit_on_the_next_model_turn(monkeypatch, graph_mocks):
     request = "Build a cube and use its saved source to make a focused correction."
     graph_mocks["candidate"] = {"manifest": {
         "schemaVersion": 1, "units": "mm", "components": [{"id": "cube", "name": "Cube",
@@ -1038,7 +1038,7 @@ async def test_six_distinct_source_reads_force_an_edit_on_the_next_model_turn(mo
         "configurations": [], "featureOperations": [],
     }, "files": {"parts/cube.py": "def build(parameters, dependencies):\n    return None"}}
     graph_mocks["candidate"]["files"].update({f"parts/observation_{index}.py": f"value = {index}"
-        for index in range(6)})
+        for index in range(design.MAX_CAD_OBSERVATION_DECISIONS)})
     current = state(original_request=request,
         cad_history=[{"role": "user", "content": request}])
     decisions = []
@@ -1046,7 +1046,7 @@ async def test_six_distinct_source_reads_force_an_edit_on_the_next_model_turn(mo
     async def turn(_config, messages, tools, **_kwargs):
         names = [item["function"]["name"] for item in tools]
         decision = len(decisions)
-        if decision < 6:
+        if decision < design.MAX_CAD_OBSERVATION_DECISIONS:
             name = "read_file"
             arguments = {"path": f"parts/observation_{decision}.py"}
         else:
@@ -1062,10 +1062,10 @@ async def test_six_distinct_source_reads_force_an_edit_on_the_next_model_turn(mo
             "inputTokens": 2, "outputTokens": 2, "webSearchRequests": 0}
 
     monkeypatch.setattr(design.models, "turn", turn)
-    for _ in range(7):
+    for _ in range(design.MAX_CAD_OBSERVATION_DECISIONS + 1):
         current.update(await design.cad_session(current))
 
-    assert [item["action"] for item in decisions] == ["read_file"] * 6 + ["apply_changes"]
+    assert [item["action"] for item in decisions] == ["read_file"] * 3 + ["apply_changes"]
     assert "read_file" not in decisions[-1]["tools"]
     assert "apply_changes" in decisions[-1]["tools"]
     assert graph_mocks["candidate"]["files"]["parts/cube.py"] == (

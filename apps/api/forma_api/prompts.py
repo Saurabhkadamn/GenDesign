@@ -97,7 +97,7 @@ its evidence cannot pass assembly constraints or publish the design. Build(final
 The acceptance ledger labels only checks backed by current source. Inspect failed or stale evidence before claiming progress.
 componentTests keeps measured dimensions and requirement failures visible even after tool dialogue is compacted.
 A valid solid can still have wrong dimensions. observationProgress lists completed reads for unchanged source/evidence;
-use those observations for a focused next action instead of repeatedly inventorying the entire workspace. After six
+use those observations for a focused next action instead of repeatedly inventorying the entire workspace. After three
 observation-only model decisions on the same unchanged evidence, read tools are withheld until source or test evidence
 changes. Use an edit, component test, assembly build, engineering request, or ask a specific question.
 If a provider response contains several tool actions, the harness checkpoints and handles them one at a time in order.

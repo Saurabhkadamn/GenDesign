@@ -6,7 +6,7 @@ from .contracts import Snapshot
 from .execution import digest, identity
 
 
-MAX_OBSERVATION_ONLY_DECISIONS_PER_EPOCH = 6
+MAX_OBSERVATION_ONLY_DECISIONS_PER_EPOCH = 3
 
 
 def component_snapshot(snapshot: dict, component_id: str) -> dict:
@@ -84,7 +84,7 @@ def observation_context(state: dict, snapshot: dict) -> dict:
             "maximumObservationOnlyDecisions": MAX_OBSERVATION_ONLY_DECISIONS_PER_EPOCH,
             "instruction": "These reads/inspections already completed for unchanged source and evidence. "
                            "Re-read when needed, then use the result for a focused edit or test. "
-                           "After six observation-only model decisions for unchanged evidence, the available tools "
+                           "After three observation-only model decisions for unchanged evidence, the available tools "
                            "require a focused edit, part test, assembly build, engineering request, or concrete question. "
                            "Cycling through the same observations triggers a fresh repair plan, not a part lock."}
 
