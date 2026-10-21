@@ -42,14 +42,22 @@ async def advance_graph(run_id: str, worker: str, resume: dict | None = None) ->
                     "drawing_request": run.get("drawing_request")}
             elif resume is not None:
                 interrupted = any(getattr(task, "interrupts", ()) for task in before.tasks)
+                updates = {}
+                if resume.get("kind") == "continue":
+                    # Continue is explicit authorization for another bounded
+                    # model-call cycle. Keep model_calls cumulative for audit,
+                    # generation IDs and provider-cost reporting.
+                    updates["model_calls_this_cycle"] = 0
                 if interrupted:
+                    if updates:
+                        await graph.aupdate_state(config, updates)
                     graph_input = Command(resume=resume)
                 else:
                     # Pause exceptions leave a pending node, not a LangGraph
                     # interrupt. Continue that node normally. Renew only the
-                    # coordinator's local action allowance on explicit Continue;
-                    # keep the total model budget and saved repair evidence.
-                    updates = {}
+                    # coordinator's local action allowance and per-cycle model
+                    # budget on explicit Continue; keep lifetime usage and saved
+                    # repair evidence.
                     message = str(resume.get("message") or "").strip()
                     if message and resume.get("kind") in {"continue", "answer"}:
                         # An exception-based pause has no interrupt node to

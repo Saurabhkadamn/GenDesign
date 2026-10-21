@@ -15,6 +15,7 @@ class SavedState(TypedDict, total=False):
     phase: str
     coordinator_actions: int
     model_calls: int
+    model_calls_this_cycle: int
     candidate_hash: str
     coordinator_contract_repair: dict
     original_request: str
@@ -38,8 +39,10 @@ async def test_continue_resumes_actual_checkpoint_without_losing_evidence(monkey
         elif state["coordinator_actions"] >= 12:
             if role == "coordinator" or not state.get("clarified_request"):
                 raise Pause("Local action budget reached")
+        assert state["model_calls_this_cycle"] == 0
         observed.append(dict(state))
-        return {"phase": "done", "model_calls": state["model_calls"] + 1}
+        return {"phase": "done", "model_calls": state["model_calls"] + 1,
+                "model_calls_this_cycle": state["model_calls_this_cycle"] + 1}
 
     saver = MemorySaver()
     builder = StateGraph(SavedState)
@@ -52,7 +55,7 @@ async def test_continue_resumes_actual_checkpoint_without_losing_evidence(monkey
     monkeypatch.setattr(runner, "settings", lambda: SimpleNamespace(environment="test"))
     config = runner.graph_config("retained-run")
     initial = {"phase": phase, "coordinator_actions": 12,
-               "model_calls": 23, "candidate_hash": "saved-source-identity",
+               "model_calls": 96, "model_calls_this_cycle": 96, "candidate_hash": "saved-source-identity",
                "coordinator_contract_repair": {"issues": [{"message": "missing count"}]},
                "original_request": "Build the complete pump.",
                history_key: [{"role": "user", "content": "Build the complete pump."}]}
@@ -85,7 +88,8 @@ async def test_continue_resumes_actual_checkpoint_without_losing_evidence(monkey
         "kind": "continue", "message": guidance}) == "done"
     assert len(observed) == 1
     assert observed[0]["coordinator_actions"] == (0 if not real_interrupt and role == "coordinator" else 12)
-    assert observed[0]["model_calls"] == 23
+    assert observed[0]["model_calls"] == 96
+    assert observed[0]["model_calls_this_cycle"] == 0
     assert observed[0]["candidate_hash"] == initial["candidate_hash"]
     assert observed[0]["coordinator_contract_repair"] == initial["coordinator_contract_repair"]
     if real_interrupt:
@@ -96,4 +100,6 @@ async def test_continue_resumes_actual_checkpoint_without_losing_evidence(monkey
         assert observed[0]["clarified_request"] == "Build the complete pump.\n\nUser continuation: " + guidance
         assert observed[0][history_key][-1] == {"role": "user", "content": guidance}
         assert observed[0]["user_updates"] == [{"kind":"continuation", "message":guidance}]
-    assert (await graph.aget_state(config)).values["model_calls"] == 24
+    final = (await graph.aget_state(config)).values
+    assert final["model_calls"] == 97
+    assert final["model_calls_this_cycle"] == 1

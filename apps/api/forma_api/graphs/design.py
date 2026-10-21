@@ -344,9 +344,10 @@ async def structured_turn(state: AgentState, role: str, node: str, prompt: str,
     run = await run_row(state)
     config = await models.configuration(role)
     ordinal = state.get("model_calls", 0)
+    cycle_calls = state.get("model_calls_this_cycle", ordinal)
     max_model_calls = (await app_settings()).limits.maxModelCalls
-    if ordinal >= max_model_calls:
-        raise Pause("The model-call limit was reached. Start a new bounded run when ready.")
+    if cycle_calls >= max_model_calls:
+        raise Pause("The model-call limit for this cycle was reached. Continue to grant another bounded cycle.")
     tools = provider_tools(config, [submission_tool(tool_name, f"Submit the complete {node} result.", contract)])
     messages = [{"role": "system", "content": system_prompt(role)},
         {"role": "system", "content": prompt},
@@ -434,7 +435,7 @@ async def structured_turn(state: AgentState, role: str, node: str, prompt: str,
             await db.update("run_operations", {"status": "failed", "result": {
                 "category": "tool_protocol", "diagnostic": feedback}, "updated_at": repo.utcnow()},
                 run_id=run["id"], operation_key=primary_key)
-            if ordinal + 1 >= max_model_calls:
+            if cycle_calls + 1 >= max_model_calls:
                 raise Pause(f"The {role} result violated the required contract: {feedback}") from None
             await repo.event(run["id"],
                 f"{role.capitalize()} returned an invalid {node} contract; requesting one bounded correction.",
@@ -461,6 +462,7 @@ async def structured_turn(state: AgentState, role: str, node: str, prompt: str,
         "output": result["message"], "input_tokens": result["inputTokens"],
         "output_tokens": result["outputTokens"]}, conflict="run_id,ordinal")
     return value, {"model_calls": ordinal + calls_used,
+        "model_calls_this_cycle": cycle_calls + calls_used,
         "search_count": state.get("search_count", 0) + result.get("webSearchRequests", 0)}
 
 
@@ -565,8 +567,9 @@ async def agent_tool_turn(state: AgentState, *, model_role: str, prompt_role: st
     config = await models.configuration(model_role)
     tools = provider_tools(config, tools)
     ordinal = state.get("model_calls", 0)
-    if ordinal >= (await app_settings()).limits.maxModelCalls:
-        raise Pause("The model-call budget was reached. The current draft and completed evidence were preserved.")
+    cycle_calls = state.get("model_calls_this_cycle", ordinal)
+    if cycle_calls >= (await app_settings()).limits.maxModelCalls:
+        raise Pause("The model-call budget for this cycle was reached. The current draft and completed evidence were preserved. Continue to grant another bounded cycle.")
     memory = capture_history(state, history)
     context = {**context, "workingMemory": memory_context({**state, "working_memory": memory},
         (context.get("workspace") or context.get("currentWorkspace") or {}).get("candidateHash", ""))}
@@ -626,6 +629,7 @@ async def agent_tool_turn(state: AgentState, *, model_role: str, prompt_role: st
         "working_memory": memory,
         "context_estimated_tokens": estimate_tokens([messages, tools]),
         "model_calls": ordinal + 1,
+        "model_calls_this_cycle": cycle_calls + 1,
         "search_count": state.get("search_count", 0) + result.get("webSearchRequests", 0),
     }
 
@@ -692,7 +696,7 @@ async def coordinator(state: AgentState) -> dict:
     project_context["sourceFiles"] = sorted(snapshot["files"])
     await repo.event(run["id"], "Coordinator loaded project history and current design evidence.", stage="coordination")
     return {"phase": "coordinator_session", "candidate_hash": candidate_hash,
-        "repairs": 0, "attempts": 0, "model_calls": 0, "search_count": 0,
+        "repairs": 0, "attempts": 0, "model_calls": 0, "model_calls_this_cycle": 0, "search_count": 0,
         "project_context": project_context,
         "coordinator_history": [{"role": "user", "content": state["original_request"]}],
         "coordinator_actions": 0,
@@ -1045,6 +1049,7 @@ Engineering packet:
             )
             usage = {
                 "model_calls": state.get("model_calls", 0) + 2,
+                "model_calls_this_cycle": state.get("model_calls_this_cycle", state.get("model_calls", 0)) + 2,
                 "search_count": state.get("search_count", 0),
             }
             await repo.event(
@@ -2402,7 +2407,7 @@ async def cad_replan(state: AgentState) -> dict:
     total = state.get("recovery_plan_count", 0)
     exhausted = total >= 6 or counts.get(key, 0) >= 2
     if not exhausted:
-        exhausted = state.get("model_calls", 0) + 1 >= (await app_settings()).limits.maxModelCalls
+        exhausted = state.get("model_calls_this_cycle", state.get("model_calls", 0)) + 1 >= (await app_settings()).limits.maxModelCalls
     if exhausted:
         return {"phase": "cad_recovery", "final_message": (
             "Automatic recovery reached its bounded allowance. The candidate, exact requirements and failure evidence "

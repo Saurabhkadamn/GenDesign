@@ -54,6 +54,36 @@ async def test_multiple_provider_calls_checkpoint_remaining_actions(monkeypatch,
     assert "candidate" not in graph_mocks  # no additional edit happened
 
 
+@pytest.mark.asyncio
+async def test_continued_cycle_keeps_lifetime_calls_but_grants_fresh_budget(monkeypatch, graph_mocks):
+    async def turn(*_args, **_kwargs):
+        call = {"id": "continued-read", "name": "read_file", "input": {"path": "parts/current.py"}}
+        return {"message": {"role": "assistant", "content": "", "tool_calls": [{
+            "id": call["id"], "type": "function", "function": {
+                "name": call["name"], "arguments": json.dumps(call["input"])}}]},
+            "calls": [call], "inputTokens": 10, "outputTokens": 2, "webSearchRequests": 0}
+
+    monkeypatch.setattr(design.models, "turn", turn)
+    call, _, usage = await design.agent_tool_turn(
+        state(model_calls=96, model_calls_this_cycle=0), model_role="cad", prompt_role="cad",
+        node="cad-session", context={}, history=[], tools=[])
+    assert call["name"] == "read_file"
+    assert usage["model_calls"] == 97
+    assert usage["model_calls_this_cycle"] == 1
+
+
+@pytest.mark.asyncio
+async def test_agent_tool_turn_stops_at_current_cycle_limit(monkeypatch, graph_mocks):
+    async def unexpected_turn(*_args, **_kwargs):
+        pytest.fail("the model must not be called after this cycle's limit")
+
+    monkeypatch.setattr(design.models, "turn", unexpected_turn)
+    with pytest.raises(design.Pause, match="budget for this cycle"):
+        await design.agent_tool_turn(
+            state(model_calls=96, model_calls_this_cycle=24), model_role="cad", prompt_role="cad",
+            node="cad-session", context={}, history=[], tools=[])
+
+
 def test_single_tool_feedback_keeps_original_protocol():
     result = {"ok": True, "content": "source"}
     message = design.tool_message({"id": "one", "name": "read_file"}, result)
