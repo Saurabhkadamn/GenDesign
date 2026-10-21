@@ -2448,10 +2448,16 @@ async def cad_recovery(state: AgentState) -> dict:
             "cad_contract_repair": {**repair, "stalledAttempts": 0} if repair else {},
             **guidance,
             "pending_cad_call": {}, "cad_edits_since_build": 0, "final_message": ""}
-    # A new, specific human direction is a new recovery hypothesis. Renew only
-    # the planner allowance; the run-wide model-call and task budgets stay intact.
+    # A new, specific human direction is a new recovery hypothesis. Renew its
+    # planning allowance; the run-wide model-call and task budgets stay intact.
     if specific_guidance:
         update["recovery_plan_count"] = 0
+        # The focused direction is a new hypothesis for this exact candidate
+        # and failure. Renew its per-key planning allowance too, while keeping
+        # budgets for unrelated failures and the run-wide call cap intact.
+        counts = dict(state.get("recovery_counts") or {})
+        counts.pop(recovery_key(state, snapshot), None)
+        update["recovery_counts"] = counts
     return update
 
 

@@ -129,11 +129,12 @@ async def test_recovery_source_handoff_survives_checkpoint_and_reaches_cad(monke
 async def test_specific_continue_retains_source_and_renews_only_recovery_allowance(monkeypatch):
     snapshot = workspace(2)
     state = {"run_id": "run", "original_request": "Keep exact requirements", "final_message": "Read cycle",
-             "model_calls": 27, "recovery_plan_count": 3, "recovery_counts": {"unchanged": 2},
+             "model_calls": 27, "recovery_plan_count": 3,
              "recovery_plan": {"nextTask": "Obsolete plan"},
              "cad_observation_progress": {"seen": {"source": {}}, "repeats": 15, "repeatDecisions": 3},
              "cad_history": [read_result(p, s) for p, s in snapshot["files"].items()]}
     async def load(_): return deepcopy(snapshot)
+    state["recovery_counts"] = {recovery_key(state, snapshot): 2, "unrelated-failure": 1}
     monkeypatch.setattr(design.run_service, "load_candidate", load)
     monkeypatch.setattr(design, "interrupt", lambda _: {"kind": "continue", "message": "Use the saved source and test"})
     result = await design.cad_recovery(state)
@@ -142,7 +143,7 @@ async def test_specific_continue_retains_source_and_renews_only_recovery_allowan
     assert result["cad_observation_progress"]["seen"] == state["cad_observation_progress"]["seen"]
     merged = {**state, **result}
     assert merged["model_calls"] == 27 and merged["recovery_plan_count"] == 0
-    assert merged["recovery_counts"] == state["recovery_counts"]
+    assert merged["recovery_counts"] == {"unrelated-failure": 1}
     assert "Use the saved source and test" in merged["clarified_request"]
 
 
@@ -154,11 +155,13 @@ async def test_generic_continue_keeps_recovery_allowance_bounded(monkeypatch):
              "model_calls": 27, "recovery_plan_count": 3,
              "cad_observation_progress": {"seen": {}, "repeats": 8, "repeatDecisions": 3}}
     async def load(_): return deepcopy(snapshot)
+    state["recovery_counts"] = {recovery_key(state, snapshot): 2}
     monkeypatch.setattr(design.run_service, "load_candidate", load)
     monkeypatch.setattr(design, "interrupt", lambda _: {"kind": "continue", "message": "Continue."})
     result = await design.cad_recovery(state)
     merged = {**state, **result}
     assert merged["model_calls"] == 27 and merged["recovery_plan_count"] == 3
+    assert merged["recovery_counts"] == state["recovery_counts"]
     assert merged["clarified_request"].endswith("User continuation: Continue.")
 
 
