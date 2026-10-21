@@ -4,6 +4,7 @@ from copy import deepcopy
 import pytest
 
 from forma_api.graphs import design
+from forma_api.harness import observation_epoch
 from forma_api.contracts import Limits
 
 
@@ -992,6 +993,39 @@ Assembly Requirements:
     assert seen["context"]["request"] == request
     assert result["phase"] == "cad_session"
     assert len(graph_mocks["candidate"]["manifest"]["components"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_cad_session_withholds_repeated_observation_tools_after_six_decisions(monkeypatch, graph_mocks):
+    request = "Create a 10 mm cube and inspect the saved source."
+    candidate = {"manifest": {
+        "schemaVersion": 1, "units": "mm", "components": [{"id": "cube", "name": "Cube",
+            "source": "parts/cube.py", "kind": "solid", "dependencies": [], "parameters": {}}],
+        "instances": [], "rootComponentId": "cube", "references": [], "joints": [],
+        "configurations": [], "featureOperations": [],
+    }, "files": {"parts/cube.py": "def build(parameters, dependencies):\n    return None"}}
+    graph_mocks["candidate"] = candidate
+    current = state(original_request=request, cad_history=[{"role": "user", "content": request}])
+    current["cad_observation_progress"] = {
+        "epoch": observation_epoch(current, candidate), "seen": {}, "repeats": 0,
+        "observationOnlyDecisions": 6,
+    }
+    seen = {}
+
+    async def turn(_config, messages, tools, **_kwargs):
+        seen["tools"] = [item["function"]["name"] for item in tools]
+        seen["context"] = json.loads(messages[1]["content"].split(": ", 1)[1])
+        return {"message": {"role": "assistant", "content": ""}, "calls": [],
+            "inputTokens": 1, "outputTokens": 1, "webSearchRequests": 0}
+
+    monkeypatch.setattr(design.models, "turn", turn)
+    result = await design.cad_session(current)
+
+    assert result["phase"] == "cad_session"
+    assert not {"read_file", "search_files", "inspect_geometry", "diagnose_workspace",
+                "read_working_memory"}.intersection(seen["tools"])
+    assert {"apply_changes", "build", "test_component", "ask_user"}.issubset(seen["tools"])
+    assert seen["context"]["observationLimit"]["maximum"] == 6
 
 
 @pytest.mark.asyncio
