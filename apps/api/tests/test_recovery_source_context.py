@@ -21,6 +21,7 @@ def test_active_build_failure_is_the_authoritative_repair_target():
     assert failure["line"] == 49
     assert "newest failed build operation" in failure["instruction"]
     assert design.active_build_failure({"ok": True, "error": {"file": "parts/old.py"}}) is None
+    assert "activeFailure" in design.system_prompt("cad")
 
 
 def workspace(count=14):
