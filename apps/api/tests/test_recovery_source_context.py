@@ -144,3 +144,27 @@ async def test_explicit_continue_retains_source_without_resetting_total_budgets(
     assert merged["model_calls"] == 27 and merged["recovery_plan_count"] == 3
     assert merged["recovery_counts"] == state["recovery_counts"]
     assert "Use the saved source and test" in merged["clarified_request"]
+
+
+def test_fresh_recovery_window_allows_one_inspection_pass_across_three_batches():
+    snapshot = workspace()
+    state = {"original_request": "Preserve every part"}
+    paths = list(snapshot["files"])
+    for path in paths:
+        state["cad_observation_progress"] = record_observation_action(state, snapshot,
+            "read_file", {"path": path, "version": "saved"}, decision=1)
+    receipts = deepcopy(state["cad_observation_progress"]["seen"])
+    # Recovery gives a new hypothesis one inspection pass, even though durable
+    # receipts still record reads completed under earlier, discarded dialogue.
+    state["cad_observation_progress"].update(windowSeen={}, repeats=0,
+        repeatDecisions=0, lastRepeatedDecision=None)
+    for decision, batch in enumerate([paths[:5], paths[5:9], paths[9:]], start=2):
+        for path in batch:
+            state["cad_observation_progress"] = record_observation_action(state, snapshot,
+                "read_file", {"path": path, "version": "saved"}, decision=decision)
+        assert state["cad_observation_progress"]["repeatDecisions"] == 0
+    assert state["cad_observation_progress"]["seen"] == receipts
+    for decision in [5, 6, 7]:
+        state["cad_observation_progress"] = record_observation_action(state, snapshot,
+            "read_file", {"path": paths[0], "version": "saved"}, decision=decision)
+    assert state["cad_observation_progress"]["repeatDecisions"] == 3

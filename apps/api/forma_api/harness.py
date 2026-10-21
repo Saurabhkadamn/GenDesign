@@ -91,7 +91,8 @@ def record_observation_action(state: dict, snapshot: dict, name: str, arguments:
         progress = {"epoch": epoch, "seen": {}, "repeats": 0}
     key = digest({"tool": name, "arguments": arguments})
     seen = progress["seen"]
-    repeated = key in seen
+    window_seen = progress.setdefault("windowSeen", dict.fromkeys(seen, True))
+    repeated = key in window_seen
     progress["repeats"] = progress["repeats"] + 1 if repeated else 0
     # A provider may return many reads in one generation. Give it the results
     # before treating that single decision as multiple unsuccessful attempts.
@@ -103,9 +104,11 @@ def record_observation_action(state: dict, snapshot: dict, name: str, arguments:
     else:
         progress.update(repeatDecisions=0, lastRepeatedDecision=None)
     seen[key] = {"tool": name, "arguments": arguments}
+    window_seen[key] = True
     # Bound metadata only; source and evidence remain in their own stores.
-    if len(seen) > 256:
-        del seen[next(iter(seen))]
+    for receipts in (seen, window_seen):
+        if len(receipts) > 256:
+            del receipts[next(iter(receipts))]
     return progress
 
 

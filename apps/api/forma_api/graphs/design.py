@@ -2411,7 +2411,7 @@ async def cad_replan(state: AgentState) -> dict:
         return {**update, "phase": "cad_replan", "final_message": "The automatic recovery planner returned an unusable plan."}
     repair = state.get("cad_contract_repair") or {}
     progress = {**(state.get("cad_observation_progress") or {}), "repeats": 0,
-                "repeatDecisions": 0, "lastRepeatedDecision": None}
+                "repeatDecisions": 0, "lastRepeatedDecision": None, "windowSeen": {}}
     await repo.event(state["run_id"], "Forma is re-planning the failed step using saved source and failure evidence.", stage="cad")
     return {**update, "phase": "cad_session", "recovery_plan": {**plan, "candidateHash": digest(snapshot)},
             "repairs": 0, "cad_invalid_tool_attempts": 0, "cad_edits_since_build": 0,
@@ -2441,7 +2441,7 @@ async def cad_recovery(state: AgentState) -> dict:
             "recovery_source_paths": list(sources["files"]),
             "recovery_plan": {},
             "cad_observation_progress": {**(state.get("cad_observation_progress") or {}),
-                "repeats": 0, "repeatDecisions": 0, "lastRepeatedDecision": None},
+                "repeats": 0, "repeatDecisions": 0, "lastRepeatedDecision": None, "windowSeen": {}},
             "cad_invalid_tool_attempts": 0,
             "cad_contract_repair": {**repair, "stalledAttempts": 0} if repair else {},
             **user_update(state, message),

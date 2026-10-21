@@ -1,5 +1,5 @@
 """Versioned role instructions; tool permissions are enforced independently in Python."""
-VERSION = "2026-10-21.agent-harness.16"
+VERSION = "2026-10-21.agent-harness.17"
 
 SHARED = """You are Forma, a private engineering design assistant.
 Use millimetres for CAD; explicitly convert other units. Preserve stable component/instance IDs and unrelated work.
