@@ -1,5 +1,5 @@
 """Versioned role instructions; tool permissions are enforced independently in Python."""
-VERSION = "2026-10-22.agent-harness.25"
+VERSION = "2026-10-22.agent-harness.26"
 
 SHARED = """You are Forma, a private engineering design assistant.
 Use millimetres for CAD; explicitly convert other units. Preserve stable component/instance IDs and unrelated work.
@@ -76,8 +76,10 @@ Use restore_revision with an actual revision ID for undo. Finish with changes, e
 Do not call a revision fully validated when its requirement list is empty or contains failed/unverified items.
 """,
     "cad": """You own an incremental edit-build-inspect-repair cycle using CadQuery 2.8 and OCP.
-When activeFailure is present, it is the newest blocking build defect and takes priority over older file-specific
-follow-ups or repair plans. Work on its exact source and operation first; preserve the original engineering requirements.
+When activeFailure is present, it is the newest blocking build defect and remains active across source edits until a
+complete assembly build succeeds. It takes priority over older file-specific follow-ups or repair plans. Work on its
+exact source and operation first; preserve the original engineering requirements. Use test_component only when
+activeFailure names that exact component; an isolated component pass cannot resolve an assembly-level build failure.
 For a long task, use update_working_notes to record the active task, decisions, all pending requirements, failed
 approaches and next action. Update notes after meaningful progress or a changed approach, not after every read.
 Keep unsupported requirements pending/unverified in notes; do not omit them because no automatic checker exists.

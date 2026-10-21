@@ -1648,7 +1648,7 @@ async def cad_session_turn(state: AgentState) -> dict:
         "currentCandidate": current_candidate_facts(snapshot),
         "request": state["original_request"],
         "humanUpdates": human_followups(state),
-        "activeFailure": active_build_failure(state.get("build_result")),
+        "activeFailure": active_failure_context(state, snapshot),
         "sourceEditRecovery": ({
             "category": "exact_text_patch_mismatch",
             "paths": patch_mismatch.get("paths", []),
@@ -1708,6 +1708,18 @@ async def cad_session_turn(state: AgentState) -> dict:
                 parameters.get("properties", {}).pop("patches", None)
                 if "required" in parameters:
                     parameters["required"] = [name for name in parameters["required"] if name != "patches"]
+    active_failure = context.get("activeFailure")
+    if active_failure:
+        context["activeFailure"]["toolPolicy"] = (
+            "This failure remains active across source edits until a complete assembly build succeeds. "
+            "Use test_component only for the named failing component when failureScope is component; "
+            "a component test cannot diagnose or clear an assembly-level failure. After two full builds repeat "
+            "the same failure, make a source change to its exact target before running another component probe.")
+        if (active_failure.get("failureScope") == "component" and active_failure.get("componentId")
+                and active_failure.get("repeatedCount", 0) < 2):
+            tools = restrict_component_probe(tools, active_failure["componentId"])
+        else:
+            tools = [tool for tool in tools if tool["function"]["name"] != "test_component"]
     if len(requested_components) > 1:
         staged = staged_component_count(snapshot["manifest"])
         context["componentMilestone"] = {
@@ -2126,6 +2138,21 @@ async def cad_session_turn(state: AgentState) -> dict:
         return {**usage, "phase": "cad_question", "question": value["question"],
             "pending_cad_call": call, "last_read_path": None, "cad_history": history}
     if name == "test_component" or name == "build" and value.get("componentId"):
+        failure = active_failure_context(state, snapshot)
+        if name == "test_component" and failure and (
+                failure.get("failureScope") != "component"
+                or value["componentId"] != failure.get("componentId")
+                or failure.get("repeatedCount", 0) >= 2):
+            expected = failure.get("componentId")
+            scope_message = (f"The same full-build failure has repeated. Edit {failure.get('file') or expected} and rebuild before another component probe."
+                             if failure.get("repeatedCount", 0) >= 2 else
+                             f"The current build failure targets component {expected}; test that component or repair the failed operation."
+                             if expected else
+                             "The current build failure is assembly-level or has no safely identified component. "
+                             "A part-only test cannot diagnose it; inspect and repair the active failure, then build the assembly.")
+            return {**usage, "phase": "cad_session", "cad_history": bounded_history([
+                *history, tool_message(call, {"ok": False, "category": "active_failure_scope",
+                    "message": scope_message, "activeFailure": failure})])}
         if name == "build" and value.get("final", True):
             return {**usage, "phase": "cad_session", "cad_history": bounded_history([*history, tool_message(call, {
                 "ok": False, "category": "build_scope",
@@ -2377,6 +2404,20 @@ async def validate(state: AgentState) -> dict:
     if result.get("ok") is False:
         error = result.get("error", {})
         history = bounded_history([*state.get("cad_history", []), tool_message(pending, result)])
+        snapshot = (await run_service.load_candidate(state["run_id"])
+                    if state.get("run_id") else {"manifest": {"components": []}, "files": {}})
+        failure = active_failure_context({"build_result": result}, snapshot)
+        if failure:
+            previous = state.get("cad_last_build_failure") or {}
+            fingerprint = error.get("fingerprint") if isinstance(error, dict) else None
+            signature = digest({"fingerprint": fingerprint, "category": failure.get("category"),
+                "file": failure.get("file"), "line": failure.get("line"),
+                "diagnostic": failure.get("diagnostic")})
+            repeated_count = (previous.get("repeatedCount", 0) + 1
+                if previous.get("signature") == signature else 1)
+            failure = {**failure, "fingerprint": fingerprint, "signature": signature, "attempt": result.get("attempt"),
+                       "repeated": bool(result.get("repeated")), "repeatedCount": repeated_count,
+                       "candidateHashAtFailure": state.get("candidate_hash", "")}
         # Bound automatic repair, but retain the draft and a resumable graph.
         # A successfully validated milestone starts a new repair allowance.
         limits = (await app_settings()).limits
@@ -2384,6 +2425,7 @@ async def validate(state: AgentState) -> dict:
             guidance = error.get("guidance", "Repair the failed CAD operation.")
             return {"phase": "cad_recovery", "repairs": state.get("repairs", 0),
                 "working_memory": memory,
+                "cad_last_build_failure": failure or state.get("cad_last_build_failure") or {},
                 "cad_history": history,
                 "final_message": (f"The bounded CAD repair limit was reached after "
                     f"{state.get('attempts', 0)} attempts. {guidance} "
@@ -2395,6 +2437,7 @@ async def validate(state: AgentState) -> dict:
                 "The normalized build error repeated after a source change. Re-plan the affected operation instead of retrying the same construction."}])
         return {"phase": "cad_session", "cad_history": history, "pending_cad_call": {},
             "working_memory": memory,
+            "cad_last_build_failure": failure or state.get("cad_last_build_failure") or {},
             "final_message": error.get("guidance", "Repair the failed CAD operation.")}
     intermediate = not state.get("build_final", True)
     history = bounded_history([*state.get("cad_history", []), tool_message(pending, {
@@ -2406,6 +2449,7 @@ async def validate(state: AgentState) -> dict:
     if intermediate:
         return {"phase": "cad_session", "cad_history": history, "repairs": 0,
             "working_memory": memory,
+            "cad_last_build_failure": {},
             "pending_cad_call": {},
             "last_milestone_hash": state.get("candidate_hash", "")}
     requested_components = requested_component_labels(state.get("original_request", ""))
@@ -2426,6 +2470,7 @@ async def validate(state: AgentState) -> dict:
     # focused repairs, publish the last buildable draft with its findings.
     return {"phase": "review_session", "cad_history": history,
         "working_memory": memory,
+        "cad_last_build_failure": {},
         "pending_cad_call": {}, "review_history": [], "review_reads": 0,
         "review_inspected": False, "review_actions": 0, "review": state.get("review") or {},
         "review_repairs": state.get("review_repairs", 0)}
@@ -2506,6 +2551,34 @@ def active_build_failure(value: dict | None) -> dict | None:
                         "Inspect and repair this exact file/operation, then test it or rebuild. Do not return to an "
                         "older file-specific repair unless this current failure proves it is required."),
     }
+
+
+def active_failure_context(state: dict, snapshot: dict) -> dict | None:
+    """Keep the latest full-build defect available after edits clear stale build results."""
+    stored = state.get("cad_last_build_failure") or {}
+    if stored:
+        return deepcopy(stored)
+    failure = active_build_failure(state.get("build_result"))
+    if not failure:
+        return None
+    path = str(failure.get("file") or "").replace("\\", "/").lstrip("./")
+    component = next((item for item in (snapshot.get("manifest") or {}).get("components", [])
+                      if path and str(item.get("source") or "").replace("\\", "/").lstrip("./") == path), None)
+    return {**failure, "failureScope": "component" if component and component.get("kind") != "assembly" else "assembly",
+            "componentId": component.get("id") if component and component.get("kind") != "assembly" else None}
+
+
+def restrict_component_probe(tools: list[dict], component_id: str) -> list[dict]:
+    """Constrain component-only diagnostics to the file named by the active build failure."""
+    restricted = deepcopy(tools)
+    for tool in restricted:
+        if tool.get("function", {}).get("name") != "test_component":
+            continue
+        parameters = tool["function"].get("parameters", {})
+        component = parameters.get("properties", {}).get("componentId")
+        if isinstance(component, dict):
+            component["enum"] = [component_id]
+    return restricted
 
 
 def active_source_patch_mismatch(state: AgentState, snapshot: dict) -> dict | None:
@@ -2593,7 +2666,7 @@ async def cad_replan(state: AgentState) -> dict:
         paths=focused_recovery_paths(state, snapshot), max_bytes=12_000, max_files=4)
     current = current_candidate_facts(snapshot)
     updates = human_followups(state)
-    active_failure = active_build_failure(state.get("build_result"))
+    active_failure = active_failure_context(state, snapshot)
     context = {"currentCandidate": current,
                "request": state["original_request"], "humanUpdates": updates,
                "activeFailure": active_failure,

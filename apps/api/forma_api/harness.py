@@ -129,10 +129,12 @@ def record_observation_decision(progress: dict, *, batch_complete: bool) -> dict
 
 def recovery_key(state: dict, snapshot: dict) -> str:
     repair = state.get("cad_contract_repair") or {}
-    error = (state.get("build_result") or {}).get("error") or {}
+    error = state.get("cad_last_build_failure") or (state.get("build_result") or {}).get("error") or {}
     category = repair.get("category") or error.get("category") or "tool_action"
     issues = sorted((item.get("code", ""), item.get("path", "")) for item in repair.get("issues", []))
-    return digest({"candidate": digest(snapshot), "category": category, "issues": issues})
+    return digest({"candidate": digest(snapshot), "category": category,
+                   "failureFile": error.get("file"), "failureLine": error.get("line"),
+                   "failureSignature": error.get("signature"), "issues": issues})
 
 
 def recovery_source_context(state: dict, snapshot: dict, *, paths: list[str] | None = None,

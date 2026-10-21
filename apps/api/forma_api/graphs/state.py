@@ -36,6 +36,7 @@ class AgentState(TypedDict, total=False):
     candidate_hash: str
     candidate_summary: str
     build_result: dict[str, Any]
+    cad_last_build_failure: dict[str, Any]
     build_final: bool
     requested_part_types: int
     built_part_types: int

@@ -864,6 +864,69 @@ async def test_successful_intermediate_build_returns_to_cad():
 
 
 @pytest.mark.asyncio
+async def test_full_build_failure_survives_source_edit_and_scopes_component_probe(monkeypatch, graph_mocks):
+    graph_mocks["candidate"] = design.Snapshot.model_validate({"manifest": {
+        "components": [{"id": "drive_gear", "name": "Drive gear", "kind": "solid",
+            "source": "parts/drive_gear.py"}], "rootComponentId": "drive_gear"},
+        "files": {"parts/drive_gear.py": "def build(parameters, dependencies): return None"}}).model_dump()
+    failure = {"ok": False, "attempt": 4, "error": {
+        "category": "geometry", "fingerprint": "same-kernel-failure",
+        "location": {"file": "parts/drive_gear.py", "line": 49},
+        "diagnostic": "No rear face selected"}}
+    first = await design.validate(state(run_id="run", build_result=failure, candidate_hash="candidate-1"))
+    assert first["cad_last_build_failure"]["failureScope"] == "component"
+    assert first["cad_last_build_failure"]["componentId"] == "drive_gear"
+    assert first["cad_last_build_failure"]["repeatedCount"] == 1
+
+    # A normal source edit clears ephemeral validation/build_result fields. The
+    # durable repair target must still reach the next model decision.
+    after_edit = {**state(run_id="run"), **first, "build_result": {}, "validation": {}}
+    captured = {}
+
+    async def turn(_state, **kwargs):
+        captured.update(kwargs)
+        return None, [], {"model_calls": 2}
+
+    monkeypatch.setattr(design, "agent_tool_turn", turn)
+    await design.cad_session_turn(after_edit)
+    assert captured["context"]["activeFailure"]["file"] == "parts/drive_gear.py"
+    assert captured["context"]["activeFailure"]["componentId"] == "drive_gear"
+    probe = next(tool for tool in captured["tools"] if tool["function"]["name"] == "test_component")
+    assert probe["function"]["parameters"]["properties"]["componentId"]["enum"] == ["drive_gear"]
+
+    second = await design.validate({**after_edit, "build_result": failure})
+    assert second["cad_last_build_failure"]["repeatedCount"] == 2
+    after_second_edit = {**after_edit, **second, "build_result": {}}
+    captured.clear()
+    await design.cad_session_turn(after_second_edit)
+    assert captured["context"]["activeFailure"]["repeatedCount"] == 2
+    assert "test_component" not in {tool["function"]["name"] for tool in captured["tools"]}
+
+
+@pytest.mark.asyncio
+async def test_assembly_build_failure_does_not_offer_isolated_component_probe(monkeypatch, graph_mocks):
+    graph_mocks["candidate"] = design.Snapshot.model_validate({"manifest": {
+        "components": [{"id": "drive_gear", "name": "Drive gear", "kind": "solid",
+                "source": "parts/drive_gear.py"},
+            {"id": "pump", "name": "Pump", "kind": "assembly", "source": "assemblies/pump.py"}],
+        "rootComponentId": "pump"}, "files": {"parts/drive_gear.py": "pass",
+            "assemblies/pump.py": "pass"}}).model_dump()
+    failure = {"ok": False, "error": {"category": "assembly_constraint",
+        "location": {"file": "assemblies/pump.py", "line": 80}, "diagnostic": "Mate solve failed"}}
+    stored = await design.validate(state(run_id="run", build_result=failure, candidate_hash="candidate-2"))
+    assert stored["cad_last_build_failure"]["failureScope"] == "assembly"
+
+    captured = {}
+    async def turn(_state, **kwargs):
+        captured.update(kwargs)
+        return None, [], {"model_calls": 3}
+    monkeypatch.setattr(design, "agent_tool_turn", turn)
+    await design.cad_session_turn({**state(run_id="run"), **stored, "build_result": {}})
+    assert captured["context"]["activeFailure"]["failureScope"] == "assembly"
+    assert "test_component" not in {tool["function"]["name"] for tool in captured["tools"]}
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("previous_final,requested_final,finalizes", [
     (False, True, True), (True, True, False), (False, False, False),
 ])
