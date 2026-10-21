@@ -52,6 +52,36 @@ async def test_ready_checkpoint_recreates_expired_sandbox(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_budget_rejection_does_not_leave_started_sandbox_operation(monkeypatch):
+    run = {"id": str(uuid4())}
+    checkpoint = {"sandbox": "budget-denied", "sandboxReady": False}
+    calls = []
+
+    class FakeExecutor:
+        async def create(self, _name):
+            pytest.fail("A denied budget must prevent sandbox creation")
+
+    async def reserve(function, args):
+        calls.append((function, args))
+        return False
+
+    async def operation(*_args, **_kwargs):
+        pytest.fail("A denied budget must not create a started ledger operation")
+
+    monkeypatch.setattr(engine, "executor", lambda: FakeExecutor())
+    monkeypatch.setattr(engine, "settings", lambda: SimpleNamespace(
+        executor="vercel", resource_budgets_enabled=True))
+    monkeypatch.setattr(engine.db, "rpc", reserve)
+    monkeypatch.setattr(engine, "operation", operation)
+
+    with pytest.raises(engine.Pause, match="monthly CAD execution budget is exhausted"):
+        await engine.ensure_sandbox(run, checkpoint, AppSettings().limits)
+
+    assert len(calls) == 1
+    assert calls[0][0] == "reserve_execution"
+
+
+@pytest.mark.asyncio
 async def test_expiry_during_stage_retries_same_candidate_once(monkeypatch):
     run = {"id": str(uuid4())}
     snapshot = Snapshot().model_dump()

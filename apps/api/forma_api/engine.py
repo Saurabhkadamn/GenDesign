@@ -144,12 +144,16 @@ async def ensure_sandbox(run, cp, limits):
         name = cp["sandbox"]
         started = time.time_ns()
 
+        # Reserve the execution budget before recording an external sandbox
+        # operation. A local quota rejection means no provider call started;
+        # it must not leave a misleading `started` ledger row behind.
+        if settings().executor == "vercel" and settings().resource_budgets_enabled:
+            reserved = await db.rpc("reserve_execution", {"p_run": run["id"], "p_key": name,
+                "p_seconds": 1800, "p_budget": limits.monthlySandboxSeconds})
+            if not reserved:
+                raise Pause("The monthly CAD execution budget is exhausted. Review the limit in Settings.")
+
         async def create():
-            if settings().executor == "vercel" and settings().resource_budgets_enabled:
-                reserved = await db.rpc("reserve_execution", {"p_run": run["id"], "p_key": name,
-                    "p_seconds": 1800, "p_budget": limits.monthlySandboxSeconds})
-                if not reserved:
-                    raise Pause("The monthly CAD execution budget is exhausted. Review the limit in Settings.")
             return {"name": await executor().create(name)}
 
         prepared = await operation(run, f"sandbox:{name}", "sandbox_prepare", create, idempotent=True)
