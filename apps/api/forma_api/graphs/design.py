@@ -1622,6 +1622,7 @@ async def cad_session_turn(state: AgentState) -> dict:
     history = state.get("cad_history") or [{
         "role": "user", "content": state.get("clarified_request") or state["original_request"]
     }]
+    patch_mismatch = active_source_patch_mismatch(state, snapshot)
     requested_components = requested_component_labels(state.get("original_request", ""))
     edits_since_build = state.get("cad_edits_since_build", 0)
     manifest = snapshot["manifest"]
@@ -1632,6 +1633,14 @@ async def cad_session_turn(state: AgentState) -> dict:
         "request": state["original_request"],
         "humanUpdates": human_followups(state),
         "activeFailure": active_build_failure(state.get("build_result")),
+        "sourceEditRecovery": ({
+            "category": "exact_text_patch_mismatch",
+            "paths": patch_mismatch.get("paths", []),
+            "diagnostic": patch_mismatch.get("diagnostic", ""),
+            "instruction": ("The last exact-text patch did not match the current saved source and saved nothing. "
+                "Submit the complete current file through apply_changes.files and omit patches. Do not repeat "
+                "the exact-text patch."),
+        } if patch_mismatch else None),
         "acceptanceLedger": acceptance_context(state, snapshot),
         "componentTests": compact_probe_context(state, snapshot),
         "observationProgress": observation_context(state, snapshot),
@@ -1664,6 +1673,14 @@ async def cad_session_turn(state: AgentState) -> dict:
     }
     tools = [item for item in model_tools("cad", working_memory=True, review_response=(state.get("review") or {}).get("action") == "repair")
              if item["function"]["name"] in CAD_SESSION_TOOL_NAMES]
+    if patch_mismatch:
+        tools = deepcopy(tools)
+        for item in tools:
+            if item["function"]["name"] == "apply_changes":
+                parameters = item["function"].get("parameters", {})
+                parameters.get("properties", {}).pop("patches", None)
+                if "required" in parameters:
+                    parameters["required"] = [name for name in parameters["required"] if name != "patches"]
     if len(requested_components) > 1:
         staged = staged_component_count(snapshot["manifest"])
         context["componentMilestone"] = {
@@ -1784,12 +1801,23 @@ async def cad_session_turn(state: AgentState) -> dict:
             "apply_changes":"files maps exact Python paths to full source. Correct the listed manifest/source fields together. Provided component arrays need complete entries; introduce source parameters in those entries. The rejected action changed nothing.",
             "read_file":"Use an exact non-empty file path from workspace.files. If it is empty, create source with apply_changes.",
         }.get(call['name'],"Correct the listed fields using the currently offered tool schema. The rejected action changed nothing.")
+        is_patch_mismatch = (call["name"] == "apply_changes" and isinstance(exc, ValueError)
+            and "Patch for " in str(exc) and "must match exactly once" in str(exc))
+        mismatch_paths = (re.findall(r"Patch for ([A-Za-z0-9_./-]+) must match exactly once", str(exc))
+                          if is_patch_mismatch else [])
+        category = "source_patch_mismatch" if is_patch_mismatch else "tool_contract"
+        if is_patch_mismatch:
+            usage["cad_patch_mismatch"] = {"candidateHash": digest(snapshot),
+                "paths": sorted(set(mismatch_paths)), "diagnostic": str(exc)[:1200]}
         feedback = {
-            "ok": False, "category": "tool_contract", "tool":call['name'],
+            "ok": False, "category": category, "tool":call['name'],
             "message":"Tool arguments were rejected before any changes were saved.",
             "issues":[{"path":".".join(map(str,item['loc'])),"message":item['msg'][:500]} for item in issues[:40]],
             "acceptedArguments":sorted(offered.get('properties',{})),
-            "repairGuidance":guidance,
+            "repairGuidance": (("This patch did not match the current saved source; nothing was saved. "
+                "Immediately replace the complete current file using apply_changes.files and omit patches. "
+                "Do not reread unless necessary, and do not repeat the exact-text patch.")
+                if is_patch_mismatch else guidance),
         }
         usage['working_memory']=record_observation({'working_memory':usage.get('working_memory') or
             state.get('working_memory')},call['name'],feedback,candidate=digest(snapshot))
@@ -2023,6 +2051,7 @@ async def cad_session_turn(state: AgentState) -> dict:
                 name, result, candidate=candidate_hash),
             "cad_invalid_tool_attempts": 0,
             "cad_contract_repair": {},
+            "cad_patch_mismatch": {},
             "cad_edits_since_build": edits_since_build + 1,
             "last_read_path": None,
             "cad_history": bounded_history([*history, tool_message(call, result)]),
@@ -2450,6 +2479,45 @@ def active_build_failure(value: dict | None) -> dict | None:
                         "Inspect and repair this exact file/operation, then test it or rebuild. Do not return to an "
                         "older file-specific repair unless this current failure proves it is required."),
     }
+
+
+def active_source_patch_mismatch(state: AgentState, snapshot: dict) -> dict | None:
+    """Return a patch mismatch only while it still targets the saved candidate.
+
+    Current checkpoints carry a candidate hash. Older deployed checkpoints may
+    only have the tool-contract feedback in dialogue, so recover that signal
+    until a later successful source edit supersedes it.
+    """
+    candidate_hash = digest(snapshot)
+    stored = state.get("cad_patch_mismatch") or {}
+    if stored.get("candidateHash") == candidate_hash:
+        return {**stored, "candidateHash": candidate_hash}
+
+    for message in reversed(state.get("cad_history") or []):
+        if message.get("role") != "tool":
+            continue
+        try:
+            result = json.loads(message.get("content") or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+        # A saved source edit after the mismatch makes the older exact-text
+        # instruction stale, even when the current history has no hash on it.
+        if result.get("ok") is True and result.get("changedFiles"):
+            return None
+        if result.get("category") != "tool_contract":
+            continue
+        paths = []
+        diagnostics = []
+        for issue in result.get("issues") or []:
+            text = str(issue.get("message") or "")
+            match = re.search(r"Patch for ([A-Za-z0-9_./-]+) must match exactly once", text)
+            if match:
+                paths.append(match.group(1))
+                diagnostics.append(text)
+        if paths:
+            return {"candidateHash": candidate_hash, "paths": sorted(set(paths)),
+                    "diagnostic": "; ".join(diagnostics)[:1200]}
+    return None
 
 
 def compact_probe_context(state: dict, snapshot: dict) -> list[dict]:

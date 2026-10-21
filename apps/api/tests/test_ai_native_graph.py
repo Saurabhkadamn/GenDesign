@@ -263,6 +263,67 @@ async def test_cad_session_applies_one_incremental_source_patch(monkeypatch, gra
 
 
 @pytest.mark.asyncio
+async def test_exact_text_patch_mismatch_switches_to_full_file_replacement(monkeypatch, graph_mocks):
+    original = design.Snapshot.model_validate({"manifest": {"components": [
+        {"id": "cover", "name": "Cover", "kind": "solid", "source": "parts/cover.py",
+         "dependencies": [], "parameters": {}}], "rootComponentId": "cover"},
+        "files": {"parts/cover.py": "def build(parameters, dependencies):\n    return None"}}).model_dump()
+    graph_mocks["candidate"] = deepcopy(original)
+    first_arguments = {"patches": [{"path": "parts/cover.py", "oldText": "return False", "newText": "return cq.Workplane('XY').box(1, 1, 1)"}]}
+
+    async def failed_patch(*_args, **_kwargs):
+        return {"message": {"role": "assistant", "content": "", "tool_calls": [{
+            "id": "bad-patch", "type": "function", "function": {
+                "name": "apply_changes", "arguments": json.dumps(first_arguments)}}]},
+            "calls": [{"id": "bad-patch", "name": "apply_changes", "input": first_arguments}],
+            "inputTokens": 10, "outputTokens": 5, "webSearchRequests": 0}
+
+    monkeypatch.setattr(design.models, "turn", failed_patch)
+    rejected = await design.cad_session(state())
+    assert graph_mocks["candidate"] == original
+    assert rejected["cad_patch_mismatch"]["paths"] == ["parts/cover.py"]
+    failure = json.loads(rejected["cad_history"][-1]["content"])
+    assert failure["category"] == "source_patch_mismatch"
+    assert "nothing was saved" in failure["repairGuidance"]
+
+    updated_source = "def build(parameters, dependencies):\n    return None\n# repaired from full current source\n"
+    full_arguments = {"files": {"parts/cover.py": updated_source}}
+    observed = {}
+
+    async def full_file(_config, messages, tools, **_kwargs):
+        context = json.loads(messages[1]["content"].split(": ", 1)[1])
+        observed["context"] = context
+        edit_tool = next(item for item in tools if item["function"]["name"] == "apply_changes")
+        observed["schema"] = edit_tool["function"]["parameters"]
+        return {"message": {"role": "assistant", "content": "", "tool_calls": [{
+            "id": "full-file", "type": "function", "function": {
+                "name": "apply_changes", "arguments": json.dumps(full_arguments)}}]},
+            "calls": [{"id": "full-file", "name": "apply_changes", "input": full_arguments}],
+            "inputTokens": 10, "outputTokens": 5, "webSearchRequests": 0}
+
+    monkeypatch.setattr(design.models, "turn", full_file)
+    accepted = await design.cad_session({**state(), **rejected})
+    assert accepted["phase"] == "cad_session"
+    assert graph_mocks["candidate"]["files"]["parts/cover.py"] == updated_source
+    assert accepted["cad_patch_mismatch"] == {}
+    assert "patches" not in observed["schema"]["properties"]
+    assert "parts/cover.py" in observed["context"]["sourceEditRecovery"]["paths"]
+    assert "omit patches" in observed["context"]["sourceEditRecovery"]["instruction"]
+
+
+def test_legacy_patch_mismatch_is_recovered_from_history_until_a_source_edit():
+    snapshot = {"manifest": {"components": []}, "files": {"parts/front_cover.py": "current source"}}
+    history = [{"role": "tool", "content": json.dumps({"ok": False, "category": "tool_contract",
+        "issues": [{"path": "", "message": "Patch for parts/front_cover.py must match exactly once; read current source and retry."}]})}]
+    current = design.active_source_patch_mismatch({"cad_history": history}, snapshot)
+    assert current["paths"] == ["parts/front_cover.py"]
+    changed = [*history, {"role": "tool", "content": json.dumps({"ok": True,
+        "candidateHash": "new-hash", "changedFiles": ["parts/front_cover.py"]}),
+        "tool_call_id": "successful-edit"}]
+    assert design.active_source_patch_mismatch({"cad_history": changed}, snapshot) is None
+
+
+@pytest.mark.asyncio
 async def test_new_run_loads_prior_brief_and_revision_for_followup(monkeypatch, graph_mocks):
     async def run_row(_state):
         return {"id": _state["run_id"], "project_id": _state["project_id"],
