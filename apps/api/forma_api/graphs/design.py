@@ -29,7 +29,7 @@ from ..source_contracts import validate_component_entrypoints
 from ..workspace_status import workspace_status
 from ..harness import (acceptance_context, component_snapshot, probe_context, recovery_key,
                       observation_context, record_observation_action, recovery_source_context,
-                      focused_recovery_paths)
+                      focused_recovery_paths, record_observation_decision)
 from ..agent_memory import (user_update, memory_context, capture_history, record_observation,
                             fit_dialogue, compact_narrative, update_notes, estimate_tokens, read_memory, notes_just_saved, older_outcomes_available)
 from .state import AgentState
@@ -549,7 +549,7 @@ def compact_completed_changes(history: list[dict]) -> list[dict]:
     return compacted
 
 
-def bounded_history(history: list[dict], *, messages: int = 30, characters: int = 500_000,
+def bounded_history(history: list[dict], *, messages: int = 30, characters: int = 80_000,
                     allow_pending: bool = False) -> list[dict]:
     """Keep recent tool context without duplicating a whole workspace in checkpoints."""
     history = compact_completed_changes(history)
@@ -1315,6 +1315,18 @@ CAD_SESSION_TOOL_NAMES = {
     "inspect_geometry", "request_engineering", "respond_to_review", "ask_user", "update_working_notes", "read_working_memory", "diagnose_workspace",
 }
 MAX_CAD_EDITS_WITHOUT_BUILD = 3
+MAX_CAD_OBSERVATION_DECISIONS = 6
+CAD_NO_PROGRESS_OBSERVATION_TOOLS = {
+    "read_file", "search_files", "inspect_geometry", "diagnose_workspace", "read_working_memory",
+}
+
+
+def bound_cad_observation_tools(tools: list[dict], completed_decisions: int,
+                               maximum: int = MAX_CAD_OBSERVATION_DECISIONS) -> list[dict]:
+    if completed_decisions < maximum:
+        return tools
+    return [tool for tool in tools
+            if tool.get("function", {}).get("name") not in CAD_NO_PROGRESS_OBSERVATION_TOOLS]
 MAX_REVIEW_REPAIR_CYCLES = 2
 MAX_REVIEW_ACTIONS = 5
 
@@ -1549,6 +1561,10 @@ def observation_result(state: AgentState, snapshot: dict, call: dict, arguments:
                        history: list, usage: dict, result: dict) -> dict:
     progress = record_observation_action(state, snapshot, call["name"], arguments,
                                          decision=usage.get("model_calls"))
+    # Several reads returned by one provider generation are one observation-only
+    # decision. Count only when its queued tool batch is exhausted.
+    progress = record_observation_decision(
+        progress, batch_complete=not usage.get("cad_pending_actions"))
     stalled = progress.get("repeatDecisions", 0) >= 3 and not usage.get("cad_pending_actions")
     feedback = {**result, "observationProgress": {"repeatedObservations": progress["repeats"],
                 "repeatedDecisions": progress.get("repeatDecisions", 0), "replanning": stalled}}
@@ -1673,6 +1689,17 @@ async def cad_session_turn(state: AgentState) -> dict:
     }
     tools = [item for item in model_tools("cad", working_memory=True, review_response=(state.get("review") or {}).get("action") == "repair")
              if item["function"]["name"] in CAD_SESSION_TOOL_NAMES]
+    observation_decisions = context["observationProgress"].get("observationOnlyDecisions", 0)
+    observation_limit = context["observationProgress"]["maximumObservationOnlyDecisions"]
+    if observation_decisions >= observation_limit:
+        tools = bound_cad_observation_tools(tools, observation_decisions, observation_limit)
+        context["observationLimit"] = {
+            "completedObservationOnlyDecisions": observation_decisions,
+            "maximum": observation_limit,
+            "instruction": ("The unchanged candidate and evidence have already had six observation-only model decisions. "
+                "Use a focused edit, part test, assembly build, engineering request, or ask a specific question. "
+                "Do not repeat reads or workspace inventory."),
+        }
     if patch_mismatch:
         tools = deepcopy(tools)
         for item in tools:

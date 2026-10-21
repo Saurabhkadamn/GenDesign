@@ -9,7 +9,8 @@ from forma_api.contracts import AppSettings, Snapshot
 from forma_api.graphs import design
 from forma_api.graphs.state import AgentState
 from forma_api.harness import (recovery_source_context, record_observation_action, recovery_key,
-                               focused_recovery_paths)
+                               focused_recovery_paths, observation_context, observation_epoch,
+                               record_observation_decision)
 from forma_api.agent_memory import memory_context, fit_dialogue, estimate_tokens
 
 
@@ -133,6 +134,31 @@ def test_one_fourteen_read_response_counts_as_one_repeated_model_decision():
                 state, snapshot, "read_file", {"path": p, "version": "saved"}, decision=decision)
         assert state["cad_observation_progress"]["repeatDecisions"] == decision - 1
     assert state["cad_observation_progress"]["repeats"] == 42
+
+
+def test_observation_only_budget_counts_model_decisions_and_forces_progress():
+    snapshot = workspace(2)
+    state = {"original_request": "Preserve the requested tolerances",
+             "cad_observation_progress": {"epoch": observation_epoch(
+                 {"original_request": "Preserve the requested tolerances"}, snapshot),
+                 "seen": {}, "repeats": 0, "observationOnlyDecisions": 5}}
+
+    # A provider can return a batch of many file reads in one generation.
+    progress = record_observation_decision(state["cad_observation_progress"], batch_complete=False)
+    assert progress["observationOnlyDecisions"] == 5
+    progress = record_observation_decision(progress, batch_complete=True)
+    state["cad_observation_progress"] = progress
+    assert observation_context(state, snapshot)["observationOnlyDecisions"] == 6
+
+    tools = [{"function": {"name": name}} for name in (
+        "read_file", "search_files", "inspect_geometry", "diagnose_workspace",
+        "read_working_memory", "apply_changes", "test_component", "build",
+        "request_engineering", "ask_user",
+    )]
+    bounded = design.bound_cad_observation_tools(tools, 6)
+    assert [tool["function"]["name"] for tool in bounded] == [
+        "apply_changes", "test_component", "build", "request_engineering", "ask_user"]
+    assert observation_context(state, workspace(3))["observationOnlyDecisions"] == 0
 
 
 @pytest.mark.asyncio

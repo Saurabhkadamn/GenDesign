@@ -6,6 +6,9 @@ from .contracts import Snapshot
 from .execution import digest, identity
 
 
+MAX_OBSERVATION_ONLY_DECISIONS_PER_EPOCH = 6
+
+
 def component_snapshot(snapshot: dict, component_id: str) -> dict:
     definitions = {item["id"]: item for item in snapshot["manifest"]["components"]}
     if component_id not in definitions:
@@ -77,8 +80,12 @@ def observation_context(state: dict, snapshot: dict) -> dict:
     return {"reviewed": list((progress.get("seen") or {}).values()),
             "repeatedObservations": progress.get("repeats", 0),
             "repeatedDecisions": progress.get("repeatDecisions", 0),
+            "observationOnlyDecisions": progress.get("observationOnlyDecisions", 0),
+            "maximumObservationOnlyDecisions": MAX_OBSERVATION_ONLY_DECISIONS_PER_EPOCH,
             "instruction": "These reads/inspections already completed for unchanged source and evidence. "
                            "Re-read when needed, then use the result for a focused edit or test. "
+                           "After six observation-only model decisions for unchanged evidence, the available tools "
+                           "require a focused edit, part test, assembly build, engineering request, or concrete question. "
                            "Cycling through the same observations triggers a fresh repair plan, not a part lock."}
 
 
@@ -109,6 +116,14 @@ def record_observation_action(state: dict, snapshot: dict, name: str, arguments:
     for receipts in (seen, window_seen):
         if len(receipts) > 256:
             del receipts[next(iter(receipts))]
+    return progress
+
+
+def record_observation_decision(progress: dict, *, batch_complete: bool) -> dict:
+    """Count one model decision after all provider-returned observation actions finish."""
+    progress = deepcopy(progress)
+    if batch_complete:
+        progress["observationOnlyDecisions"] = progress.get("observationOnlyDecisions", 0) + 1
     return progress
 
 
