@@ -8,7 +8,9 @@ from langgraph.graph import END, START, StateGraph
 from forma_api.contracts import AppSettings, Snapshot
 from forma_api.graphs import design
 from forma_api.graphs.state import AgentState
-from forma_api.harness import recovery_source_context, record_observation_action, recovery_key
+from forma_api.harness import (recovery_source_context, record_observation_action, recovery_key,
+                               focused_recovery_paths)
+from forma_api.agent_memory import memory_context, fit_dialogue, estimate_tokens
 
 
 def workspace(count=14):
@@ -44,6 +46,67 @@ def test_recovery_source_context_preserves_whole_current_reads_with_explicit_bou
     refreshed = recovery_source_context({}, changed, paths=[paths[0]])
     assert refreshed["files"][paths[0]] == changed["files"][paths[0]]
     assert "not build or geometry evidence" in context["instruction"]
+
+
+def test_recovery_source_selection_prioritizes_current_failure_over_old_read_inventory():
+    snapshot = workspace(14)
+    paths = list(snapshot["files"])
+    state = {"build_result": {"error": {"location": {"file": paths[8]}}},
+             "last_read_path": paths[7],
+             "cad_history": [read_result(path, source) for path, source in snapshot["files"].items()],
+             "recovery_source_paths": paths}
+    selected = focused_recovery_paths(state, snapshot)
+    assert selected[:2] == [paths[8], paths[7]]
+    context = recovery_source_context(state, snapshot, paths=selected, max_files=4, max_bytes=12_000)
+    assert paths[8] in context["files"]
+    assert len(context["files"]) <= 4
+    assert len(context["files"]) < len(paths)
+
+
+def test_large_recovery_context_fits_budget_while_preserving_request_and_current_failure():
+    files = {f"parts/p{i}.py": "# saved source " + ("x" * 1800) for i in range(14)}
+    files["assemblies/pump.py"] = "# assembly source " + ("y" * 1800)
+    components = [{"id": f"p{i}", "name": f"Part {i}", "kind": "solid", "source": f"parts/p{i}.py",
+                   "parameters": {"dimension": "34.000 +/-0.010 mm"}} for i in range(14)]
+    components.append({"id": "root", "name": "Pump", "kind": "assembly", "source": "assemblies/pump.py"})
+    instances = [{"id": f"item-{i}", "definitionId": f"p{i % 14}", "name": f"Occurrence {i}",
+                  "frame": {"position": [i, 0, 0], "rotation": [0, 0, 0]}} for i in range(43)]
+    snapshot = Snapshot.model_validate({"files": files, "manifest": {
+        "components": components, "instances": instances, "rootComponentId": "root"}}).model_dump()
+    request = "Exact engineering request and requirements. " + "R" * 9000
+    updates = [{"kind": "continuation", "message": f"Historical follow-up {i}: " + "U" * 900}
+               for i in range(8)]
+    state = {"original_request": request, "user_updates": updates,
+        "build_result": {"error": {"location": {"file": "parts/p3.py"}, "diagnostic": "fillet failed " * 400}},
+        "working_memory": {"outcomes": {str(i): {"tool": "build", "candidateHash": str(i),
+            "diagnostic": "D" * 4000, "guidance": "G" * 4000} for i in range(12)}},
+        "requirements": [{"id": f"r{i}", "description": "Exact requirement " + "Q" * 120}
+                         for i in range(24)]}
+    selected = focused_recovery_paths(state, snapshot)
+    source = recovery_source_context(state, snapshot, paths=selected, max_bytes=12_000, max_files=4)
+    context = {
+        "currentCandidate": design.current_candidate_facts(snapshot),
+        "request": request,
+        "humanUpdates": updates,
+        "acceptanceLedger": design.acceptance_context(state, snapshot),
+        "componentTests": design.compact_probe_context(state, snapshot),
+        "recoverySourceContext": source,
+        "workspace": {"manifest": design.compact_manifest_context(snapshot["manifest"]),
+                      "files": sorted(files), "candidateHash": design.digest(snapshot)},
+        "lastBuild": design.compact_build_context(state["build_result"]),
+        "workspaceStatus": design.compact_workspace_status(design.workspace_status(snapshot)),
+        "workingMemory": memory_context(state, design.digest(snapshot), max_outcomes=8, text_limit=1500),
+    }
+    tools = [tool for tool in design.model_tools("cad", working_memory=True)
+             if tool["function"]["name"] in design.CAD_SESSION_TOOL_NAMES]
+    messages = [{"role": "system", "content": design.system_prompt("cad")},
+        {"role": "system", "content": "Current private design context: " + json.dumps(context)},
+        {"role": "user", "content": request}, {"role": "assistant", "content": "old tool transcript " * 30000}]
+    fitted = fit_dialogue(messages, tools, 48_000, design.protocol_safe_history)
+    assert estimate_tokens([*fitted, tools]) <= 48_000
+    assert request in fitted[1]["content"]
+    assert "parts/p3.py" in fitted[1]["content"]
+    assert "Historical follow-up 7" in fitted[1]["content"]
 
 
 def test_one_fourteen_read_response_counts_as_one_repeated_model_decision():
@@ -100,12 +163,12 @@ async def test_recovery_source_handoff_survives_checkpoint_and_reaches_cad(monke
     async def settings(): return AppSettings()
     async def event(*_, **__): pass
     async def turn(state, **kwargs):
-        assert kwargs["context"]["recoverySourceContext"]["files"] == snapshot["files"]
+        assert list(kwargs["context"]["recoverySourceContext"]["files"]) == ["parts/p1.py"]
         assert kwargs["context"]["request"] == "Keep exact requirements"
         assert kwargs["context"]["humanUpdates"] == initial["user_updates"]
         assert kwargs["context"]["currentCandidate"]["componentCount"] == 2
         assert kwargs["context"]["currentCandidate"]["instanceCount"] == 0
-        assert kwargs["context"]["currentCandidate"]["savedSourcePaths"] == sorted(snapshot["files"])
+        assert "savedSourcePaths" not in kwargs["context"]["currentCandidate"]
         if kwargs["prompt_role"] == "recovery":
             return {"name": "submit_recovery", "input": {"diagnosis": "Sources exist; root missing",
                 "nextTask": "Test a saved component", "changesFromFailedApproach": "Use retained source",
@@ -125,7 +188,7 @@ async def test_recovery_source_handoff_survives_checkpoint_and_reaches_cad(monke
         return g.compile(checkpointer=saver, interrupt_after="*")
     saver = InMemorySaver(); config = {"configurable": {"thread_id": "source-handoff"}}
     first = await graph(saver).ainvoke(initial, config)
-    assert set(first["recovery_source_paths"]) == set(snapshot["files"])
+    assert first["recovery_source_paths"] == ["parts/p1.py"]
     assert first["cad_observation_progress"]["repeatDecisions"] == 0
     final = await graph(saver).ainvoke(None, config)
     assert final["model_calls"] == 12 and final["recovery_plan_count"] == 1

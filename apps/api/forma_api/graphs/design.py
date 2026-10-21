@@ -3,6 +3,7 @@ import json
 import re
 import time
 import os
+from collections import Counter
 from copy import deepcopy
 import ast
 from contextvars import ContextVar
@@ -27,7 +28,8 @@ from ..workspace_diagnostics import contract_repair_attempt, workspace_contract_
 from ..source_contracts import validate_component_entrypoints
 from ..workspace_status import workspace_status
 from ..harness import (acceptance_context, component_snapshot, probe_context, recovery_key,
-                      observation_context, record_observation_action, recovery_source_context)
+                      observation_context, record_observation_action, recovery_source_context,
+                      focused_recovery_paths)
 from ..agent_memory import (user_update, memory_context, capture_history, record_observation,
                             fit_dialogue, compact_narrative, update_notes, estimate_tokens, read_memory, notes_just_saved, older_outcomes_available)
 from .state import AgentState
@@ -572,7 +574,8 @@ async def agent_tool_turn(state: AgentState, *, model_role: str, prompt_role: st
         raise Pause("The model-call budget for this cycle was reached. The current draft and completed evidence were preserved. Continue to grant another bounded cycle.")
     memory = capture_history(state, history)
     context = {**context, "workingMemory": memory_context({**state, "working_memory": memory},
-        (context.get("workspace") or context.get("currentWorkspace") or {}).get("candidateHash", ""))}
+        (context.get("workspace") or context.get("currentWorkspace") or {}).get("candidateHash", ""),
+        max_outcomes=8, text_limit=1500)}
     history = bounded_history(history)
     messages = [
         {"role": "system", "content": system_prompt(prompt_role)},
@@ -1629,11 +1632,12 @@ async def cad_session_turn(state: AgentState) -> dict:
         "request": state["original_request"],
         "humanUpdates": human_followups(state),
         "acceptanceLedger": acceptance_context(state, snapshot),
-        "componentTests": probe_context(state, snapshot),
+        "componentTests": compact_probe_context(state, snapshot),
         "observationProgress": observation_context(state, snapshot),
         "queuedActionStatus": state.get("cad_queue_feedback") or None,
         "recoveryPlan": state.get("recovery_plan") or None,
-        "recoverySourceContext": recovery_source_context(state, snapshot, paths=state.get("recovery_source_paths") or []),
+        "recoverySourceContext": recovery_source_context(state, snapshot,
+            paths=focused_recovery_paths(state, snapshot), max_bytes=12_000, max_files=4),
         "rejectedSource": {"paths": sorted(state.get("rejected_files") or {}),
                            "instruction": "Unsaved proposal source only; use read_file(version='rejected') selectively. Saved source is authoritative."},
         "delegatedTask": state.get("coordinator_task", ""),
@@ -1644,18 +1648,18 @@ async def cad_session_turn(state: AgentState) -> dict:
         "reviewRepairPlan": (review_repair_context(state.get("review") or {})
             if (state.get("review") or {}).get("action") == "repair" else None),
         "workspace": {
-            "manifest": snapshot["manifest"],
+            "manifest": compact_manifest_context(snapshot["manifest"]),
             "files": sorted(snapshot["files"]),
             "candidateHash": digest(snapshot),
             "instruction": ("Use only exact file paths listed in workspace.files. A path such as 'parts' or "
                 "'.metadata/manifest.json' is not a file. If the list is empty, create the requested source "
                 "with apply_changes immediately; do not probe directories or invent metadata files."),
         },
-        "lastBuild": state.get("build_result"),
+        "lastBuild": compact_build_context(state.get("build_result")),
         "lastReview": state.get("review"),
         "nativeGroundingEvidence": native_grounding_evidence(snapshot, state.get("validation") or {}),
         "workspaceRepair": state.get("cad_contract_repair") or None,
-        "workspaceStatus": workspace_status(snapshot),
+        "workspaceStatus": compact_workspace_status(workspace_status(snapshot)),
     }
     tools = [item for item in model_tools("cad", working_memory=True, review_response=(state.get("review") or {}).get("action") == "repair")
              if item["function"]["name"] in CAD_SESSION_TOOL_NAMES]
@@ -2395,8 +2399,62 @@ def current_candidate_facts(snapshot: dict) -> dict:
     manifest = snapshot["manifest"]
     return {"candidateHash": digest(snapshot), "componentCount": len(manifest.get("components") or []),
             "instanceCount": len(manifest.get("instances") or []),
-            "rootComponentId": manifest.get("rootComponentId"),
-            "savedSourcePaths": sorted(snapshot["files"])}
+            "rootComponentId": manifest.get("rootComponentId")}
+
+
+def compact_manifest_context(manifest: dict) -> dict:
+    """Keep editable identities and placements without repeating optional metadata."""
+    components = [{key: component[key] for key in ("id", "kind", "name", "source", "dependencies", "parameters")
+                   if key in component} for component in (manifest.get("components") or [])]
+    instances = [{key: instance[key] for key in ("id", "definitionId", "parentId", "name", "frame", "bomExclude")
+                  if key in instance} for instance in (manifest.get("instances") or [])]
+    instance_counts = Counter(instance.get("definitionId", "") for instance in instances)
+    return {"rootComponentId": manifest.get("rootComponentId"), "components": components,
+            "instances": instances, "instanceCounts": dict(instance_counts)}
+
+
+def compact_build_context(value: dict | None) -> dict | None:
+    if not value:
+        return None
+    error = value.get("error") or {}
+    if isinstance(error, str):
+        error = {"diagnostic": error}
+    compact_error = {key: error[key] for key in ("category", "file", "path", "location", "line", "message", "guidance")
+                     if key in error}
+    for key in ("diagnostic", "details", "message"):
+        if isinstance(error.get(key), str):
+            compact_error[key] = error[key][-2400:]
+    return {key: value[key] for key in ("ok", "candidateHash", "attempt", "final", "scope") if key in value} | {
+        "error": compact_error or None}
+
+
+def compact_probe_context(state: dict, snapshot: dict) -> list[dict]:
+    probes = probe_context(state, snapshot)
+    compact = []
+    for probe in probes:
+        item = {key: probe[key] for key in ("componentId", "currentSource", "ok", "measurementAvailable",
+                                               "allRequirementsVerified") if key in probe}
+        if probe.get("error"):
+            item["error"] = str(probe["error"])[-1600:]
+        measurements = probe.get("measurements") or {}
+        if measurements:
+            item["measurements"] = dict(list(measurements.items())[:8])
+        checks = probe.get("requirementChecks") or []
+        if checks:
+            item["requirementChecks"] = checks[:20]
+        compact.append(item)
+    return compact
+
+
+def compact_workspace_status(value: dict) -> dict:
+    diagnostics = []
+    for item in value.get("sourceDiagnostics") or []:
+        if item.get("entrypoint") != "declared" or item.get("referencedMissingParameters"):
+            diagnostics.append({key: item[key] for key in (
+                "path", "registered", "entrypoint", "referencedMissingParameters", "line") if key in item})
+    return {key: value[key] for key in ("componentCount", "instanceCount", "rootComponentId", "rootSourcePresent",
+                                        "geometryExecuted") if key in value} | {
+        "sourceDiagnostics": diagnostics, "stagingProblems": value.get("stagingProblems") or []}
 
 
 async def cad_replan(state: AgentState) -> dict:
@@ -2412,19 +2470,21 @@ async def cad_replan(state: AgentState) -> dict:
         return {"phase": "cad_recovery", "final_message": (
             "Automatic recovery reached its bounded allowance. The candidate, exact requirements and failure evidence "
             "are preserved. " + state.get("final_message", ""))}
-    source_context = recovery_source_context(state, snapshot)
+    source_context = recovery_source_context(state, snapshot,
+        paths=focused_recovery_paths(state, snapshot), max_bytes=12_000, max_files=4)
     current = current_candidate_facts(snapshot)
     updates = human_followups(state)
     context = {"currentCandidate": current,
                "request": state["original_request"], "humanUpdates": updates,
                "recoverySourceContext": source_context,
-               "workspace": {"manifest": snapshot["manifest"], "files": sorted(snapshot["files"]),
+               "workspace": {"manifest": compact_manifest_context(snapshot["manifest"]), "files": sorted(snapshot["files"]),
                              "candidateHash": digest(snapshot)},
                "failure": state.get("final_message"), "workspaceRepair": state.get("cad_contract_repair"),
-               "lastBuild": state.get("build_result"), "workspaceStatus": workspace_status(snapshot),
-               "componentTests": probe_context(state, snapshot), "previousPlan": state.get("recovery_plan"),
+               "lastBuild": compact_build_context(state.get("build_result")),
+               "workspaceStatus": compact_workspace_status(workspace_status(snapshot)),
+               "componentTests": compact_probe_context(state, snapshot), "previousPlan": state.get("recovery_plan"),
                "observationProgress": observation_context(state, snapshot),
-               "workingMemory": memory_context(state, digest(snapshot))}
+               "workingMemory": memory_context(state, digest(snapshot), max_outcomes=8, text_limit=1500)}
     history = [{"role": "user", "content": "Choose a different, focused repair approach using retained evidence. Do not change user requirements."}]
     call, _, usage = await agent_tool_turn(state, model_role="coordinator", prompt_role="recovery",
         node="cad-replan", context=context, history=history,

@@ -23,7 +23,7 @@ def test_human_updates_survive_history_trimming_without_changing_exact_values():
     assert len(state["cad_history"]) <= 30
     assert "16.000 to 16.018" in state["clarified_request"]
     assert "0.08 to 0.20" in state["clarified_request"]
-    assert len(memory_context(state)["userUpdates"]) == 2
+    assert memory_context(state, include_user_updates=True)["userUpdateCount"] == 2
     assert user_update(state, "Use 0.08 to 0.20 mm backlash.", "clarification") == {}
 
 
@@ -65,6 +65,18 @@ def test_failure_evidence_retains_provenance_after_an_edit_and_history_loss():
     assert context["changedFiles"]["parts/a.py"]["status"] == "edited_not_verified"
     # Historical messages without provenance cannot overwrite the recorded source hash.
     assert record_observation(state, "build", error)["outcomes"]["failure:parts/a.py"]["candidateHash"] == "before"
+
+
+def test_model_context_bounds_old_outcomes_without_duplicating_full_user_updates():
+    outcomes = {str(index): {"tool": "build", "candidateHash": str(index), "diagnostic": "x" * 5000,
+                            "guidance": "y" * 5000} for index in range(20)}
+    context = memory_context({"user_updates": [{"message": "z" * 10000}],
+                              "working_memory": {"outcomes": outcomes}},
+                             max_outcomes=3, text_limit=80)
+    assert len(context["recentOutcomes"]) == 3
+    assert all(len(item["diagnostic"]) == 80 and len(item["guidance"]) == 80
+               for item in context["recentOutcomes"])
+    assert "userUpdates" not in context
 
 
 def test_context_budget_removes_whole_pairs_and_keeps_authoritative_request():

@@ -53,18 +53,27 @@ def record_observation(state: dict, name: str, result: dict, *, candidate: str =
     return memory
 
 
-def memory_context(state: dict, candidate: str = "") -> dict:
+def memory_context(state: dict, candidate: str = "", *, max_outcomes: int = 12,
+                   include_user_updates: bool = False, text_limit: int = 3000) -> dict:
     memory = state.get("working_memory") or {}
     facts = list((memory.get("outcomes") or {}).values())
-    return {"userUpdates": state.get("user_updates") or [],
-            "notes": memory.get("notes") or {},
+    recent = []
+    for fact in facts[-max(0, max_outcomes):] if max_outcomes else []:
+        compact = dict(fact)
+        for key in ("guidance", "diagnostic"):
+            if isinstance(compact.get(key), str):
+                compact[key] = compact[key][-text_limit:]
+        recent.append({**compact, "currentCandidate": bool(candidate) and fact.get("candidateHash") == candidate})
+    result = {"notes": memory.get("notes") or {},
             "notesAreAgentReported": True,
             "changedFiles": memory.get("changedFiles") or {},
-            "recentOutcomes": [{**fact, "currentCandidate": bool(candidate) and fact.get("candidateHash") == candidate}
-                               for fact in facts[-12:]],
+            "recentOutcomes": recent,
             "outcomeCount": len(facts),
             "lastValidatedMilestone": state.get("last_milestone_hash") or None,
             "instruction": "Notes and old outcomes are working memory, not current validation. Read source and test changed geometry. All parts remain editable."}
+    if include_user_updates:
+        result["userUpdateCount"] = len(state.get("user_updates") or [])
+    return result
 
 
 def estimate_tokens(value) -> int:

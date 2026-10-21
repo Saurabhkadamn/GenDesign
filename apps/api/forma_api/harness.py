@@ -155,3 +155,53 @@ def recovery_source_context(state: dict, snapshot: dict, *, paths: list[str] | N
                            "not build or geometry evidence. Use it directly for a focused edit or test; do not "
                            "re-read every file after recovery. Other source remains available through read_file. "
                            "Earlier missing-source errors may be obsolete; compare them with the current file inventory."}
+
+
+def focused_recovery_paths(state: dict, snapshot: dict, *, limit: int = 4) -> list[str]:
+    """Select source tied to the current failure instead of replaying the whole workspace."""
+    available = snapshot.get("files") or {}
+    paths: list[str] = []
+
+    def add(value):
+        if isinstance(value, str) and value in available and value.endswith(".py") and value not in paths:
+            paths.append(value)
+
+    for key in ("build_result", "cad_contract_repair"):
+        evidence = state.get(key) or {}
+        error = evidence.get("error") or evidence
+        if not isinstance(error, dict):
+            error = {}
+        add(error.get("file"))
+        add(error.get("path"))
+        location = error.get("location") or {}
+        if isinstance(location, dict):
+            add(location.get("file"))
+        for issue in evidence.get("issues") or []:
+            if not isinstance(issue, dict):
+                continue
+            add(issue.get("path"))
+            issue_location = issue.get("location") or {}
+            if isinstance(issue_location, dict):
+                add(issue_location.get("file"))
+    remembered = state.get("recovery_source_paths") or []
+    if len(remembered) <= limit:
+        for path in remembered:
+            add(path)
+    add(state.get("last_read_path"))
+    candidate = digest(snapshot)
+    changed = (state.get("working_memory") or {}).get("changedFiles") or {}
+    for path, details in changed.items():
+        if details.get("candidateHash") == candidate:
+            add(path)
+    for message in reversed(state.get("cad_history") or []):
+        if message.get("role") != "tool":
+            continue
+        try:
+            result = json.loads(message.get("content") or "{}")
+        except (TypeError, ValueError):
+            continue
+        if (result.get("ok") is True and result.get("saved") is True
+                and result.get("content") == available.get(result.get("path"))):
+            add(result.get("path"))
+            break
+    return paths[:limit]
