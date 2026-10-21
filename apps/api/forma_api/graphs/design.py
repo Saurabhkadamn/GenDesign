@@ -2437,15 +2437,22 @@ async def cad_recovery(state: AgentState) -> dict:
     repair = state.get("cad_contract_repair") or {}
     snapshot = await run_service.load_candidate(state["run_id"])
     sources = recovery_source_context(state, snapshot)
-    return {"phase": "cad_session", "repairs": 0, "cad_history": history,
+    guidance = user_update(state, message)
+    specific_guidance = bool(guidance) and message.casefold() not in {"continue", "continue.", "resume"}
+    update = {"phase": "cad_session", "repairs": 0, "cad_history": history,
             "recovery_source_paths": list(sources["files"]),
             "recovery_plan": {},
             "cad_observation_progress": {**(state.get("cad_observation_progress") or {}),
                 "repeats": 0, "repeatDecisions": 0, "lastRepeatedDecision": None, "windowSeen": {}},
             "cad_invalid_tool_attempts": 0,
             "cad_contract_repair": {**repair, "stalledAttempts": 0} if repair else {},
-            **user_update(state, message),
+            **guidance,
             "pending_cad_call": {}, "cad_edits_since_build": 0, "final_message": ""}
+    # A new, specific human direction is a new recovery hypothesis. Renew only
+    # the planner allowance; the run-wide model-call and task budgets stay intact.
+    if specific_guidance:
+        update["recovery_plan_count"] = 0
+    return update
 
 
 REVIEW_TOOL_NAMES = {"read_file", "inspect_geometry"}

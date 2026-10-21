@@ -126,7 +126,7 @@ async def test_recovery_source_handoff_survives_checkpoint_and_reaches_cad(monke
 
 
 @pytest.mark.asyncio
-async def test_explicit_continue_retains_source_without_resetting_total_budgets(monkeypatch):
+async def test_specific_continue_retains_source_and_renews_only_recovery_allowance(monkeypatch):
     snapshot = workspace(2)
     state = {"run_id": "run", "original_request": "Keep exact requirements", "final_message": "Read cycle",
              "model_calls": 27, "recovery_plan_count": 3, "recovery_counts": {"unchanged": 2},
@@ -141,9 +141,25 @@ async def test_explicit_continue_retains_source_without_resetting_total_budgets(
     assert result["recovery_plan"] == {} and result["cad_observation_progress"]["repeatDecisions"] == 0
     assert result["cad_observation_progress"]["seen"] == state["cad_observation_progress"]["seen"]
     merged = {**state, **result}
-    assert merged["model_calls"] == 27 and merged["recovery_plan_count"] == 3
+    assert merged["model_calls"] == 27 and merged["recovery_plan_count"] == 0
     assert merged["recovery_counts"] == state["recovery_counts"]
     assert "Use the saved source and test" in merged["clarified_request"]
+
+
+@pytest.mark.asyncio
+async def test_generic_continue_keeps_recovery_allowance_bounded(monkeypatch):
+    snapshot = workspace(1)
+    state = {"run_id": "run", "original_request": "Keep exact requirements",
+             "final_message": "Read cycle",
+             "model_calls": 27, "recovery_plan_count": 3,
+             "cad_observation_progress": {"seen": {}, "repeats": 8, "repeatDecisions": 3}}
+    async def load(_): return deepcopy(snapshot)
+    monkeypatch.setattr(design.run_service, "load_candidate", load)
+    monkeypatch.setattr(design, "interrupt", lambda _: {"kind": "continue", "message": "Continue."})
+    result = await design.cad_recovery(state)
+    merged = {**state, **result}
+    assert merged["model_calls"] == 27 and merged["recovery_plan_count"] == 3
+    assert merged["clarified_request"].endswith("User continuation: Continue.")
 
 
 def test_fresh_recovery_window_allows_one_inspection_pass_across_three_batches():
