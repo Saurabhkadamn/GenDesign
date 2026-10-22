@@ -39,6 +39,8 @@ NEBIUS_TOKEN_FACTORY_HOSTS = {
 }
 GEMINI_API_HOST = "generativelanguage.googleapis.com"
 THEGRID_API_HOST = "api.thegrid.ai"
+THEGRID_AGENT_PRIME = "agent-prime"
+THEGRID_FIRST_FALLBACK = "code-max"
 GEMINI_DEFAULT_REQUESTS_PER_MINUTE = 4
 GEMINI_503_RETRY_DELAY_SECONDS = 1.0
 # A small margin makes the limit safe for any rolling 60 second window rather
@@ -525,6 +527,11 @@ def _fallback_configs(config: dict) -> list[dict]:
         fallback_ids = [os.getenv("OPENAI_COMPATIBLE_FALLBACK_MODEL_ID", NVIDIA_FIRST_FALLBACK).strip()]
     elif host == VERCEL_GATEWAY_HOST and model_id in VERCEL_MODEL_CHAIN:
         fallback_ids = list(VERCEL_MODEL_CHAIN[VERCEL_MODEL_CHAIN.index(model_id) + 1:])
+    elif host == THEGRID_API_HOST and model_id == THEGRID_AGENT_PRIME:
+        # Forma's saved TheGrid connection previously qualified code-max on
+        # the same endpoint and key. If agent-prime is rate limited, Continue
+        # can retry the uncertain step on that known same-provider model.
+        fallback_ids = [THEGRID_FIRST_FALLBACK]
     elif host in NEBIUS_TOKEN_FACTORY_HOSTS and model_id.startswith(DEEPSEEK_V4_PREFIX):
         fallback_ids = [os.getenv("OPENAI_COMPATIBLE_FALLBACK_MODEL_ID", NEBIUS_FIRST_FALLBACK).strip()]
     else:

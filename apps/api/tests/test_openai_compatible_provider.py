@@ -286,6 +286,25 @@ async def test_vercel_gateway_uses_ordered_grok_tencent_alibaba_fallbacks(monkey
         "reason": "rate_limit",
     }
 
+
+@pytest.mark.asyncio
+async def test_thegrid_agent_prime_rate_limit_retries_known_same_endpoint_model(monkeypatch):
+    calls = []
+
+    async def fake_turn_once(config, _messages, _tools, **_kwargs):
+        calls.append(config["model_id"])
+        if config["model_id"] == "agent-prime":
+            raise openai_compatible.ModelFailure("rate_limit", "limited", status_code=429)
+        return {"message": {"role": "assistant", "content": "ready"}, "calls": []}
+
+    monkeypatch.setattr(openai_compatible, "_turn_once", fake_turn_once)
+    config = {"provider": "openai_compatible", "base_url": "https://api.thegrid.ai/v1",
+        "model_id": "agent-prime", "api_key": "secret", "stream": False}
+    assert openai_compatible.retry_config(config)["model_id"] == "code-max"
+    result = await openai_compatible.turn(config, [{"role": "user", "content": "Reply."}], [], max_tokens=1024)
+    assert calls == ["agent-prime", "code-max"]
+    assert result["fallback"] == {"from": "agent-prime", "to": "code-max", "reason": "rate_limit"}
+
 class GeminiThoughtResponse:
     status_code = 200
     text = json.dumps({
