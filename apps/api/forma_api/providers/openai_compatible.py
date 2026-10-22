@@ -76,6 +76,13 @@ def _failure(status: int, body: str) -> ModelFailure:
     lower = body.lower()
     if status in (401, 403):
         return ModelFailure("access", "The provider rejected access. Check the saved key and model access.", status_code=status)
+    if status == 402:
+        return ModelFailure(
+            "provider",
+            "The provider requires payment for this request (HTTP 402). Check the provider account's credits, billing status, and model access, or select another funded connection.",
+            body[:8000],
+            status_code=status,
+        )
     if status == 429:
         return ModelFailure("rate_limit", "The provider is rate-limited. Wait before continuing.", body[:8000], status_code=status)
     if status >= 500 and any(word in lower for word in ("overload", "capacity", "unavailable")):

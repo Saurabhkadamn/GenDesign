@@ -406,8 +406,11 @@ def test_nebius_glm_requires_a_tool_action():
 def test_provider_failures_keep_http_status_for_retry_routing():
     rate_limited = openai_compatible._failure(429, '{"error":"RESOURCE_EXHAUSTED"}')
     overloaded = openai_compatible._failure(503, '{"error":"UNAVAILABLE"}')
+    payment_required = openai_compatible._failure(402, '{"error":"Payment Required"}')
     assert (rate_limited.category, rate_limited.status_code) == ("rate_limit", 429)
     assert (overloaded.category, overloaded.status_code) == ("overloaded", 503)
+    assert (payment_required.category, payment_required.status_code) == ("provider", 402)
+    assert "credits, billing status" in str(payment_required)
 
 
 def test_nebius_deepseek_uses_high_reasoning_effort():
