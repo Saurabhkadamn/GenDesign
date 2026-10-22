@@ -6,7 +6,9 @@ or ``openrouter:web_search``.
 """
 import asyncio
 import json
+import logging
 import os
+import re
 import threading
 import time
 from urllib.parse import urlsplit
@@ -57,6 +59,27 @@ NVIDIA_FIRST_FALLBACK = "nvidia/nemotron-3-ultra-550b-a55b"
 # A model that exceeds the provider timeout is unavailable for this step just
 # like a rate-limited model; use the ordered same-endpoint fallback chain.
 FALLBACK_CATEGORIES = {"overloaded", "rate_limit", "quota", "access", "timeout"}
+_SENSITIVE_URL_QUERY = re.compile(r"([?&](?:token|signature|key|api_key|access_token)=)[^&#\s]+", re.I)
+
+
+class _RedactSensitiveHttpxURL(logging.Filter):
+    """Keep provider redirect bearer tokens out of HTTPX request logs."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        args = record.args
+        if record.name == "httpx" and isinstance(args, tuple) and len(args) >= 2:
+            safe_args = list(args)
+            safe_args[1] = _SENSITIVE_URL_QUERY.sub(r"\1[REDACTED]", str(safe_args[1]))
+            record.args = tuple(safe_args)
+        return True
+
+
+# The Grid returns a 307 to a signed URL whose `token` query value is a
+# temporary bearer credential. HTTPX logs request URLs at INFO, so redact it
+# centrally before the HTTPX logger formats or emits that redirect URL.
+_httpx_logger = logging.getLogger("httpx")
+if not any(isinstance(item, _RedactSensitiveHttpxURL) for item in _httpx_logger.filters):
+    _httpx_logger.addFilter(_RedactSensitiveHttpxURL())
 
 
 def base_url(config: dict) -> str:
@@ -80,6 +103,13 @@ def _failure(status: int, body: str) -> ModelFailure:
         return ModelFailure(
             "provider",
             "The provider requires payment for this request (HTTP 402). Check the provider account's credits, billing status, and model access, or select another funded connection.",
+            body[:8000],
+            status_code=status,
+        )
+    if status == 504:
+        return ModelFailure(
+            "timeout",
+            "The selected model provider timed out while generating a response (HTTP 504). The design is unchanged; continue to retry the saved step.",
             body[:8000],
             status_code=status,
         )

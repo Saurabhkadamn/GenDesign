@@ -407,10 +407,29 @@ def test_provider_failures_keep_http_status_for_retry_routing():
     rate_limited = openai_compatible._failure(429, '{"error":"RESOURCE_EXHAUSTED"}')
     overloaded = openai_compatible._failure(503, '{"error":"UNAVAILABLE"}')
     payment_required = openai_compatible._failure(402, '{"error":"Payment Required"}')
+    timed_out = openai_compatible._failure(504, '{"error":"Gateway Time-out"}')
     assert (rate_limited.category, rate_limited.status_code) == ("rate_limit", 429)
     assert (overloaded.category, overloaded.status_code) == ("overloaded", 503)
     assert (payment_required.category, payment_required.status_code) == ("provider", 402)
     assert "credits, billing status" in str(payment_required)
+    assert (timed_out.category, timed_out.status_code) == ("timeout", 504)
+    assert "provider timed out" in str(timed_out)
+
+
+def test_httpx_request_log_redacts_signed_provider_redirect_tokens():
+    record = openai_compatible.logging.LogRecord(
+        "httpx", 20, __file__, 1, 'HTTP Request: %s %s "%s %d %s"',
+        ("POST", "https://api.thegrid.ai/r/v1/chat/completions?token=signed-secret&tp=trace", "HTTP/1.1", 200, "OK"),
+        None,
+    )
+    redactor = next(item for item in openai_compatible._httpx_logger.filters
+                    if isinstance(item, openai_compatible._RedactSensitiveHttpxURL))
+
+    assert redactor.filter(record)
+    formatted = record.getMessage()
+    assert "signed-secret" not in formatted
+    assert "token=[REDACTED]" in formatted
+    assert "tp=trace" in formatted
 
 
 def test_nebius_deepseek_uses_high_reasoning_effort():
