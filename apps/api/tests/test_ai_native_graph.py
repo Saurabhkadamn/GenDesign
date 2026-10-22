@@ -1872,6 +1872,18 @@ def test_explicit_assumption_permission_turns_clarification_into_actionable_guid
     assert "labeled as assumptions/unverified" in answer
 
 
+def test_user_pump_correction_wording_authorizes_labeled_assumptions():
+    current = state(original_request="Build the external gear pump.",
+        clarified_request=("Build the external gear pump. User clarification: The housing footprint, "
+            "cover thicknesses, bolt and dowel positions, and exact O-ring size are not specified. "
+            "Do not present missing values as supplied facts: mark them as assumptions/unverified "
+            "or make explicit modeling assumptions and label them."))
+    answer = design.permitted_assumption_answer(current,
+        "Please provide the housing footprint, cover thicknesses, bolt locations and exact O-ring size.")
+    assert answer
+    assert "Do not ask again for supplied values" in answer
+
+
 def test_clarification_remains_available_without_user_assumption_permission():
     current = state(original_request="Design a mounting bracket.", clarified_request="Design a mounting bracket.")
     assert design.permitted_assumption_answer(current, "What is the mounting hole spacing?") is None

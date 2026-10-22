@@ -2668,6 +2668,8 @@ def permitted_assumption_answer(state: AgentState, question: str) -> str | None:
         "modeling assumption explicitly", "modeling assumptions explicitly",
         "state any necessary modeling assumption", "mark them unverified",
         "mark those unverified", "use explicit assumptions", "state assumptions explicitly",
+        "make explicit modeling assumption", "make explicit modeling assumptions",
+        "assumptions/unverified", "assumption/unverified",
     ))
     if not explicit_permission:
         return None
