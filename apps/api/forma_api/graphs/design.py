@@ -706,6 +706,7 @@ async def coordinator(state: AgentState) -> dict:
         "engineering_remarks": [], "engineering_assumptions": [],
         "requirements": merge_requirements(state["original_request"], []),
         "cad_edits_since_build": 0,
+        "cad_recovery_build_required": False,
         "cad_history": [{"role": "user", "content": state["original_request"]}],
         "review_history": [], "review": {},
         "review_repairs": 0, "review_actions": 0,
@@ -1780,8 +1781,9 @@ async def cad_session_turn(state: AgentState) -> dict:
     if not older_memory:
         tools=[item for item in tools if item['function']['name']!='read_working_memory']
         context['memoryAvailability']='All retained outcomes are already included in current working memory; there are no older outcomes to retrieve. Advance the task using the request and workspace.'
-    require_build_after_repair = bool(active_failure and edits_since_build > 0 and buildable
-                                      and not state.get("cad_contract_repair"))
+    require_build_after_repair = bool(active_failure and buildable
+        and (edits_since_build > 0 or state.get("cad_recovery_build_required"))
+        and not state.get("cad_contract_repair"))
     if require_build_after_repair:
         # A saved edit after a failed full build is not evidence of recovery.
         # Require the next decision to exercise the complete saved root before
@@ -2146,6 +2148,8 @@ async def cad_session_turn(state: AgentState) -> dict:
             "cad_contract_repair": {},
             "cad_patch_mismatch": {},
             "cad_edits_since_build": edits_since_build + 1,
+            "cad_recovery_build_required": bool(
+                active_failure_context(state, snapshot) or state.get("cad_recovery_build_required")),
             "last_read_path": None,
             "cad_history": bounded_history([*history, tool_message(call, result)]),
             "validation": {}, "build_result": {}}
@@ -2271,11 +2275,13 @@ async def cad_session_turn(state: AgentState) -> dict:
         # response forever.
         result = await build({**state, **usage, "phase": "build",
             "pending_cad_call": call, "cad_history": history,
-            "cad_edits_since_build": 0, "last_read_path": None,
+            "cad_edits_since_build": 0, "cad_recovery_build_required": False,
+            "last_read_path": None,
             "build_final": final_build, "requested_part_types": required_part_types or 0,
             "built_part_types": built_part_types})
         return {**result, **usage, "pending_cad_call": call,
             "cad_history": history, "cad_edits_since_build": 0,
+            "cad_recovery_build_required": False,
             "last_read_path": None}
     history = bounded_history([*history, tool_message(call, {
         "ok": False, "category": "unsupported_action", "message": f"Unsupported CAD action: {name}",
@@ -2400,6 +2406,7 @@ async def build(state: AgentState) -> dict:
         "pending_cad_call": state.get("pending_cad_call") or {},
         "cad_history": state.get("cad_history") or [],
         "cad_edits_since_build": state.get("cad_edits_since_build", 0),
+        "cad_recovery_build_required": False,
         "build_final": state.get("build_final", True),
         "requested_part_types": state.get("requested_part_types", 0),
         "built_part_types": state.get("built_part_types", 0)}
@@ -2645,11 +2652,10 @@ def active_failure_context(state: dict, snapshot: dict) -> dict | None:
 
 
 def failure_probe_key(failure: dict | None) -> str | None:
-    """Identify the failing file/component lineage without candidate line-number churn."""
-    if not failure or not failure.get("componentId") or not failure.get("file"):
+    """Allow one probe for a component until a complete assembly build passes."""
+    if not failure or not failure.get("componentId"):
         return None
-    path = str(failure["file"]).replace("\\", "/").lstrip("./").lower()
-    return digest({"componentId": failure["componentId"], "file": path})
+    return digest({"componentId": failure["componentId"]})
 
 
 def restrict_component_probe(tools: list[dict], component_id: str) -> list[dict]:
@@ -2781,6 +2787,7 @@ async def cad_replan(state: AgentState) -> dict:
     await repo.event(state["run_id"], "Forma is re-planning the failed step using saved source and failure evidence.", stage="cad")
     return {**update, "phase": "cad_session", "recovery_plan": {**plan, "candidateHash": digest(snapshot)},
             "repairs": 0, "cad_invalid_tool_attempts": 0, "cad_edits_since_build": 0,
+            "cad_recovery_build_required": False,
             "cad_contract_repair": {**repair, "stalledAttempts": 0} if repair else {},
             "pending_cad_call": {}, "last_read_path": None, "final_message": "",
             "cad_pending_actions": [],

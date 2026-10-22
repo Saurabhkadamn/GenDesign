@@ -940,6 +940,33 @@ async def test_assembly_build_failure_does_not_offer_isolated_component_probe(mo
 
 
 @pytest.mark.asyncio
+async def test_saved_repair_sets_durable_full_build_gate(monkeypatch, graph_mocks):
+    graph_mocks["candidate"] = design.Snapshot.model_validate({"manifest": {
+        "components": [{"id": "housing", "name": "Housing", "kind": "solid",
+            "source": "parts/housing.py"}], "rootComponentId": "housing"},
+        "files": {"parts/housing.py": "old source"}}).model_dump()
+    failure = {"category": "geometry", "file": "parts/housing.py", "line": 12,
+        "diagnostic": "boolean cut failed", "failureScope": "component", "componentId": "housing"}
+
+    async def turn(_state, **_kwargs):
+        call = {"id": "repair", "name": "apply_changes",
+                "input": {"files": {"parts/housing.py": "def build(parameters, dependencies): return None"}}}
+        message = {"role": "assistant", "content": "", "tool_calls": [{
+            "id": call["id"], "type": "function", "function": {
+                "name": call["name"], "arguments": json.dumps(call["input"])}}]}
+        return call, [message], {"model_calls": 1, "search_count": 0}
+
+    monkeypatch.setattr(design, "agent_tool_turn", turn)
+    result = await design.cad_session_turn(state(run_id="run", original_request="Create a housing.",
+        cad_last_build_failure=failure, cad_recovery_build_required=False,
+        cad_edits_since_build=0))
+
+    assert result["phase"] == "cad_session"
+    assert result["cad_edits_since_build"] == 1
+    assert result["cad_recovery_build_required"] is True
+
+
+@pytest.mark.asyncio
 async def test_active_build_failure_requires_full_build_after_saved_repair(monkeypatch, graph_mocks):
     graph_mocks["candidate"] = design.Snapshot.model_validate({"manifest": {
         "components": [
@@ -964,14 +991,16 @@ async def test_active_build_failure_requires_full_build_after_saved_repair(monke
         return chosen, [message], {"model_calls": 1, "search_count": 0}
 
     monkeypatch.setattr(design, "agent_tool_turn", turn)
-    current = state(run_id="run", cad_last_build_failure=failure, cad_edits_since_build=1)
+    # Keep an explicit gate even if a graph transition resets the edit counter.
+    current = state(run_id="run", cad_last_build_failure=failure, cad_edits_since_build=0,
+                    cad_recovery_build_required=True)
     rejected = await design.cad_session_turn(current)
 
     offered = captured["tools"]
     assert [tool["function"]["name"] for tool in offered] == ["build"]
     assert offered[0]["function"]["parameters"]["properties"]["final"]["enum"] == [True]
     assert "componentId" not in offered[0]["function"]["parameters"]["properties"]
-    assert captured["context"]["requiredBuildAfterRepair"]["editsSinceBuild"] == 1
+    assert captured["context"]["requiredBuildAfterRepair"]["editsSinceBuild"] == 0
     assert rejected["cad_history"][-1]["content"].find("active_failure_requires_build") >= 0
     assert rejected["cad_pending_actions"] == []
 
@@ -994,6 +1023,7 @@ async def test_active_build_failure_requires_full_build_after_saved_repair(monke
     assert accepted["phase"] == "validate"
     assert len(build_calls) == 1
     assert build_calls[0]["build_final"] is True
+    assert accepted["cad_recovery_build_required"] is False
 
 
 @pytest.mark.asyncio
@@ -1032,6 +1062,7 @@ async def test_component_probe_is_recorded_against_active_full_build_failure(mon
         [], "drive_gear")
 
     assert result["cad_component_probe_failures"] == [design.failure_probe_key(failure)]
+    assert design.failure_probe_key({**failure, "file": "assemblies/pump.py"}) == design.failure_probe_key(failure)
 
 
 @pytest.mark.asyncio

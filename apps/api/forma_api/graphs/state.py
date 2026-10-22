@@ -46,6 +46,7 @@ class AgentState(TypedDict, total=False):
     published_revision_id: str
     cad_history: list[dict[str, Any]]
     cad_edits_since_build: int
+    cad_recovery_build_required: bool
     cad_invalid_tool_attempts: int
     cad_contract_repair: dict[str, Any]
     cad_patch_mismatch: dict[str, Any]
