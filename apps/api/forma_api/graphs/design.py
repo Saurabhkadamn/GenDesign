@@ -1713,10 +1713,12 @@ async def cad_session_turn(state: AgentState) -> dict:
         context["activeFailure"]["toolPolicy"] = (
             "This failure remains active across source edits until a complete assembly build succeeds. "
             "Use test_component only for the named failing component when failureScope is component; "
-            "a component test cannot diagnose or clear an assembly-level failure. After two full builds repeat "
-            "the same failure, make a source change to its exact target before running another component probe.")
+            "a component test cannot diagnose or clear an assembly-level failure. Run at most one isolated "
+            "probe for this failing file/component while its full-build failure remains active; after that, edit "
+            "the exact target and rebuild the complete assembly. A passing part probe never clears the failure.")
         if (active_failure.get("failureScope") == "component" and active_failure.get("componentId")
-                and active_failure.get("repeatedCount", 0) < 2):
+                and active_failure.get("repeatedCount", 0) < 2
+                and failure_probe_key(active_failure) not in state.get("cad_component_probe_failures", [])):
             tools = restrict_component_probe(tools, active_failure["componentId"])
         else:
             tools = [tool for tool in tools if tool["function"]["name"] != "test_component"]
@@ -2142,9 +2144,12 @@ async def cad_session_turn(state: AgentState) -> dict:
         if name == "test_component" and failure and (
                 failure.get("failureScope") != "component"
                 or value["componentId"] != failure.get("componentId")
-                or failure.get("repeatedCount", 0) >= 2):
+                or failure.get("repeatedCount", 0) >= 2
+                or failure_probe_key(failure) in state.get("cad_component_probe_failures", [])):
             expected = failure.get("componentId")
-            scope_message = (f"The same full-build failure has repeated. Edit {failure.get('file') or expected} and rebuild before another component probe."
+            scope_message = (f"A component probe has already been used for this active full-build failure. Edit {failure.get('file') or expected} and rebuild the complete assembly before any further probe."
+                             if failure_probe_key(failure) in state.get("cad_component_probe_failures", []) else
+                             f"The same full-build failure has repeated. Edit {failure.get('file') or expected} and rebuild before another component probe."
                              if failure.get("repeatedCount", 0) >= 2 else
                              f"The current build failure targets component {expected}; test that component or repair the failed operation."
                              if expected else
@@ -2358,14 +2363,21 @@ async def probe_component(state: AgentState, snapshot: dict, call: dict, history
                     "ok": False, "category": "component_probe", "message": str(exc)})])}
     requirements = [item for item in state.get("requirements", [])
                     if item.get("componentId") == component_id and item.get("kind") != "assembly_preservation"]
+    active_failure = active_failure_context(state, snapshot)
+    probe_failure_key = (failure_probe_key(active_failure)
+                         if active_failure and active_failure.get("componentId") == component_id else None)
+    probe_failures = list(state.get("cad_component_probe_failures") or [])
+    if probe_failure_key:
+        probe_failures = list(dict.fromkeys([*probe_failures, probe_failure_key]))[-32:]
     expected = identity(scoped, requirements)
     probes = deepcopy(state.get("component_probes") or {})
     prior = probes.get(component_id) or {}
     if prior.get("identity") == expected:
         result = {**prior, "reused": True, "message": "This exact part source already has scoped evidence. Edit before retrying a failure. To complete the whole design, call build(final=true) without componentId; this test cannot publish."}
-        return observation_result(state, snapshot, {**call, "name": "test_component"}, {"componentId": component_id},
+        result_state = observation_result(state, snapshot, {**call, "name": "test_component"}, {"componentId": component_id},
             history, {"model_calls": state.get("model_calls", 0),
                       "cad_pending_actions": state.get("cad_pending_actions") or []}, result)
+        return {**result_state, **({"cad_component_probe_failures": probe_failures} if probe_failure_key else {})}
     run = await run_row(state)
     limits = (await app_settings()).limits
     cp = checkpoint_view(state, scoped)
@@ -2390,6 +2402,7 @@ async def probe_component(state: AgentState, snapshot: dict, call: dict, history
     # Do not sync this checkpoint's validation, requirements or failure identity
     # into the project. Keep only usage and the reusable execution environment.
     return {"phase": "cad_session", "component_probes": probes, "attempts": cp["attempts"],
+            **({"cad_component_probe_failures": probe_failures} if probe_failure_key else {}),
             "model_calls": state.get("model_calls", 0), "sandbox": cp.get("sandbox"),
             "sandbox_ready": cp.get("sandboxReady", False),
             "working_memory": record_observation(state, "component_probe", result, candidate=digest(snapshot)),
@@ -2413,10 +2426,17 @@ async def validate(state: AgentState) -> dict:
             signature = digest({"fingerprint": fingerprint, "category": failure.get("category"),
                 "file": failure.get("file"), "line": failure.get("line"),
                 "diagnostic": failure.get("diagnostic")})
-            repeated_count = (previous.get("repeatedCount", 0) + 1
-                if previous.get("signature") == signature else 1)
+            normalized_diagnostic = re.sub(r"\s+", " ", str(failure.get("diagnostic") or "").lower())
+            normalized_diagnostic = re.sub(r"\bline\s+\d+\b", "line #", normalized_diagnostic)
+            normalized_diagnostic = re.sub(r"(\.py['\"]?,?\s*line\s+)\d+", r"\1#", normalized_diagnostic)
+            repeat_signature = digest({"category": failure.get("category"), "file": failure.get("file"),
+                "diagnostic": normalized_diagnostic})
+            same_failure = (previous.get("repeatSignature") == repeat_signature
+                or not previous.get("repeatSignature") and previous.get("signature") == signature)
+            repeated_count = previous.get("repeatedCount", 0) + 1 if same_failure else 1
             failure = {**failure, "fingerprint": fingerprint, "signature": signature, "attempt": result.get("attempt"),
-                       "repeated": bool(result.get("repeated")), "repeatedCount": repeated_count,
+                       "repeatSignature": repeat_signature, "repeated": same_failure,
+                       "repeatedCount": repeated_count,
                        "candidateHashAtFailure": state.get("candidate_hash", "")}
         # Bound automatic repair, but retain the draft and a resumable graph.
         # A successfully validated milestone starts a new repair allowance.
@@ -2450,6 +2470,7 @@ async def validate(state: AgentState) -> dict:
         return {"phase": "cad_session", "cad_history": history, "repairs": 0,
             "working_memory": memory,
             "cad_last_build_failure": {},
+            "cad_component_probe_failures": [],
             "pending_cad_call": {},
             "last_milestone_hash": state.get("candidate_hash", "")}
     requested_components = requested_component_labels(state.get("original_request", ""))
@@ -2464,6 +2485,8 @@ async def validate(state: AgentState) -> dict:
             )}])
             return {"phase": "cad_session", "cad_history": history, "pending_cad_call": {},
                 "working_memory": memory,
+                "cad_last_build_failure": {},
+                "cad_component_probe_failures": [],
                 "last_milestone_hash": state.get("candidate_hash", "")}
     # Every final build gets a focused evidence review before draft publication.
     # This is a bounded quality pass, not a release gate: after at most two
@@ -2471,6 +2494,7 @@ async def validate(state: AgentState) -> dict:
     return {"phase": "review_session", "cad_history": history,
         "working_memory": memory,
         "cad_last_build_failure": {},
+        "cad_component_probe_failures": [],
         "pending_cad_call": {}, "review_history": [], "review_reads": 0,
         "review_inspected": False, "review_actions": 0, "review": state.get("review") or {},
         "review_repairs": state.get("review_repairs", 0)}
@@ -2566,6 +2590,14 @@ def active_failure_context(state: dict, snapshot: dict) -> dict | None:
                       if path and str(item.get("source") or "").replace("\\", "/").lstrip("./") == path), None)
     return {**failure, "failureScope": "component" if component and component.get("kind") != "assembly" else "assembly",
             "componentId": component.get("id") if component and component.get("kind") != "assembly" else None}
+
+
+def failure_probe_key(failure: dict | None) -> str | None:
+    """Identify the failing file/component lineage without candidate line-number churn."""
+    if not failure or not failure.get("componentId") or not failure.get("file"):
+        return None
+    path = str(failure["file"]).replace("\\", "/").lstrip("./").lower()
+    return digest({"componentId": failure["componentId"], "file": path})
 
 
 def restrict_component_probe(tools: list[dict], component_id: str) -> list[dict]:

@@ -894,12 +894,25 @@ async def test_full_build_failure_survives_source_edit_and_scopes_component_prob
     probe = next(tool for tool in captured["tools"] if tool["function"]["name"] == "test_component")
     assert probe["function"]["parameters"]["properties"]["componentId"]["enum"] == ["drive_gear"]
 
-    second = await design.validate({**after_edit, "build_result": failure})
+    repeated_failure_after_line_shift = {**failure, "error": {
+        **failure["error"], "fingerprint": "same-kernel-failure-after-edit",
+        "location": {"file": "parts/drive_gear.py", "line": 52},
+    }}
+    second = await design.validate({**after_edit, "build_result": repeated_failure_after_line_shift})
     assert second["cad_last_build_failure"]["repeatedCount"] == 2
+    assert second["cad_last_build_failure"]["repeated"] is True
     after_second_edit = {**after_edit, **second, "build_result": {}}
     captured.clear()
     await design.cad_session_turn(after_second_edit)
     assert captured["context"]["activeFailure"]["repeatedCount"] == 2
+    assert "test_component" not in {tool["function"]["name"] for tool in captured["tools"]}
+
+    # Even when a source edit produces a fresh error fingerprint, one focused
+    # probe is enough for this active failed file until a complete build passes.
+    after_first_probe = {**after_edit, "build_result": {},
+        "cad_component_probe_failures": [design.failure_probe_key(first["cad_last_build_failure"])]}
+    captured.clear()
+    await design.cad_session_turn(after_first_probe)
     assert "test_component" not in {tool["function"]["name"] for tool in captured["tools"]}
 
 
@@ -924,6 +937,44 @@ async def test_assembly_build_failure_does_not_offer_isolated_component_probe(mo
     await design.cad_session_turn({**state(run_id="run"), **stored, "build_result": {}})
     assert captured["context"]["activeFailure"]["failureScope"] == "assembly"
     assert "test_component" not in {tool["function"]["name"] for tool in captured["tools"]}
+
+
+@pytest.mark.asyncio
+async def test_component_probe_is_recorded_against_active_full_build_failure(monkeypatch):
+    snapshot = design.Snapshot.model_validate({"manifest": {
+        "components": [{"id": "drive_gear", "name": "Drive gear", "kind": "solid",
+            "source": "parts/drive_gear.py"}], "rootComponentId": "drive_gear"},
+        "files": {"parts/drive_gear.py": "def build(parameters, dependencies): return None"}}).model_dump()
+    failure = {"category": "geometry", "file": "parts/drive_gear.py", "line": 49,
+        "diagnostic": "No rear face selected", "failureScope": "component", "componentId": "drive_gear",
+        "repeatedCount": 1}
+
+    async def fake_run_row(_state):
+        return {"id": "00000000-0000-0000-0000-000000000001"}
+
+    async def fake_settings():
+        return type("Settings", (), {"limits": type("Limits", (), {"maxRepairs": 3})()})()
+
+    async def fake_build_candidate(_run, checkpoint, _limits, _key):
+        return {"ok": True, "attempts": checkpoint["attempts"], "sandboxReady": True}
+
+    async def fake_operation(_run, _key, _kind, execute, *, idempotent):
+        assert idempotent is True
+        return await execute()
+
+    async def fake_event(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(design, "run_row", fake_run_row)
+    monkeypatch.setattr(design, "app_settings", fake_settings)
+    monkeypatch.setattr(design, "build_candidate", fake_build_candidate)
+    monkeypatch.setattr(design, "operation", fake_operation)
+    monkeypatch.setattr(design.repo, "event", fake_event)
+    result = await design.probe_component(state(cad_last_build_failure=failure),
+        snapshot, {"id": "probe", "name": "test_component", "input": {"componentId": "drive_gear"}},
+        [], "drive_gear")
+
+    assert result["cad_component_probe_failures"] == [design.failure_probe_key(failure)]
 
 
 @pytest.mark.asyncio
