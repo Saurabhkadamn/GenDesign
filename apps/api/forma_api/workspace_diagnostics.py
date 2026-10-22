@@ -29,8 +29,9 @@ def workspace_contract_feedback(manifest: dict, files: dict, error: Exception) -
     if root and root not in definitions:
         add("unknown_root", "rootComponentId",
             f"Root {root} has no component definition.",
-            "Define the assembly component and its assemblies/ source in this edit. "
-            "For a single staged part, the root may name that existing part.")
+            "Set rootComponentId to an exact id in availableComponents. Prefer the unique kind=assembly "
+            "definition; do not invent an ID. For a genuinely single-part workspace, the root may name "
+            "that existing part.")
     instances = {item["id"]: item for item in manifest.get("instances", [])}
     for item in instances.values():
         if item["definitionId"] not in definitions:
@@ -98,6 +99,8 @@ def workspace_contract_feedback(manifest: dict, files: dict, error: Exception) -
                 item["msg"][:500], "Correct this field using the current workspace and tool schema.")
     return {"ok": False, "category": "workspace_contract",
             "message": "; ".join(messages)[:1500], "issues": issues[:40],
+            "availableComponents": [{"id": item["id"], "kind": item.get("kind"), "source": item.get("source")}
+                for item in sorted(definitions.values(), key=lambda value: value["id"])[:40]],
             "repairGuidance": "The entire edit was rejected; workspace and files are unchanged. "
             "Fix the listed blockers together in one coherent apply_changes action. Include real "
             "source for every new definition. Do not remove requested parts or motion to claim completion."}

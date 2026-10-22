@@ -940,6 +940,63 @@ async def test_assembly_build_failure_does_not_offer_isolated_component_probe(mo
 
 
 @pytest.mark.asyncio
+async def test_active_build_failure_requires_full_build_after_saved_repair(monkeypatch, graph_mocks):
+    graph_mocks["candidate"] = design.Snapshot.model_validate({"manifest": {
+        "components": [
+            {"id": "pump", "name": "Pump", "kind": "assembly", "source": "assemblies/pump.py",
+             "dependencies": ["housing"]},
+            {"id": "housing", "name": "Housing", "kind": "solid", "source": "parts/housing.py"}],
+        "rootComponentId": "pump"},
+        "files": {"assemblies/pump.py": "def build(parameters, dependencies): return None",
+                  "parts/housing.py": "def build(parameters, dependencies): return None"}}).model_dump()
+    failure = {"ok": False, "error": {"category": "assembly_constraint",
+        "location": {"file": "assemblies/pump.py", "line": 80}, "diagnostic": "Mate solve failed"},
+        "failureScope": "assembly", "file": "assemblies/pump.py"}
+    captured = {}
+    chosen = {"id": "premature-read", "name": "read_file", "input": {"path": "assemblies/pump.py"},
+              "queued_calls": [{"id": "followup-edit", "name": "apply_changes"}]}
+
+    async def turn(_state, **kwargs):
+        captured.update(kwargs)
+        message = {"role": "assistant", "content": "", "tool_calls": [{
+            "id": chosen["id"], "type": "function", "function": {
+                "name": chosen["name"], "arguments": json.dumps(chosen["input"])}}]}
+        return chosen, [message], {"model_calls": 1, "search_count": 0}
+
+    monkeypatch.setattr(design, "agent_tool_turn", turn)
+    current = state(run_id="run", cad_last_build_failure=failure, cad_edits_since_build=1)
+    rejected = await design.cad_session_turn(current)
+
+    offered = captured["tools"]
+    assert [tool["function"]["name"] for tool in offered] == ["build"]
+    assert offered[0]["function"]["parameters"]["properties"]["final"]["enum"] == [True]
+    assert "componentId" not in offered[0]["function"]["parameters"]["properties"]
+    assert captured["context"]["requiredBuildAfterRepair"]["editsSinceBuild"] == 1
+    assert rejected["cad_history"][-1]["content"].find("active_failure_requires_build") >= 0
+    assert rejected["cad_pending_actions"] == []
+
+    build_calls = []
+
+    async def build(build_state):
+        build_calls.append(build_state)
+        return {"phase": "validate", "build_result": {"ok": True}}
+
+    monkeypatch.setattr(design, "build", build)
+    chosen.update({"id": "scoped-build", "name": "build",
+                   "input": {"final": True, "componentId": "housing"}})
+    scoped = await design.cad_session_turn(current)
+    assert scoped["phase"] == "cad_session"
+    assert len(build_calls) == 0
+    assert "active_failure_requires_build" in scoped["cad_history"][-1]["content"]
+
+    chosen.update({"id": "required-build", "name": "build", "input": {"final": True}})
+    accepted = await design.cad_session_turn(current)
+    assert accepted["phase"] == "validate"
+    assert len(build_calls) == 1
+    assert build_calls[0]["build_final"] is True
+
+
+@pytest.mark.asyncio
 async def test_component_probe_is_recorded_against_active_full_build_failure(monkeypatch):
     snapshot = design.Snapshot.model_validate({"manifest": {
         "components": [{"id": "drive_gear", "name": "Drive gear", "kind": "solid",

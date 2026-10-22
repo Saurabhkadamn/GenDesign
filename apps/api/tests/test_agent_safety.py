@@ -366,6 +366,26 @@ def test_cad_flattens_invalid_model_parent_edges_without_losing_instances():
     assert normalized["instances"][1]["parentId"] == "base"
 
 
+def test_cad_repairs_root_to_the_unique_assembly_definition():
+    from forma_api.graphs.design import normalize_instance_hierarchy
+
+    manifest = {"components": [
+        {"id": "housing", "kind": "solid", "source": "parts/housing.py"},
+        {"id": "gear_pump_assembly", "kind": "assembly", "source": "assemblies/pump.py"}],
+        "rootComponentId": "pump"}
+    normalized, changed = normalize_instance_hierarchy(manifest)
+    assert changed is True
+    assert normalized["rootComponentId"] == "gear_pump_assembly"
+
+    ambiguous = {"components": [
+        {"id": "pump_a", "kind": "assembly", "source": "assemblies/pump_a.py"},
+        {"id": "pump_b", "kind": "assembly", "source": "assemblies/pump_b.py"}],
+        "rootComponentId": "pump"}
+    unchanged, changed = normalize_instance_hierarchy(ambiguous)
+    assert changed is False
+    assert unchanged["rootComponentId"] == "pump"
+
+
 def test_triage_preserves_requested_sub_hundredth_dimension_tolerance():
     from forma_api.graphs.design import TriageRequirement, normalize_triage_requirements
 

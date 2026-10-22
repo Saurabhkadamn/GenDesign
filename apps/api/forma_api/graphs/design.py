@@ -1288,9 +1288,18 @@ def normalize_instance_hierarchy(manifest: dict) -> tuple[dict, bool]:
         return value
 
     payload = unwrap_item(json.loads(json.dumps(manifest)))
+    changed = False
+    components = payload.get("components") or []
+    assemblies = [item for item in components
+                  if isinstance(item, dict) and item.get("kind") == "assembly"]
+    # If the candidate has one unambiguous assembly definition, it is the only
+    # safe root for the complete workspace. Correct a stale/guessed root ID at
+    # the manifest boundary instead of rejecting an otherwise coherent edit.
+    if len(assemblies) == 1 and payload.get("rootComponentId") != assemblies[0].get("id"):
+        payload["rootComponentId"] = assemblies[0].get("id")
+        changed = True
     instances = payload.get("instances", [])
     ids = {item.get("id") for item in instances}
-    changed = False
     for item in instances:
         parent = item.get("parentId")
         if parent is not None and (parent not in ids or parent == item.get("id")):
@@ -1771,7 +1780,31 @@ async def cad_session_turn(state: AgentState) -> dict:
     if not older_memory:
         tools=[item for item in tools if item['function']['name']!='read_working_memory']
         context['memoryAvailability']='All retained outcomes are already included in current working memory; there are no older outcomes to retrieve. Advance the task using the request and workspace.'
-    pending_actions = state.get("cad_pending_actions") or []
+    require_build_after_repair = bool(active_failure and edits_since_build > 0 and buildable
+                                      and not state.get("cad_contract_repair"))
+    if require_build_after_repair:
+        # A saved edit after a failed full build is not evidence of recovery.
+        # Require the next decision to exercise the complete saved root before
+        # allowing more edits, reads, or part-only tests. This also bounds
+        # queued provider actions, which are checked again in cad_session.
+        tools = [item for item in tools if item["function"]["name"] == "build"]
+        for item in tools:
+            properties = item["function"].get("parameters", {}).get("properties", {})
+            properties.pop("componentId", None)
+            final = properties.get("final")
+            if final is not None:
+                final["enum"] = [True]
+                final["description"] = (
+                    "Must be true while recovering a failed full assembly build. "
+                    "The backend will still treat an incomplete candidate as an intermediate milestone.")
+        context["requiredBuildAfterRepair"] = {
+            "instruction": ("A source edit has been saved since the active full-assembly failure. "
+                "Rebuild the complete saved root now with build(final=true). Do not inspect, edit, "
+                "probe a component, or request more analysis before this build."),
+            "editsSinceBuild": edits_since_build,
+            "activeFailure": active_failure,
+        }
+    pending_actions = [] if require_build_after_repair else (state.get("cad_pending_actions") or [])
     if pending_actions:
         queued = pending_actions[0]
         call = deepcopy(queued["call"])
@@ -1785,6 +1818,13 @@ async def cad_session_turn(state: AgentState) -> dict:
             state, model_role="cad", prompt_role="cad", node="cad-session",
             context=context, history=history, tools=tools,
         )
+    if require_build_after_repair:
+        # Discard any earlier queued reads/edits and any extra provider actions:
+        # only the full-root build is valid in this recovery step.
+        usage["cad_pending_actions"] = []
+        if call:
+            call.pop("queued_calls", None)
+            call.pop("deferred_calls", None)
     if not call:
         invalid_attempts = state.get("cad_invalid_tool_attempts", 0) + 1
         history = bounded_history([*history, {"role": "user", "content":
@@ -1802,6 +1842,18 @@ async def cad_session_turn(state: AgentState) -> dict:
                     "message": "Repair the rejected edit before building or completing the design."}
         return {**usage, "phase": "cad_session", "cad_history": bounded_history([
             *history, tool_message(call, feedback)])}
+    if require_build_after_repair and (call["name"] != "build" or
+                                       not isinstance(call.get("input"), dict) or
+                                       call["input"].get("final", True) is not True or
+                                       call["input"].get("componentId") is not None):
+        return {**usage, "phase": "cad_session", "cad_history": bounded_history([
+            *history, tool_message(call, {
+                "ok": False, "category": "active_failure_requires_build",
+                "message": ("A focused source edit was saved for the active full-assembly failure. "
+                    "The complete candidate must be rebuilt before any further observation or edits."),
+                "repairGuidance": "Call build({final:true}) without componentId. The backend will downgrade an incomplete candidate to an intermediate milestone.",
+                "activeFailure": active_failure,
+            })])}
     if (note_cooldown and call['name']=='update_working_notes') or (not older_memory and call['name']=='read_working_memory'):
         invalid_attempts=state.get('cad_invalid_tool_attempts',0)+1
         note_action=call['name']=='update_working_notes'

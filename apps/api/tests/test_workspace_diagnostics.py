@@ -36,6 +36,11 @@ def test_rejected_pump_exposes_related_blockers_without_private_source():
     result = feedback(manifest, files)
     assert {item["code"] for item in result["issues"]} == {
         "unknown_root", "invalid_ground", "invalid_motion_joint", "motion_dof"}
+    assert result["availableComponents"] == [
+        {"id": "cover", "kind": "solid", "source": "parts/cover.py"},
+        {"id": "housing", "kind": "solid", "source": "parts/housing.py"},
+    ]
+    assert "exact id in availableComponents" in result["issues"][0]["repair"]
     assert "PRIVATE_SOURCE_MARKER" not in json.dumps(result)
     assert "SECRET_SOURCE" not in json.dumps(result)
     assert manifest == original
