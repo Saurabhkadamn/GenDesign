@@ -851,6 +851,17 @@ async def coordinator_session(state: AgentState) -> dict:
     elif name == "inspect_geometry":
         result = state.get("validation") or (project_context.get("revision") or {})
     elif name == "ask_user":
+        assumption_answer = permitted_assumption_answer(state, value["question"])
+        if assumption_answer:
+            history = bounded_history([*history, tool_message(call, {
+                "answered": True, "resolvedFromUserInstructions": True,
+                "message": assumption_answer,
+            })])
+            await repo.event(state["run_id"],
+                "Coordinator avoided a redundant clarification because the user authorized labeled assumptions.",
+                kind="validation", stage="coordination")
+            return {**update, "phase": "coordinator_session", "question": "",
+                "coordinator_pending_call": {}, "coordinator_history": history}
         return {**update, "phase": "coordinator_question", "question": value["question"],
             "coordinator_pending_call": call}
     elif name == "delegate":
@@ -864,8 +875,13 @@ async def coordinator_session(state: AgentState) -> dict:
                 "requirements": requirements}
         task = value["task"]
         history_request = {
-            "originalBrief": next((m["content"] for m in state.get("project_context", {}).get("previousMessages", [])
-                if m.get("role") == "user"), state["original_request"]),
+            "originalBrief": ((state.get("project_context", {}).get("authoritativeInputs") or {}).get("originalBrief")
+                or next((m["content"] for m in state.get("project_context", {}).get("previousMessages", [])
+                    if m.get("role") == "user"), state["original_request"])),
+            "humanCorrections": (state.get("project_context", {}).get("authoritativeInputs") or {}).get(
+                "humanCorrections", []),
+            "authoritativeInputInstruction": (state.get("project_context", {}).get("authoritativeInputs") or {}).get(
+                "instruction", "Treat the original brief and human follow-ups as authoritative."),
             "latestRequest": state.get("clarified_request") or state["original_request"],
             "delegatedTask": task,
             "selectedIds": state.get("selected_ids", []),
@@ -2235,6 +2251,17 @@ async def cad_session_turn(state: AgentState) -> dict:
             })])
             return {**usage, "phase": "cad_session", "question": "",
                 "pending_cad_call": {}, "cad_history": history}
+        assumption_answer = permitted_assumption_answer(state, question)
+        if assumption_answer:
+            history = bounded_history([*history, tool_message(call, {
+                "answered": True, "resolvedFromUserInstructions": True,
+                "message": assumption_answer,
+            })])
+            await repo.event(state["run_id"],
+                "CAD avoided a redundant clarification because the user authorized labeled assumptions.",
+                kind="validation", stage="cad")
+            return {**usage, "phase": "cad_session", "question": "",
+                "pending_cad_call": {}, "cad_history": history}
         return {**usage, "phase": "cad_question", "question": value["question"],
             "pending_cad_call": call, "last_read_path": None, "cad_history": history}
     if name == "test_component" or name == "build" and value.get("componentId"):
@@ -2619,6 +2646,38 @@ def human_followups(state: AgentState) -> list[dict]:
         return updates
     clarified = state.get("clarified_request")
     return [{"kind": "legacy_clarification", "message": clarified}] if clarified and clarified != state.get("original_request") else []
+
+
+def permitted_assumption_answer(state: AgentState, question: str) -> str | None:
+    """Resolve a pause when the user has already authorized explicit assumptions.
+
+    This keeps genuinely blocking decisions available to the user while
+    preventing an agent from repeatedly pausing on unspecified details that
+    the user has explicitly allowed it to label as assumptions/unverified.
+    """
+    project_inputs = (state.get("project_context") or {}).get("authoritativeInputs") or {}
+    corpus = "\n".join([
+        str(state.get("original_request") or ""),
+        str(state.get("clarified_request") or ""),
+        "\n".join(str(item.get("message") or "") for item in human_followups(state)),
+        str(project_inputs.get("originalBrief") or ""),
+        "\n".join(str(item) for item in project_inputs.get("humanCorrections", [])),
+    ]).lower()
+    normalized = re.sub(r"\s+", " ", corpus)
+    explicit_permission = any(phrase in normalized for phrase in (
+        "modeling assumption explicitly", "modeling assumptions explicitly",
+        "state any necessary modeling assumption", "mark them unverified",
+        "mark those unverified", "use explicit assumptions", "state assumptions explicitly",
+    ))
+    if not explicit_permission:
+        return None
+    return (
+        "The user has already authorized progress with explicitly labeled modeling assumptions or "
+        "unverified items. Use every value in authoritativeInputs.originalBrief and apply its human "
+        "corrections in order. Do not ask again for supplied values. Keep genuinely unspecified "
+        "geometry and checks labeled as assumptions/unverified, then continue with the requested CAD action. "
+        f"Your question was: {str(question or '').strip()}"
+    )
 
 
 def current_candidate_facts(snapshot: dict) -> dict:

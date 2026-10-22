@@ -35,6 +35,8 @@ async def test_context_keeps_first_brief_latest_turns_and_revision_evidence(monk
     monkeypatch.setattr(projects.db, "one", one)
     result = await projects.agent_context("project", "owner", "current", "r1", ["outer_race"])
     assert result["previousMessages"][0]["content"] == "Original bearing design brief"
+    assert result["authoritativeInputs"]["originalBrief"] == "Original bearing design brief"
+    assert result["authoritativeInputs"]["humanCorrections"] == ["Use eight balls."]
     assert all(message["content"] != "Change the groove" for message in result["previousMessages"])
     assert result["revision"]["allRequirementsVerified"] is False
     assert result["selectedIds"] == ["outer_race"]

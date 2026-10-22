@@ -78,6 +78,19 @@ async def agent_context(project_id: str, owner_id: str, run_id: str,
     recent = previous[-12:]
     if first_brief and first_brief not in recent:
         recent = [first_brief, *recent]
+    # Keep the initial specification and later human decisions in explicit,
+    # stable fields. A rolling dialogue is useful history, but it is too easy
+    # for a delegated agent to miss the authoritative brief among repeated
+    # retries and copied prompts.
+    user_messages = [row for row in previous if row.get("role") == "user"]
+    original_brief = first_brief.get("content", "") if first_brief else ""
+    human_corrections = []
+    seen_user_content = {original_brief} if original_brief else set()
+    for row in user_messages:
+        content = str(row.get("content", ""))
+        if content and content not in seen_user_content:
+            seen_user_content.add(content)
+            human_corrections.append(content[:12000])
     revision = (await db.one("revisions", {"id": f"eq.{revision_id}",
         "project_id": f"eq.{project_id}"}, required=False)) if revision_id else None
     prior_runs = [row for row in run_rows if row["id"] != run_id]
@@ -90,6 +103,13 @@ async def agent_context(project_id: str, owner_id: str, run_id: str,
     # conversational answer; the candidate snapshot remains available to tools.
     return sanitize({
         "project": {"id": project_id, "name": project.get("name")},
+        "authoritativeInputs": {
+            "originalBrief": original_brief[:12000],
+            "humanCorrections": human_corrections[-8:],
+            "instruction": ("Treat originalBrief as the original design specification and apply humanCorrections "
+                "in order. Do not ask again for supplied values. If a human explicitly permits assumptions or "
+                "unverified items, proceed with a labeled draft rather than pausing for those items."),
+        },
         "previousMessages": [{"role": row["role"], "content": row["content"][:12000]}
                              for row in recent],
         "revision": ({"id": revision["id"], "summary": revision.get("summary"),

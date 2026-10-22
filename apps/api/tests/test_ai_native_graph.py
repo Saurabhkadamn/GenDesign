@@ -1860,6 +1860,47 @@ async def test_resumed_cad_answer_is_presented_as_user_input(monkeypatch, graph_
     await design.cad_session({**initial, **resumed})
 
 
+def test_explicit_assumption_permission_turns_clarification_into_actionable_guidance():
+    current = state(original_request="Design the housing and gears.",
+        clarified_request=("Design the housing and gears.\n\nUser clarification: "
+            "Mark unspecified dimensions unverified or state any necessary modeling assumption explicitly."),
+        project_context={"authoritativeInputs": {"originalBrief": "Use a 34 mm center distance.",
+            "humanCorrections": []}})
+    answer = design.permitted_assumption_answer(current, "What is the cover thickness and bolt spacing?")
+    assert answer
+    assert "Do not ask again for supplied values" in answer
+    assert "labeled as assumptions/unverified" in answer
+
+
+def test_clarification_remains_available_without_user_assumption_permission():
+    current = state(original_request="Design a mounting bracket.", clarified_request="Design a mounting bracket.")
+    assert design.permitted_assumption_answer(current, "What is the mounting hole spacing?") is None
+
+
+@pytest.mark.asyncio
+async def test_coordinator_does_not_pause_after_user_authorized_assumptions(monkeypatch, graph_mocks):
+    arguments = {"question": "What are the housing footprint and cover thicknesses?"}
+
+    async def turn(_config, _messages, _tools, **_kwargs):
+        return {"message": {"role": "assistant", "content": "", "tool_calls": [{
+            "id": "question", "type": "function", "function": {
+                "name": "ask_user", "arguments": json.dumps(arguments)}}]},
+            "calls": [{"id": "question", "name": "ask_user", "input": arguments}],
+            "inputTokens": 1, "outputTokens": 1, "webSearchRequests": 0}
+
+    monkeypatch.setattr(design.models, "turn", turn)
+    current = state(original_request="Build an external gear pump.",
+        clarified_request=("Build an external gear pump. User clarification: Mark missing dimensions "
+            "unverified or state any necessary modeling assumption explicitly."),
+        project_context={"revision": None, "recentRevisions": [], "previousMessages": [],
+            "authoritativeInputs": {"originalBrief": "Gear module 2.0 mm.", "humanCorrections": []}})
+    result = await design.coordinator_session(current)
+    assert result["phase"] == "coordinator_session"
+    feedback = json.loads(result["coordinator_history"][-1]["content"])
+    assert feedback["resolvedFromUserInstructions"] is True
+    assert "Do not ask again for supplied values" in feedback["message"]
+
+
 @pytest.mark.asyncio
 async def test_source_signature_regression_is_atomic_and_repair_survives_history_loss(monkeypatch, graph_mocks):
     original = design.Snapshot.model_validate({"manifest": {"components": [
