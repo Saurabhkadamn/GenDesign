@@ -1633,6 +1633,54 @@ async def test_coordinator_inspection_cache_survives_history_loss_and_context_ch
 
 
 @pytest.mark.asyncio
+async def test_coordinator_does_not_offer_revision_restore_for_an_empty_project(monkeypatch, graph_mocks):
+    observed = {}
+    arguments = {"role": "cad", "task": "Build the requested assembly.", "requirements": []}
+
+    async def turn(_config, messages, tools, **_kwargs):
+        observed["context"] = json.loads(messages[1]["content"].split(": ", 1)[1])
+        observed["tools"] = {item["function"]["name"] for item in tools}
+        return {"message": {"role": "assistant", "content": "", "tool_calls": [{
+            "id": "delegate", "type": "function", "function": {
+                "name": "delegate", "arguments": json.dumps(arguments)}}]},
+            "calls": [{"id": "delegate", "name": "delegate", "input": deepcopy(arguments)}],
+            "inputTokens": 10, "outputTokens": 20, "webSearchRequests": 0}
+
+    monkeypatch.setattr(design.models, "turn", turn)
+    result = await design.coordinator_session(state(project_context={
+        "revision": None, "recentRevisions": [], "previousMessages": []}))
+
+    assert "restore_revision" not in observed["tools"]
+    assert observed["context"]["restorableRevisionIds"] == []
+    assert result["phase"] == "cad_session"
+
+    await design.coordinator_session(state(project_context={"revision": None,
+        "recentRevisions": [{"id": "existing-revision", "ordinal": 1}], "previousMessages": []}))
+    assert "restore_revision" in observed["tools"]
+    assert observed["context"]["restorableRevisionIds"] == ["existing-revision"]
+
+
+@pytest.mark.asyncio
+async def test_invalid_revision_restore_returns_feedback_without_pausing(monkeypatch, graph_mocks):
+    arguments = {"summary": "Restore previous assembly", "revisionId": "not-a-uuid"}
+
+    async def turn(_config, _messages, _tools, **_kwargs):
+        return {"message": {"role": "assistant", "content": "", "tool_calls": [{
+            "id": "restore", "type": "function", "function": {
+                "name": "restore_revision", "arguments": json.dumps(arguments)}}]},
+            "calls": [{"id": "restore", "name": "restore_revision", "input": arguments}],
+            "inputTokens": 10, "outputTokens": 20, "webSearchRequests": 0}
+
+    monkeypatch.setattr(design.models, "turn", turn)
+    result = await design.coordinator_session(state(project_context={"revision": None,
+        "recentRevisions": [{"id": "existing-revision", "ordinal": 1}], "previousMessages": []}))
+
+    assert result["phase"] == "coordinator_session"
+    assert result["coordinator_contract_repair"]["category"] == "unknown_revision"
+    assert result["coordinator_contract_repair"]["availableRevisionIds"] == ["existing-revision"]
+
+
+@pytest.mark.asyncio
 async def test_coordinator_repairs_single_dimension_without_inventing_axes(monkeypatch, graph_mocks):
     arguments = {"role": "cad", "task": "Build the requested pump.", "requirements": [{
         "id": "spacing", "description": "Shaft centre separation 34 mm", "kind": "dimensions",

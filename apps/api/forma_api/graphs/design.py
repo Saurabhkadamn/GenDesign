@@ -752,7 +752,17 @@ async def coordinator_session(state: AgentState) -> dict:
             "This exact project context was already inspected. Its result and current workspace "
             "are supplied above. Choose the next action; repeating inspect_project adds no evidence.")
     allowed = {"inspect_project", "read_file", "search_files", "inspect_geometry", "finish"} \
-        if state.get("published_revision_id") else COORDINATOR_SESSION_TOOL_NAMES
+        if state.get("published_revision_id") else set(COORDINATOR_SESSION_TOOL_NAMES)
+    revision_ids = {item.get("id") for item in project_context.get("recentRevisions", [])
+                    if isinstance(item, dict) and isinstance(item.get("id"), str)}
+    if isinstance(prior_revision.get("id"), str):
+        revision_ids.add(prior_revision["id"])
+    if not revision_ids:
+        # Never offer a restore action in a new/empty project. The model has
+        # otherwise invented revision IDs, which caused a 404 to escape the
+        # coordinator tool loop and pause the whole workflow before CAD began.
+        allowed.discard("restore_revision")
+    context["restorableRevisionIds"] = sorted(revision_ids)
     if not snapshot["files"]:
         allowed = allowed - {"read_file", "search_files"}
     if not state.get("validation") and not project_context.get("revision"):
@@ -867,8 +877,26 @@ async def coordinator_session(state: AgentState) -> dict:
             "requirements": requirements, "coordinator_pending_call": call,
             "cad_history": [{"role": "user", "content": json.dumps(history_request, ensure_ascii=False)}]}
     elif name == "restore_revision":
-        revision = await db.one("revisions", {"id": f"eq.{repo.identifier(value['revisionId'])}",
-            "project_id": f"eq.{state['project_id']}"})
+        try:
+            requested_revision_id = str(UUID(value["revisionId"]))
+        except (AttributeError, TypeError, ValueError):
+            requested_revision_id = None
+        revision = (await db.one("revisions", {"id": f"eq.{requested_revision_id}",
+            "project_id": f"eq.{state['project_id']}"}, required=False)
+            if requested_revision_id else None)
+        if revision is None:
+            available = sorted({item.get("id") for item in project_context.get("recentRevisions", [])
+                                if isinstance(item, dict) and isinstance(item.get("id"), str)})
+            feedback = {"ok": False, "category": "unknown_revision",
+                "message": "That revision does not exist in this project, so nothing was restored.",
+                "availableRevisionIds": available,
+                "repairGuidance": ("Use only an exact availableRevisionIds value from the inspected project. "
+                    "If the list is empty, continue from the current workspace and delegate the requested CAD work; "
+                    "do not invent a revision ID.")}
+            await repo.event(state["run_id"], "Coordinator restore request rejected: revision is not in this project.",
+                kind="validation", stage="coordination")
+            return {**update, "coordinator_contract_repair": feedback,
+                "coordinator_history": bounded_history([*history, tool_message(call, feedback)])}
         restored = await repo.load_snapshot(revision["id"])
         restored_hash = digest(restored)
         await run_service.save_candidate(state["run_id"], restored, restored_hash)
