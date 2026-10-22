@@ -1511,11 +1511,16 @@ def staged_component_count(manifest: dict) -> int:
 
 
 def register_unlisted_part_sources(manifest: dict, files: dict[str, str]) -> tuple[dict, list[str]]:
-    """Register a new buildable part file when an edit omits its manifest entry.
+    """Register unambiguous buildable sources when an edit omits their entries.
 
-    A source file with a top-level build function is an unambiguous component
-    definition. This does not invent instances, placements, mates, or an
-    assembly root; the CAD agent still owns those design decisions.
+    A part is registered only from its exact parts/<id>.py path. An assembly is
+    registered only when its source path exactly matches the requested root ID
+    (assemblies/<rootComponentId>.py). This repairs the common atomic-edit
+    omission where the agent submits the assembly source, root ID, and root
+    occurrence together but forgets the assembly component entry. It does not
+    infer placements, mates, or an assembly root. The assembly can depend on
+    the already declared physical definitions; its source still determines
+    which of those dependencies are used.
     """
     manifest = deepcopy(manifest)
     components = manifest.setdefault("components", [])
@@ -1524,6 +1529,13 @@ def register_unlisted_part_sources(manifest: dict, files: dict[str, str]) -> tup
     added = []
     for path, source in sorted(files.items()):
         match = re.fullmatch(r"parts/([a-zA-Z][a-zA-Z0-9_-]{0,63})\.py", path)
+        kind = "solid"
+        if not match:
+            root_id = manifest.get("rootComponentId")
+            if not isinstance(root_id, str) or path != f"assemblies/{root_id}.py":
+                continue
+            match = re.fullmatch(r"assemblies/([a-zA-Z][a-zA-Z0-9_-]{0,63})\.py", path)
+            kind = "assembly"
         if not match or path in known_sources or match.group(1) in known_ids:
             continue
         try:
@@ -1536,7 +1548,9 @@ def register_unlisted_part_sources(manifest: dict, files: dict[str, str]) -> tup
         component_id = match.group(1)
         components.append({
             "id": component_id, "name": component_id.replace("_", " ").title(),
-            "source": path, "kind": "solid", "dependencies": [],
+            "source": path, "kind": kind,
+            "dependencies": ([item["id"] for item in components if item.get("kind") != "assembly"]
+                             if kind == "assembly" else []),
             "parameters": {}, "color": "#b9c4ad",
         })
         known_sources.add(path)

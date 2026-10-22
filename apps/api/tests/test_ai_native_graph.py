@@ -1432,6 +1432,37 @@ def test_auto_registration_skips_helpers_without_build_and_existing_components()
     assert len(manifest["components"]) == 1
 
 
+def test_auto_registration_repairs_matching_omitted_assembly_root_definition():
+    manifest = {"components": [{"id": "housing", "name": "Housing",
+        "source": "parts/housing.py", "kind": "solid", "dependencies": [],
+        "parameters": {}, "color": "#b9c4ad"}],
+        "instances": [{"id": "external_gear_pump", "definitionId": "external_gear_pump",
+            "name": "External Gear Pump", "frame": {"position": [0, 0, 0],
+            "rotation": [0, 0, 0]}}], "rootComponentId": "external_gear_pump"}
+    files = {"parts/housing.py": "def build(parameters, dependencies):\n    return None",
+        "assemblies/external_gear_pump.py":
+            "def build(parameters, dependencies):\n    return dependencies['housing']"}
+
+    updated, added = design.register_unlisted_part_sources(manifest, files)
+    candidate = design.Snapshot.model_validate({"manifest": updated, "files": files})
+
+    assert added == ["external_gear_pump"]
+    root = next(item for item in candidate.manifest.components
+                if item.id == "external_gear_pump")
+    assert root.kind == "assembly"
+    assert root.source == "assemblies/external_gear_pump.py"
+    assert root.dependencies == ["housing"]
+    assert candidate.manifest.instances[0].definitionId == root.id
+
+
+def test_auto_registration_does_not_infer_unmatched_assembly_root():
+    manifest = {"components": [], "rootComponentId": "pump"}
+    updated, added = design.register_unlisted_part_sources(manifest, {
+        "assemblies/other.py": "def build(parameters, dependencies):\n    return None"})
+    assert added == []
+    assert updated["components"] == []
+
+
 @pytest.mark.asyncio
 async def test_cad_session_stops_repeated_text_instead_of_tool_call(monkeypatch, graph_mocks):
     async def turn(*_args, **_kwargs):
