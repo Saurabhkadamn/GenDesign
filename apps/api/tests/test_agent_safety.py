@@ -684,6 +684,20 @@ def test_openrouter_recovers_only_one_missing_outer_tool_list_bracket():
     assert _recover_text_tool_call('[[{"name":"build","parameters":{', tools) is None
 
 
+def test_malformed_tool_protocol_is_safe_and_repairable():
+    from forma_api.providers import openrouter
+
+    result = openrouter._tool_protocol_retry_result({
+        "choices": [{"message": {"content": "private malformed output"}}],
+        "usage": {"prompt_tokens": 23, "completion_tokens": 4},
+    })
+
+    assert result["calls"] == []
+    assert result["inputTokens"] == 23
+    assert "valid tool action" in result["message"]["content"]
+    assert "private malformed output" not in result["message"]["content"]
+
+
 def test_read_file_rejects_empty_and_outside_workspace_paths_at_contract_boundary():
     from pydantic import ValidationError
     from forma_api.tools import parse_tool

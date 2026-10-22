@@ -2,6 +2,12 @@
 
 Goal: qualify native assembly technology, integrate assembly and deterministic BOM end to end, strengthen engineering reliability, verify local and hosted workflows, push reviewed source and publish the verified release.
 
+## Active continuation — 2026-10-22
+
+The current production pump test is project `580c70cd-973e-4f79-8540-625a052725b1`. It has no saved components, revision, or artifacts. Its latest run `a8e72a2e-fd48-4056-a29c-3a36d61d6f3e` paused after the provider returned a malformed CAD tool payload; Forma executed no action. The production alias currently resolves to ready deployment `dpl_BDAWUdxc77jbBVfUocKuBwU12DnA`.
+
+Root cause in the harness: both provider adapters converted malformed tool arguments into a terminal `ModelFailure`, bypassing the graph's bounded no-tool-call correction path. A local source fix now returns a safe, empty tool result with a short retry instruction, while dropping malformed provider text. Focused safety tests pass (**2 passed**) and the changed Python modules compile. The broader API suite and hosted workflow have not yet been verified against this fix. Next: deploy a preview, resume the same saved project/run, require one complete root build after the source repair, and inspect generated evidence before any production promotion. No pump geometry or engineering requirements are yet verified.
+
 ## Current release — 2026-10-04 UTC
 
 The verified production candidate `dpl_5vYmF2sj2u45z8c168u7AMCdttV7`, source `7cc3b27fdb4fa7dd16809a33445a458ba45d96dd`, has been promoted to https://forma-cad-eosin.vercel.app. Production project settings were updated together to the qualified runtime `forma-b62c5048f2ceea82` / snapshot `snap_iKa7XXTQI3tq44gHu5TiEvUGsIj5`. The settings are sensitive and cannot be pulled back; both CLI updates succeeded. Original immutable deployment `dpl_E7ESYfMkaDXaDFTtU73LDv6E6tPP` is preserved for rollback. Stable URL checks and exact source integration into main remain the final gates at this checkpoint.

@@ -66,6 +66,26 @@ def _recover_text_tool_call(content, tools):
             "name": name, "arguments": json.dumps(arguments, ensure_ascii=False)}}}
 
 
+def _tool_protocol_retry_result(body):
+    """Turn an unusable model action into a safe, repairable no-call response.
+
+    The graph already has a bounded recovery path for a model response with no
+    usable tool call. Raising ModelFailure here bypassed that path and paused a
+    saved CAD run before the model could correct its output. Never retain the
+    malformed payload: it can contain arbitrary provider output and is not
+    executable evidence.
+    """
+    usage = body.get("usage") if isinstance(body, dict) else None
+    usage = usage if isinstance(usage, dict) else {}
+    server_tool_use = usage.get("server_tool_use")
+    server_tool_use = server_tool_use if isinstance(server_tool_use, dict) else {}
+    return {"message": {"role": "assistant", "content":
+            "The provider response did not contain a valid tool action. Retry with exactly one valid action from the supplied tool schema."},
+        "calls": [], "inputTokens": usage.get("prompt_tokens", 0),
+        "outputTokens": usage.get("completion_tokens", 0), "cost": usage.get("cost"),
+        "webSearchRequests": server_tool_use.get("web_search_requests", 0)}
+
+
 class ModelFailure(Exception):
     def __init__(self, category: str, message: str, diagnostic: str = "", status_code: int | None = None):
         self.category = category
@@ -250,7 +270,10 @@ async def _turn_openrouter(config: dict, messages: list[dict], tools: list[dict]
         raise ModelFailure("connection", "The model connection was interrupted. Continue deliberately to retry.") from None
     if raw["status"] < 200 or raw["status"] >= 300:
         raise failure(raw["status"], raw["body"])
-    body = json.loads(raw["body"])
+    try:
+        body = json.loads(raw["body"])
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return _tool_protocol_retry_result(None)
     if body.get("error"):
         error = body["error"]
         raise failure(int(error.get("code", 500)), str(error.get("message", "")))
@@ -274,8 +297,8 @@ async def _turn_openrouter(config: dict, messages: list[dict], tools: list[dict]
         return {"message": safe_message, "calls": calls, "inputTokens": usage.get("prompt_tokens", 0),
                 "outputTokens": usage.get("completion_tokens", 0), "cost": usage.get("cost"),
                 "webSearchRequests": (usage.get("server_tool_use") or {}).get("web_search_requests", 0)}
-    except (KeyError, IndexError, ValueError, TypeError):
-        raise ModelFailure("tool_protocol", "The model returned an invalid tool action. No action was executed.") from None
+    except (KeyError, IndexError, ValueError, TypeError, AttributeError):
+        return _tool_protocol_retry_result(body)
 
 
 async def turn(config: dict, messages: list[dict], tools: list[dict], *, max_tokens: int | None = None,

@@ -18,7 +18,7 @@ from langsmith import traceable
 
 from .. import db
 from ..tracing import sanitize
-from .openrouter import ModelFailure, _recover_text_tool_call
+from .openrouter import ModelFailure, _recover_text_tool_call, _tool_protocol_retry_result
 
 DEFAULT_BASE_URL = "https://api.openai.com/v1"
 DEFAULT_MAX_OUTPUT_TOKENS = 131072
@@ -465,6 +465,7 @@ async def _turn_once(config: dict, messages: list[dict], tools: list[dict], *, m
         raise ModelFailure("connection", "The model connection was interrupted. Continue deliberately to retry.") from None
     if raw["status"] < 200 or raw["status"] >= 300:
         raise _failure(raw["status"], raw["body"])
+    body = None
     try:
         body = json.loads(raw["body"])
         if body.get("error"):
@@ -506,8 +507,8 @@ async def _turn_once(config: dict, messages: list[dict], tools: list[dict], *, m
                 "cost": usage.get("cost"), "webSearchRequests": 0}
     except ModelFailure:
         raise
-    except (KeyError, IndexError, ValueError, TypeError):
-        raise ModelFailure("tool_protocol", "The model returned an invalid tool action. No action was executed.") from None
+    except (KeyError, IndexError, ValueError, TypeError, AttributeError):
+        return _tool_protocol_retry_result(body)
 
 
 def _fallback_configs(config: dict) -> list[dict]:
