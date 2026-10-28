@@ -495,7 +495,7 @@ def compact_completed_changes(history: list[dict]) -> list[dict]:
     return compacted
 
 
-def bounded_history(history: list[dict], *, messages: int = 30, characters: int = 80_000,
+def bounded_history(history: list[dict], *, messages: int = 80, characters: int = 160_000,
                     allow_pending: bool = False) -> list[dict]:
     """Keep recent tool context without duplicating a whole workspace in checkpoints."""
     history = compact_completed_changes(history)
@@ -1859,7 +1859,8 @@ async def cad_session_turn(state: AgentState) -> dict:
                 "last_read_path": value.get("path"), "cad_history": next_history}
         return {**observation_result(state, snapshot, call, value, history, usage, {
                 "ok": True, "path": value["path"], "version": value.get("version", "saved"),
-                "saved": not rejected, "content": content}),
+                "saved": not rejected, "content": content,
+                "candidateHash": digest(snapshot) if not rejected else None}),
             "cad_invalid_tool_attempts": 0, "last_read_path": read_key}
     if name == "search_files":
         matches = [{"path": path, "line": index + 1, "text": line[:300]}

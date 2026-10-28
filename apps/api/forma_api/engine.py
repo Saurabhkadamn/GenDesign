@@ -436,7 +436,8 @@ async def execute_tool(run, cp, call, app_settings, worker):
     if name == "read_file":
         if value.get("version") == "rejected":
             raise ValueError("Rejected proposal source is available only in the CAD graph session; use saved for this role.")
-        return {"content": snapshot["files"].get(value["path"])}
+        return {"path": value["path"], "content": snapshot["files"].get(value["path"]),
+                "candidateHash": digest(snapshot)}
     if name == "search_files":
         return {"matches": [{"path": p, "line": i+1, "text": line[:300]} for p, code in snapshot["files"].items() for i, line in enumerate(code.splitlines()) if value["query"] in line][:100]}
     if name in {"apply_changes", "update_parameters"}:

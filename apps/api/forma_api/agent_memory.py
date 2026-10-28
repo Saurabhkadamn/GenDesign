@@ -70,10 +70,15 @@ def memory_context(state: dict, candidate: str = "", *, max_outcomes: int = 12,
     result = {"notes": memory.get("notes") or {},
             "notesAreAgentReported": True,
             "changedFiles": memory.get("changedFiles") or {},
+            "inspectedFiles": [
+                {"path": path, "candidateHash": item["candidateHash"],
+                 "currentCandidate": bool(candidate) and item["candidateHash"] == candidate}
+                for path, item in (memory.get("readFiles") or {}).items()
+            ],
             "recentOutcomes": recent,
             "outcomeCount": len(facts),
             "lastValidatedMilestone": state.get("last_milestone_hash") or None,
-            "instruction": "Notes and old outcomes are working memory, not current validation. Read source and test changed geometry. All parts remain editable."}
+            "instruction": "Notes and old outcomes are working memory, not current validation. Inspected files are a read index, not retained source text; reopen only when exact content is needed. Test changed geometry. All parts remain editable."}
     if include_user_updates:
         result["userUpdateCount"] = len(state.get("user_updates") or [])
     return result
@@ -126,6 +131,12 @@ def capture_history(state: dict, history: list[dict]) -> dict:
                 result = json.loads(message.get("content") or "{}")
             except (TypeError, ValueError):
                 continue
+            if name == "read_file" and isinstance(result, dict):
+                path, candidate = result.get("path"), result.get("candidateHash")
+                if isinstance(path, str) and isinstance(candidate, str) and candidate and isinstance(result.get("content"), str):
+                    memory.setdefault("readFiles", {})[path] = {
+                        "candidateHash": candidate,
+                    }
             if isinstance(result, dict) and (result.get("ok") is False or
                     name in {"apply_changes", "update_parameters", "build", "request_engineering"}):
                 memory = record_observation({"working_memory": memory}, name, result,

@@ -7,7 +7,8 @@ from langgraph.graph import START, END, StateGraph
 from langgraph.types import Command
 
 from forma_api.agent_memory import (user_update, memory_context, record_observation,
-    fit_dialogue, estimate_tokens, compact_narrative, update_notes, read_memory)
+    fit_dialogue, estimate_tokens, compact_narrative, update_notes, read_memory,
+    capture_history)
 from forma_api.graphs import design
 from forma_api.graphs.state import AgentState
 from forma_api.tools import model_tools, parse_tool
@@ -20,11 +21,27 @@ def test_human_updates_survive_history_trimming_without_changing_exact_values():
     history = [{"role":"user", "content":state["original_request"]}]
     history += [{"role":"assistant", "content":"read complete"}] * 80
     state["cad_history"] = design.bounded_history(history)
-    assert len(state["cad_history"]) <= 30
+    assert len(state["cad_history"]) <= 80
     assert "16.000 to 16.018" in state["clarified_request"]
     assert "0.08 to 0.20" in state["clarified_request"]
     assert memory_context(state, include_user_updates=True)["userUpdateCount"] == 2
     assert user_update(state, "Use 0.08 to 0.20 mm backlash.", "clarification") == {}
+
+
+def test_file_read_index_retains_candidate_provenance_without_source_text():
+    history = [{"role": "user", "content": "Inspect the housing."},
+               {"role": "assistant", "tool_calls": [{"id": "read-1", "type": "function",
+                   "function": {"name": "read_file", "arguments": '{"path":"parts/housing.py"}'}}]},
+               {"role": "tool", "tool_call_id": "read-1", "content": json.dumps({
+                   "path": "parts/housing.py", "candidateHash": "candidate-a",
+                   "content": "private source text"})}]
+
+    memory = capture_history({}, history)
+
+    assert "private source text" not in json.dumps(memory)
+    assert memory_context({"working_memory": memory}, "candidate-a")["inspectedFiles"] == [{
+        "path": "parts/housing.py", "candidateHash": "candidate-a", "currentCandidate": True}]
+    assert memory_context({"working_memory": memory}, "candidate-b")["inspectedFiles"][0]["currentCandidate"] is False
 
 
 @pytest.mark.asyncio
@@ -213,7 +230,8 @@ async def test_invalid_action_waits_at_checkpoint_and_resumes_without_losing_can
     assert feedback['tool']==tool and feedback['issues']
     assert 'input_value' not in json.dumps(feedback)
     assert ('path' if tool=='read_file' else 'files') in feedback['acceptedArguments']
-    if tool=='apply_changes': assert 'manifest/source' in feedback['repairGuidance']
+    if tool=='apply_changes':
+        assert 'manifest/source' in feedback['repairGuidance']
     restarted=design.build_graph(saver)
     resumed=await restarted.ainvoke(Command(resume={"kind":"continue","message":"Read parts/part.py."}),config)
     assert resumed['candidate_hash']=='same' and resumed['attempts']==5 and resumed['model_calls']==18

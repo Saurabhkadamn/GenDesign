@@ -31,3 +31,20 @@ def test_pending_or_failed_edit_keeps_tool_protocol_for_repair():
     failed = [*pending, {"role": "tool", "tool_call_id": "edit-2",
                          "content": json.dumps({"ok": False, "error": "SyntaxError"})}]
     assert bounded_history(failed) == failed
+
+
+def test_multi_part_read_history_survives_without_orphaned_tool_results():
+    history = [{"role": "user", "content": "Inspect all twenty parts before the calculation."}]
+    for index in range(20):
+        call_id = f"read-{index}"
+        history += [
+            {"role": "assistant", "content": "", "tool_calls": [{
+                "id": call_id, "type": "function", "function": {
+                    "name": "read_file", "arguments": json.dumps({"path": f"parts/part_{index}.py"})}}]},
+            {"role": "tool", "tool_call_id": call_id,
+             "content": json.dumps({"content": f"part {index} source"})},
+        ]
+
+    compacted = bounded_history(history)
+
+    assert compacted == history

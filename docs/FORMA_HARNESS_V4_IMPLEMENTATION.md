@@ -108,6 +108,30 @@ No mechanical recipes or pump-specific runtime logic.
   (`dpl_9HUCdfWFKE1jzz16HPpyrrAX7zqV`), with health 200, login 200 and
   the same two pinned evaluation models. It remains separate from production.
 
+- At 18:01 UTC on 2026-10-28, a user-supplied Vercel AI Gateway key was
+  tested only in the isolated evaluation environment. Both
+  `minimax/minimax-m3.1-flash` and `xiaomi/mimo-v2.6-flash` returned the exact
+  requested tool call in a two-turn replay. MiniMax then passed Forma's own
+  staged two-turn check for coordinator and CAD; both roles were activated as
+  version 2 in the isolated evaluation database. The production model settings
+  and public v4 routing were not changed. The saved pump and 60-part runs were
+  resumed, not duplicated. At 18:01 UTC the pump had advanced from 10 to 16
+  model calls with a version-2 MiniMax receipt; the 60-part run was queued.
+  Neither result had engineering acceptance or complete exports at that point.
+
+- The resumed pump exposed a context defect during engineering inspection:
+  the 30-message rolling history discarded early successful `read_file` pairs
+  while inspecting many components, so the agent began rereading the same
+  files. The history window is now 80 messages / 160,000 characters locally;
+  model-specific context fitting still applies. Successful reads now enter a
+  candidate-bound file index in working memory without storing source text.
+  This lets later turns see which files were inspected and whether that read
+  predates an edit, while source retrieval remains available. The 20-part read
+  regression and relevant agent, history, and safety checks passed (157 tests);
+  the full API suite passed 451 tests. Touched files pass Ruff and Git
+  whitespace checks. These changes are not yet
+  deployed and do not alter the currently running workflow.
+
 Next: resume the saved runs when a capable provider has available quota; follow
 both run receipts through build, engineering, and export; fix any
 observed harness failure; independently reopen STEP artifacts and inspect
