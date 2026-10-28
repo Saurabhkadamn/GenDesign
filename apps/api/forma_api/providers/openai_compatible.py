@@ -19,6 +19,7 @@ from langsmith import traceable
 from .. import db
 from ..tracing import sanitize
 from .openrouter import ModelFailure, _recover_text_tool_call, _tool_protocol_retry_result
+from .cooldown import with_cooldown
 
 DEFAULT_BASE_URL = "https://api.openai.com/v1"
 DEFAULT_MAX_OUTPUT_TOKENS = 131072
@@ -99,6 +100,12 @@ def base_url(config: dict) -> str:
 
 def _failure(status: int, body: str) -> ModelFailure:
     lower = body.lower()
+    if status in (400, 413, 422) and _is_context_overflow({"status": status, "body": body}):
+        return ModelFailure(
+            "context_overflow",
+            "The model rejected the prompt as larger than its context window. Forma can retry with less dialogue while preserving the authoritative request.",
+            body[:8000], status_code=status,
+        )
     if status in (401, 403):
         return ModelFailure("access", "The provider rejected access. Check the saved key and model access.", status_code=status)
     if status == 402:
@@ -165,7 +172,17 @@ def _is_token_limit_rejection(raw: dict) -> bool:
     body = str(raw.get("body", "")).lower()
     return any(term in body for term in (
         "max_tokens", "max_completion_tokens", "max_output_tokens", "token limit",
-        "maximum tokens", "too many tokens", "context length", "context_length",
+        "maximum output tokens", "completion token limit",
+    ))
+
+
+def _is_context_overflow(raw: dict) -> bool:
+    if raw.get("status") not in (400, 413, 422):
+        return False
+    body = str(raw.get("body", "")).lower()
+    return any(term in body for term in (
+        "context length", "context_length", "context window", "prompt is too long",
+        "too many input tokens", "input token limit", "prompt token limit",
     ))
 
 
@@ -318,7 +335,13 @@ def _trace_inputs(inputs: dict) -> dict:
 async def _chat(*, api_key: str, url: str, model_id: str, messages: list[dict], tools: list[dict], output_tokens: int,
                 extra_body: dict, tool_choice: str, stream: bool, reasoning_effort: str | None,
                 temperature: float, top_p: float | None):
-    payload = {"model": model_id, "messages": messages, "temperature": temperature,
+    from .tool_history import normalized_tool_history
+
+    try:
+        replay_messages = normalized_tool_history(messages)
+    except ValueError as exc:
+        raise ModelFailure("tool_protocol", str(exc)) from exc
+    payload = {"model": model_id, "messages": replay_messages, "temperature": temperature,
                "max_tokens": output_tokens, "stream": stream}
     if top_p is not None:
         payload["top_p"] = top_p
@@ -345,14 +368,15 @@ async def _chat(*, api_key: str, url: str, model_id: str, messages: list[dict], 
             response = await db.client().post(f"{url}/chat/completions", headers=headers,
                                               json=payload, timeout=timeout,
                                               follow_redirects=follow_redirects)
-            return {"status": response.status_code, "body": response.text}
+            return {"status": response.status_code, "body": response.text, 'retry_after':response.headers.get('retry-after')}
         events = []
         async with db.client().stream("POST", f"{url}/chat/completions", headers=headers,
                                       json=payload, timeout=timeout,
                                       follow_redirects=follow_redirects) as response:
             if not response.is_success:
                 return {"status": response.status_code,
-                        "body": (await response.aread()).decode("utf-8", errors="replace")}
+                        "body": (await response.aread()).decode("utf-8", errors="replace"),
+                        'retry_after':response.headers.get('retry-after')}
             async for line in response.aiter_lines():
                 if not line.startswith("data:"):
                     continue
@@ -377,7 +401,11 @@ def _merge_stream(events: list[dict]) -> dict:
     content, reasoning, tool_calls = [], [], {}
     role = "assistant"
     usage = {}
+    identity = {}
     for event in events:
+        for field in ("id", "model", "provider"):
+            if event.get(field):
+                identity[field] = event[field]
         usage = event.get("usage") or usage
         choices = event.get("choices") or []
         if not choices:
@@ -398,12 +426,14 @@ def _merge_stream(events: list[dict]) -> dict:
             function = item.get("function") or {}
             target["function"]["name"] += function.get("name") or ""
             target["function"]["arguments"] += function.get("arguments") or ""
+            if isinstance(item.get("extra_content"), dict):
+                target["extra_content"] = item["extra_content"]
     message = {"role": role, "content": "".join(content)}
     if reasoning:
         message["reasoning_content"] = "".join(reasoning)
     if tool_calls:
         message["tool_calls"] = list(tool_calls.values())
-    return {"choices": [{"message": message}], "usage": usage}
+    return {**identity, "choices": [{"message": message}], "usage": usage}
 
 
 async def _turn_once(config: dict, messages: list[dict], tools: list[dict], *, max_tokens: int | None = None,
@@ -429,7 +459,8 @@ async def _turn_once(config: dict, messages: list[dict], tools: list[dict], *, m
                               "max_output_tokens": output_tokens, "stream": stream,
                               "reasoning_effort": reasoning_effort}})
         requested_output_tokens = output_tokens
-        fallback_budgets = _lower_token_budgets(output_tokens) if _is_token_limit_rejection(raw) else ()
+        fallback_budgets = (_lower_token_budgets(output_tokens)
+                            if _is_token_limit_rejection(raw) and not _is_context_overflow(raw) else ())
         for fallback_tokens in fallback_budgets:
             output_tokens = fallback_tokens
             extra_body = _extra_body(config, output_tokens, tools)
@@ -466,7 +497,7 @@ async def _turn_once(config: dict, messages: list[dict], tools: list[dict], *, m
     except httpx.HTTPError:
         raise ModelFailure("connection", "The model connection was interrupted. Continue deliberately to retry.") from None
     if raw["status"] < 200 or raw["status"] >= 300:
-        raise _failure(raw["status"], raw["body"])
+        raise with_cooldown(_failure(raw["status"], raw["body"]),raw)
     body = None
     try:
         body = json.loads(raw["body"])
@@ -479,6 +510,8 @@ async def _turn_once(config: dict, messages: list[dict], tools: list[dict], *, m
             # Kimi-K3 requires the complete reasoning history on follow-up
             # tool turns; it is retained in the private checkpoint only.
             safe_message["reasoning_content"] = message["reasoning_content"]
+        if message.get("reasoning_details"):
+            safe_message["reasoning_details"] = message["reasoning_details"]
         calls = []
         for item in message.get("tool_calls") or []:
             arguments = item["function"].get("arguments", {})
@@ -504,7 +537,8 @@ async def _turn_once(config: dict, messages: list[dict], tools: list[dict], *, m
                 calls.append({"id": recovered["id"], "name": recovered["name"],
                               "input": recovered["input"]})
         usage = body.get("usage") or {}
-        return {"message": safe_message, "calls": calls,
+        from .provenance import response_provenance
+        return {"provenance": response_provenance(config, body, output_tokens), "message": safe_message, "calls": calls,
                 "inputTokens": usage.get("prompt_tokens", 0), "outputTokens": usage.get("completion_tokens", 0),
                 "cost": usage.get("cost"), "webSearchRequests": 0}
     except ModelFailure:
@@ -614,7 +648,7 @@ async def turn(config: dict, messages: list[dict], tools: list[dict], *, max_tok
             (primary_error.status_code == 429 and primary_error.category == "rate_limit")
             or (primary_error.status_code == 503 and primary_error.category == "overloaded")
         )
-        if allow_key_fallback and retryable_google_error:
+        if allow_key_fallback and retryable_google_error and config.get("allow_key_fallback", False):
             fallback_keys = _gemini_key_fallbacks(config)
             last_key_error = primary_error
             for key_index, api_key in enumerate(fallback_keys, start=2):
@@ -642,7 +676,7 @@ async def turn(config: dict, messages: list[dict], tools: list[dict], *, max_tok
         # to the configured same-endpoint fallback in the next invocation.
         if primary_error.category == "timeout" and os.getenv("VERCEL") == "1":
             raise
-        fallback_chain = _fallback_configs(config) if allow_fallback else []
+        fallback_chain = _fallback_configs(config) if allow_fallback and primary_error.category not in {"rate_limit", "timeout", "connection"} else []
         if not fallback_chain or primary_error.category not in FALLBACK_CATEGORIES:
             raise
         last_error = primary_error

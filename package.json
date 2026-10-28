@@ -16,6 +16,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
     "lint": "eslint .",
+    "lint:api": "uv run --project apps/api ruff check apps/api/forma_api",
     "runtime:snapshot": "python scripts/create_runtime_snapshot.py",
     "contracts": "python -m uv run --project apps/api python scripts/generate_contracts.py && npx --yes openapi-typescript@7.13.0 packages/core/openapi.json -o packages/core/src/generated.ts",
     "test:api": "python -m uv run --project apps/api pytest"

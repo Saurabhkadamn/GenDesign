@@ -1,0 +1,60 @@
+Design Task: External Gear Pump (3-piece, cast aluminium, ~8.5 cc/rev)
+
+## Objective
+A hydraulic external spur gear pump: front cover, gear housing, rear cover,
+two gear-shafts, bushings, seal and fasteners. Tests cavity cutting,
+specified-distance meshing, three tolerance chains, standard parts, cast DFM
+and calculation-vs-geometry consistency.
+
+## Key Dimensions (use exactly; state anything you add)
+* Gears: module 2.0, 17 teeth, 20 deg pressure angle, no profile shift,
+  true involute teeth. Face width 20.00 (-0.010 / -0.020).
+  Tip dia 38.00 (-0.030 / -0.050), root dia 29.0.
+* Shaft centre distance 34.000 +/-0.010.
+* Gear housing: figure-8 THROUGH bore, two dia 38.10 (+0.025 / 0) bores on the
+  34.000 centres. Housing thickness 20.06 +/-0.010.
+* Shaft journals dia 16 (15.966 to 15.984). Bushings ID 16.000 to 16.018, OD 20.
+* Ports: inlet and outlet G 1/2 (ISO 228) on opposite sides at the mesh plane.
+
+## Components (~27 instances)
+Gear housing (1, die-cast Al), front cover (1, with seal bore), rear cover (1),
+drive gear-shaft (1, dia 16 x 30 stub with keyway), driven gear-shaft (1),
+bushings (4), lip seal 16x28x7 (1), O-rings ISO 3601 (2), M8x50 socket head
+screws ISO 4762 (6) + washers (6), dowel pins ISO 2338 dia 6 (2), key DIN 6885
+5x5x20 (1).
+
+## Assembly Requirements
+1. Both gears sit inside the figure-8 cavity with zero overlap with housing
+   material. Report the radial gear-to-bore clearance measured from the built model.
+2. Each shaft axis concentric with its two bushing bores <=0.05 mm; shaft axes
+   parallel; axis separation 34.000 +/-0.010. Report measured values.
+3. Export three states with the drive gear turned 0, 5.29 and 10.59 deg.
+   Zero interference between teeth and between gears and housing, covers and seal
+   in all three. Report circumferential backlash (target 0.08 to 0.20 mm) and how
+   it is achieved. If tooth form is simplified, say so.
+4. Tolerance chains, each as nominal / worst-case min / max / pass or fail:
+   (a) radial tip clearance, gear tip to bore: required 0.04 to 0.12 mm.
+   (b) axial clearance, housing thickness minus gear width: required 0.04 to 0.08 mm.
+   (c) journal-to-bushing diametral clearance: required 0.015 to 0.060 mm.
+   If a chain fails anywhere in its range, say so plainly and name which tolerance
+   to change. Do not report only the nominal.
+5. Calculations with formulas shown: displacement (cc/rev) and the method used,
+   contact ratio (>=1.2), flow at 1500 rpm and 92% volumetric efficiency, drive
+   torque at 150 bar, hydraulic power. Then a table comparing calculated gear
+   dimensions (pitch, tip, root dia, centre distance, face width) with MEASURED
+   values from the model.
+6. Standard parts: state exact designations and dimensions (G 1/2 thread major
+   and pitch, lip seal, O-ring size, ISO 4762, ISO 2338, DIN 6885).
+   Do not invent non-standard sizes.
+7. DFM: housing and covers are die-cast aluminium: draft >=1 deg, fillets >=2 mm,
+   min wall >=4 mm. Report measured values, state the parting line, flag anything
+   non-manufacturable.
+8. Integrity: zero interference across the whole assembly in all three states,
+   except intentional press fits (bushings, dowels), each named. No duplicate or
+   redundant parts. Report final solid count against the list above and
+   explain any extra. Every part independently identifiable.
+9. Envelope <=130 x 90 x 130 mm. Total mass reported, density-unassigned flagged.
+
+## Final Requirement
+Deliver the STEP for all three states, the calculation notebook, the measured-vs-calculated table and all three chain reports. Flag sealing under
+pressure, pressure ripple, wear, cavitation and efficiency as unverified.

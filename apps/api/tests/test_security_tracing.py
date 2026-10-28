@@ -56,12 +56,13 @@ def test_custom_paid_model_can_keep_saved_key_without_exposing_it(monkeypatch):
     saved = []
     async def profile(*args, **kwargs): return {"id": "admin", "role": "admin"}
     async def one(*args, **kwargs): return {"encrypted_key": "existing-encrypted-key", "key_hint": "masked", "version": 7}
-    async def insert(table, row, **kwargs):
-        saved.append(row)
-        return [row]
+    async def stage(name, payload):
+        assert name=='stage_model_candidate'
+        saved.append(payload['p_config'])
+        return payload['p_expected_version']+1
     monkeypatch.setattr(api, "require_profile", profile)
     monkeypatch.setattr(api.db, "one", one)
-    monkeypatch.setattr(api.db, "insert", insert)
+    monkeypatch.setattr(api.db, "rpc", stage)
     with TestClient(app) as client:
         response = client.post("/api/admin/models", headers={"Origin": "http://localhost:3000"},
             json={"role": "cad", "modelId": "provider/arbitrary-paid-model", "apiKey": ""})
@@ -69,7 +70,7 @@ def test_custom_paid_model_can_keep_saved_key_without_exposing_it(monkeypatch):
     assert response.json() == {"ok": True}
     assert saved[0]["model_id"] == "provider/arbitrary-paid-model"
     assert saved[0]["encrypted_key"] == "existing-encrypted-key"
-    assert saved[0]["active"] is False and saved[0]["tested_at"] is None
+    assert 'active' not in saved[0] and 'tested_at' not in saved[0]
 
 
 def test_public_demo_cannot_change_shared_password(monkeypatch):
@@ -126,19 +127,21 @@ def test_admin_can_save_encrypted_ordered_gemini_keys(monkeypatch):
     async def one(*args, **kwargs):
         return None
 
-    async def insert(table, row, **kwargs):
-        saved.append(row)
-        return [row]
+    async def stage(name, payload):
+        assert name=='stage_model_candidate'
+        saved.append(payload['p_config'])
+        return payload['p_expected_version']+1
 
     monkeypatch.setattr(api, "require_profile", profile)
     monkeypatch.setattr(api.db, "one", one)
-    monkeypatch.setattr(api.db, "insert", insert)
+    monkeypatch.setattr(api.db, "rpc", stage)
     keys = ["AQ.primary-private-key", "AQ.backup-two-private-key", "AQ.backup-three-private-key"]
     with TestClient(app) as client:
         response = client.post("/api/admin/models", headers={"Origin": "http://localhost:3000"}, json={
             "role": "coordinator", "provider": "openai_compatible",
             "baseUrl": "https://generativelanguage.googleapis.com/v1beta/openai",
             "modelId": "gemini-3.7-flash", "apiKeys": keys,
+            "contextLength": 65536,
         })
 
     assert response.status_code == 200

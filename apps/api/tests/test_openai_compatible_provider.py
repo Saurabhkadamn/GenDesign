@@ -7,6 +7,7 @@ from forma_api.providers import openai_compatible
 
 
 class FakeResponse:
+    headers = {}
     status_code = 200
     text = json.dumps({
         "choices": [{"message": {"role": "assistant", "content": "", "tool_calls": [{
@@ -36,6 +37,7 @@ class FakeClient:
 
 
 class FallbackResponse:
+    headers = {}
     def __init__(self, status_code, body):
         self.status_code = status_code
         self.text = json.dumps(body)
@@ -46,6 +48,7 @@ class FallbackResponse:
 
 
 class _StreamResponse:
+    headers = {}
     def __init__(self, events):
         self.status_code = 200
         self._events = events
@@ -270,7 +273,7 @@ async def test_vercel_gateway_uses_ordered_grok_tencent_alibaba_fallbacks(monkey
     async def fake_turn_once(config, messages, tools, **kwargs):
         calls.append(config["model_id"])
         if config["model_id"] != "alibaba/qwen3.8-max-0902":
-            raise openai_compatible.ModelFailure("rate_limit", "limited")
+            raise openai_compatible.ModelFailure("overloaded", "unavailable")
         return {"message": {"role": "assistant", "content": "ready"}, "calls": []}
 
     monkeypatch.setattr(openai_compatible, "_turn_once", fake_turn_once)
@@ -283,12 +286,12 @@ async def test_vercel_gateway_uses_ordered_grok_tencent_alibaba_fallbacks(monkey
     assert result["fallback"] == {
         "from": "spacexai/grok-4.6",
         "to": "alibaba/qwen3.8-max-0902",
-        "reason": "rate_limit",
+        "reason": "overloaded",
     }
 
 
 @pytest.mark.asyncio
-async def test_thegrid_agent_prime_rate_limit_retries_known_same_endpoint_model(monkeypatch):
+async def test_thegrid_rate_limit_does_not_cycle_models(monkeypatch):
     calls = []
 
     async def fake_turn_once(config, _messages, _tools, **_kwargs):
@@ -301,11 +304,14 @@ async def test_thegrid_agent_prime_rate_limit_retries_known_same_endpoint_model(
     config = {"provider": "openai_compatible", "base_url": "https://api.thegrid.ai/v1",
         "model_id": "agent-prime", "api_key": "secret", "stream": False}
     assert openai_compatible.retry_config(config)["model_id"] == "code-max"
-    result = await openai_compatible.turn(config, [{"role": "user", "content": "Reply."}], [], max_tokens=1024)
-    assert calls == ["agent-prime", "code-max"]
-    assert result["fallback"] == {"from": "agent-prime", "to": "code-max", "reason": "rate_limit"}
+    with pytest.raises(openai_compatible.ModelFailure) as error:
+        await openai_compatible.turn(config, [{"role":"user","content":"Reply."}], [], max_tokens=1024)
+    assert error.value.category == "rate_limit"
+    assert calls == ["agent-prime"]
+
 
 class GeminiThoughtResponse:
+    headers = {}
     status_code = 200
     text = json.dumps({
         "choices": [{"message": {"role": "assistant", "content": "", "tool_calls": [{
@@ -518,7 +524,7 @@ async def test_openai_compatible_preserves_gemini_thought_signature(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_gemini_tries_saved_keys_in_order_only_after_429(monkeypatch):
+async def test_gemini_rate_limit_does_not_cycle_saved_keys(monkeypatch):
     used_keys = []
 
     async def fake_turn_once(config, messages, tools, **kwargs):
@@ -528,15 +534,14 @@ async def test_gemini_tries_saved_keys_in_order_only_after_429(monkeypatch):
         return {"message": {"role": "assistant", "content": "ready"}, "calls": []}
 
     monkeypatch.setattr(openai_compatible, "_turn_once", fake_turn_once)
-    result = await openai_compatible.turn({
-        "provider": "openai_compatible",
-        "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
-        "model_id": "gemini-3.7-flash", "api_key": "key-one-secret",
-        "api_key_fallbacks": ["key-two-secret", "key-three-secret"], "stream": False,
-    }, [{"role": "user", "content": "Reply."}], [], max_tokens=1024, allow_fallback=False)
+    with pytest.raises(openai_compatible.ModelFailure) as error:
+        await openai_compatible.turn({"provider":"openai_compatible",
+            "base_url":"https://generativelanguage.googleapis.com/v1beta/openai",
+            "model_id":"gemini-3.7-flash","api_key":"key-one-secret",
+            "api_key_fallbacks":["key-two-secret","key-three-secret"]}, [], [], allow_fallback=False)
+    assert error.value.category == "rate_limit"
+    assert used_keys == ["key-one-secret"]
 
-    assert used_keys == ["key-one-secret", "key-two-secret", "key-three-secret"]
-    assert result["credential_fallback"] == {"key_index": 3, "reason": "http_429"}
 
 
 @pytest.mark.asyncio
@@ -588,7 +593,7 @@ async def test_gemini_retries_503_once_with_the_same_key(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_gemini_rotates_saved_keys_after_persistent_503(monkeypatch):
+async def test_gemini_overload_keeps_saved_credentials_without_explicit_policy(monkeypatch):
     used_keys = []
 
     async def fake_turn_once(config, messages, tools, **kwargs):
@@ -602,13 +607,9 @@ async def test_gemini_rotates_saved_keys_after_persistent_503(monkeypatch):
 
     monkeypatch.setattr(openai_compatible, "_turn_once", fake_turn_once)
     monkeypatch.setattr(openai_compatible.asyncio, "sleep", fake_sleep)
-    result = await openai_compatible.turn({
-        "provider": "openai_compatible",
-        "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
-        "model_id": "gemini-3.8-flash", "api_key": "key-one-secret",
-        "api_key_fallbacks": ["key-two-secret", "key-three-secret"], "stream": False,
-    }, [{"role": "user", "content": "Reply."}], [], max_tokens=1024)
-
-    assert used_keys == ["key-one-secret", "key-one-secret",
-                         "key-two-secret", "key-three-secret"]
-    assert result["credential_fallback"] == {"key_index": 3, "reason": "http_503"}
+    with pytest.raises(openai_compatible.ModelFailure):
+        await openai_compatible.turn({"provider":"openai_compatible",
+            "base_url":"https://generativelanguage.googleapis.com/v1beta/openai",
+            "model_id":"gemini-3.8-flash","api_key":"key-one-secret",
+            "api_key_fallbacks":["key-two-secret","key-three-secret"]}, [], [], allow_fallback=False)
+    assert used_keys == ["key-one-secret","key-one-secret"]

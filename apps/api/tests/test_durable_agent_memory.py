@@ -252,7 +252,7 @@ async def test_model_turn_retains_full_generation_but_compacts_no_action_output(
     async def run(_): return {"id":"run"}
     async def config(_): return {"model_id":"same-model","version":1}
     async def settings(): return AppSettings()
-    async def operation(_run,_key,_kind,callback): return await callback()
+    async def operation(_run,_key,_kind,callback,**kwargs): return await callback()
     async def insert(_table,value,**_kw): records.append(value)
     async def model(_config,messages,tools,**_kw):
         prompts.append(messages)

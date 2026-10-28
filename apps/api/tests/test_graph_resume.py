@@ -79,7 +79,8 @@ async def test_continue_resumes_actual_checkpoint_without_losing_evidence(monkey
         return None
 
     monkeypatch.setattr(runner, "checkpoint_saver", checkpoint)
-    monkeypatch.setattr(runner, "build_graph", lambda _saver: graph)
+    from forma_api.graphs import design_v3
+    monkeypatch.setattr(design_v3, "build_graph", lambda _saver: graph)
     monkeypatch.setattr(runner.db, "one", one)
     monkeypatch.setattr(runner.db, "rpc", claim)
     monkeypatch.setattr(runner.db, "update", update)

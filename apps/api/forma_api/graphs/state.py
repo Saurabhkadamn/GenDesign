@@ -3,6 +3,16 @@ from typing import Any, Literal, TypedDict
 
 
 class AgentState(TypedDict, total=False):
+    harness_version: int
+    research_mode: bool
+    task_outcome: str
+    completion: dict[str, Any]
+    acceptance_plan: dict[str, Any]
+    structured_recovery: dict[str, Any]
+    deliverables: list[dict[str, Any]]
+    deliverable_coverage_complete: bool
+    engineering_history: list[dict[str, Any]]
+    engineering_calculation: dict[str, Any] | None
     run_id: str
     project_id: str
     owner_id: str

@@ -2,21 +2,32 @@
 import asyncio
 import json
 import os
-import re
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
-from pydantic import ValidationError
 
 from . import db, models, repository as repo
 from .config import settings
 from .contracts import AppSettings, ChatRequest, ResumeRequest, SessionView, TERMINAL, Project, WorkspaceState, Run, ModelConfigView, ModelOptions
 from .security import clear_session, encrypt_secret, encrypt_secret_set, require_profile, same_origin, set_session
 from .providers.openai_compatible import base_url as compatible_base_url
+from .providers.capabilities import validate_candidate
 from .drawing_contracts import DrawingRequest, DrawingSubmission
 
 router = APIRouter(prefix="/api")
+
+
+@router.get('/maintenance/research-dispatch')
+async def reconcile_research_dispatch(request: Request):
+    import hmac
+    secret = os.getenv('CRON_SECRET','')
+    if not secret or not hmac.compare_digest(request.headers.get('authorization',''), 'Bearer '+secret):
+        raise HTTPException(401,'Unauthorized')
+    if os.getenv('FORMA_RESEARCH_RECONCILIATION','false').lower()!='true':
+        return {'enabled':False}
+    from .services.dispatch import reconcile_prepared_dispatches
+    return {'enabled':True,'dispatches':await reconcile_prepared_dispatches()}
 
 
 async def body(request: Request, maximum=180000):
@@ -60,7 +71,7 @@ async def session(request: Request, response: Response):
 @router.get("/runs/{run_id}/events")
 async def events(run_id: str, request: Request, response: Response):
     profile = await require_profile(request, response)
-    run = await repo.owned_run(run_id, profile["id"])
+    await repo.owned_run(run_id, profile["id"])
     try:
         cursor = max(0, int(request.headers.get("last-event-id", request.query_params.get("after", "0"))))
     except ValueError:
@@ -104,6 +115,45 @@ async def project_workspace(project_id: str, request: Request, response: Respons
 @router.get("/runs/{run_id}", response_model=Run)
 async def get_run(run_id: str, request: Request, response: Response):
     return await dispatch(f"runs/{run_id}", request, response)
+
+
+@router.get('/runs/{run_id}/draft-artifact')
+async def draft_artifact(run_id: str, name: str, candidate: str, request: Request, response: Response):
+    profile = await require_profile(request,response)
+    run = await repo.owned_run(run_id,profile['id'])
+    from .services.drafts import signed_download
+    return await signed_download(run,name,candidate)
+
+
+@router.post('/projects/{project_id}/briefs', status_code=201)
+async def store_brief(project_id: str, request: Request, response: Response):
+    same_origin(request)
+    profile = await require_profile(request,response)
+    project_id = repo.identifier(project_id)
+    await repo.owned_project(project_id,profile['id'])
+    if profile.get('is_public_demo'):
+        raise HTTPException(403,'Stored research briefs are not enabled for public demo accounts.')
+    data = await body(request,1_200_000)
+    title = text(data,'title',1,200)
+    content = text(data,'content',1,1_000_000)
+    key = repo.identifier(text(data,'idempotencyKey',1,100))
+    from .project_record import append_record
+    record = await append_record({'project_id':project_id},'source','brief:'+key,
+        {'type':'brief_document','title':title,'content':content,'role':'user','authorId':profile['id']})
+    return {'sourceId':record['id'],'title':title,'characters':len(content)}
+
+
+@router.post('/projects/{project_id}/revisions/{revision_id}/accept')
+async def accept_engineering_revision(project_id: str, revision_id: str, request: Request, response: Response):
+    same_origin(request)
+    profile = await require_profile(request,response)
+    if profile.get('is_public_demo'):
+        raise HTTPException(403,'Public demo accounts cannot record engineering acceptance.')
+    data = await body(request,10000)
+    await db.rpc('accept_engineering_revision',{'p_project':repo.identifier(project_id),
+        'p_revision':repo.identifier(revision_id),'p_actor':profile['id'],
+        'p_decision':text(data,'decision',8,4000)})
+    return {'acceptanceState':'accepted'}
 
 
 @router.post("/projects/{project_id}/drawings", response_model=DrawingSubmission, status_code=202)
@@ -201,6 +251,9 @@ async def dispatch(path: str, request: Request, response: Response):
                 "p_base": str(payload.baseRevisionId) if payload.baseRevisionId else None,
                 "p_message": payload.message, "p_selected": payload.selectedIds,
                 "p_key": str(payload.idempotencyKey), "p_environment": settings().environment})
+            if os.getenv("FORMA_HARNESS_VERSION", "3") == "4" and not profile.get("is_public_demo"):
+                await db.update("runs", {"harness_version": 4,
+                    "research_mode": os.getenv("FORMA_RESEARCH_MODE", "true").lower() == "true"}, id=run_id, status="queued")
             from .engine import dispatch_run
             await dispatch_run(run_id)
             response.status_code = 202
@@ -227,9 +280,17 @@ async def dispatch(path: str, request: Request, response: Response):
                 if len(demo_messages) >= 4:
                     raise HTTPException(429, "This demo run has reached its follow-up limit. Start a new design later.")
             if parts[2] == "cancel":
-                await db.rest("runs", "PATCH", params={"id": f"eq.{run['id']}", "status": "in.(queued,running,paused,waiting_input)"}, body={"status": "cancelled", "updated_at": repo.utcnow()})
+                if run.get('harness_version', 3) >= 4:
+                    changed = await db.rpc('cancel_research_run', {
+                        'p_run': run['id'], 'p_owner': owner})
+                else:
+                    changed = bool(await db.rest("runs", "PATCH", params={
+                        "id": f"eq.{run['id']}",
+                        "status": "in.(queued,running,paused,waiting_input)"}, body={
+                        "status": "cancelled", "updated_at": repo.utcnow()}))
                 from .engine import cancel_run
-                await cancel_run(run["id"])
+                if changed:
+                    await cancel_run(run["id"])
                 return {"ok": True}
             if parts[2] == "wake":
                 if profile["role"] != "admin":
@@ -241,7 +302,7 @@ async def dispatch(path: str, request: Request, response: Response):
                 from .graphs.runner import dispatch_run
                 from .engine import authorize_ambiguous_retry
                 await authorize_ambiguous_retry(run["id"])
-                await resume(run["id"], owner)
+                await resume(run["id"], owner, {'kind':'continue'})
                 await dispatch_run(run["id"], {"kind": "continue"})
                 return {"runId": run["id"]}
             if parts[2] == "resume":
@@ -266,7 +327,7 @@ async def dispatch(path: str, request: Request, response: Response):
                     await db.insert("messages", {"id": message_id,
                         "project_id": run["project_id"], "run_id": run["id"],
                         "role": "user", "content": message}, conflict="id")
-                await resume(run["id"], owner)
+                await resume(run["id"], owner, value)
                 await dispatch_run(run["id"], value)
                 return {"runId": run["id"]}
     if parts[0] == "artifacts" and len(parts) == 2 and method == "GET":
@@ -285,8 +346,14 @@ async def dispatch(path: str, request: Request, response: Response):
                 "models": sorted([{"id": m["id"], "name": m.get("name", m["id"]), "contextLength": m.get("context_length", 0)} for m in eligible], key=lambda x: x["name"])}
     if path == "admin/models":
         if method == "GET":
-            rows = await db.rest("model_configs", params={"select": "role,provider,base_url,model_id,max_output_tokens,key_hint,active,version,tested_at"})
-            return [{**row, "provider": row.get("provider", "openrouter"), "base_url": row.get("base_url")} for row in rows]
+            fields = 'role,provider,base_url,model_id,max_output_tokens,key_hint,active,version,tested_at,context_length,reasoning_token_reserve,data_collection,qualification'
+            rows = await db.rest("model_configs", params={"select":fields})
+            drafts = await db.rest("model_config_candidates", params={"select":fields})
+            working = {row["role"]: row for row in rows}
+            merged = {**working, **{row["role"]: row for row in drafts}}
+            return [{**row, "provider": row.get("provider", "openrouter"), "base_url": row.get("base_url"),
+                     "pending": role in {draft["role"] for draft in drafts},
+                     "activeConfig": working.get(role)} for role, row in merged.items()]
         if method == "POST":
             data = await body(request, 5000)
             role = data.get("role")
@@ -312,7 +379,9 @@ async def dispatch(path: str, request: Request, response: Response):
             if max_output_tokens is not None:
                 if isinstance(max_output_tokens, bool) or not isinstance(max_output_tokens, int) or not 16 <= max_output_tokens <= 131072:
                     raise HTTPException(400, "Max output tokens must be an integer between 16 and 131072.")
-            old = await db.one("model_configs", {"role": f"eq.{role}"}, required=False)
+            active = await db.one("model_configs", {"role": f"eq.{role}"}, required=False)
+            candidate = await db.one("model_config_candidates", {"role": f"eq.{role}"}, required=False)
+            old = candidate or active
             api_keys = data.get("apiKeys")
             if api_keys is not None:
                 if not isinstance(api_keys, list):
@@ -342,27 +411,43 @@ async def dispatch(path: str, request: Request, response: Response):
                 encrypted, hint = old["encrypted_key"], old["key_hint"]
             else:
                 raise HTTPException(400, "Enter an API key for the first connection.")
-            await db.insert("model_configs", {"role": role, "provider": provider, "base_url": base_url,
+            context_length = data.get('contextLength')
+            reserve = data.get('reasoningTokenReserve',0)
+            if context_length is not None and (isinstance(context_length,bool) or not isinstance(context_length,int) or context_length<4096):
+                raise HTTPException(400,'Context length must be an integer of at least 4096 tokens.')
+            if isinstance(reserve,bool) or not isinstance(reserve,int) or reserve<0:
+                raise HTTPException(400,'Reasoning reservation must be a nonnegative integer.')
+            policy = data.get('dataCollection','deny')
+            if policy not in {'deny','allow'}:
+                raise HTTPException(400,'Invalid provider data collection policy.')
+            try:
+                validate_candidate({"provider": provider, "base_url": base_url,
+                                    "model_id": model_id, "context_length": context_length})
+            except ValueError as exc:
+                raise HTTPException(400, str(exc)) from None
+            await db.rpc('stage_model_candidate',{'p_role':role,
+                'p_expected_version':max((active or {}).get('version',0),(candidate or {}).get('version',0)),
+                'p_config':{"provider": provider, "base_url": base_url,
                 "model_id": model_id, "max_output_tokens": max_output_tokens,
-                "encrypted_key": encrypted, "key_hint": hint, "active": False,
-                "tested_at": None, "version": (old or {}).get("version", 0) + 1,
-                "updated_at": repo.utcnow()}, conflict="role")
+                "encrypted_key": encrypted, "key_hint": hint,
+                'context_length':context_length,'reasoning_token_reserve':reserve,'data_collection':policy}})
             return {"ok": True}
     if parts[:2] == ["admin", "models"] and len(parts) >= 3:
         role = parts[2]
         if role not in ("coordinator", "cad", "engineering"):
             raise HTTPException(400, "Invalid role.")
         if len(parts) == 3 and method == "DELETE":
+            await db.rest("model_config_candidates", "DELETE", params={"role": f"eq.{role}"})
             await db.rest("model_configs", "DELETE", params={"role": f"eq.{role}"})
             return {"ok": True}
         if len(parts) == 4 and method == "POST":
             if parts[3] == "test":
                 return await models.test_connection(role)
             if parts[3] == "activate":
-                row = await db.one("model_configs", {"role": f"eq.{role}"})
+                row = await db.one("model_config_candidates", {"role": f"eq.{role}"})
                 if not row["tested_at"]:
                     raise HTTPException(409, "Test this configuration before activating it.")
-                updated = await db.update("model_configs", {"active": True}, role=role, version=row["version"])
+                updated = await db.rpc("activate_model_candidate", {"p_role": role, "p_version": row["version"]})
                 if not updated:
                     raise HTTPException(409, "The configuration changed. Test the current version.")
                 return {"ok": True}

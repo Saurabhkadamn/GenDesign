@@ -1,5 +1,4 @@
 """Vercel sandbox execution contracts. Generated code never runs in the API."""
-import asyncio
 import ast
 import hashlib
 import io
@@ -75,7 +74,7 @@ def validate_files(files):
     if sum(len(data) for data in files.values()) > 120 * 1024 * 1024:
         raise ExecutionFailure("Workspace transfer exceeds 120 MB")
     for path, data in files.items():
-        if len(data) > MAX_FILE or ".." in path or "//" in path or not re.fullmatch(r"(manifest|requirements|identity)\.json|[A-Za-z][A-Za-z0-9_-]{0,63}\.step|(parts|assemblies|calculations)/[A-Za-z0-9_/-]+\.py", path):
+        if len(data) > MAX_FILE or ".." in path or "//" in path or not re.fullmatch(r"(manifest|requirements|identity|query)\.json|[A-Za-z][A-Za-z0-9_-]{0,63}\.step|(parts|assemblies|calculations)/[A-Za-z0-9_/-]+\.py", path):
             raise ExecutionFailure("Invalid workspace transfer")
 
 

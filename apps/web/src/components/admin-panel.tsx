@@ -144,6 +144,8 @@ export function AdminPanel() {
           </datalist>
           {(['coordinator', 'cad', 'engineering'] as AgentRole[]).map((role) => {
             const model = models.find((m) => m.role === role);
+            const working = model?.pending ? model.activeConfig : model;
+            const connected = Boolean(working?.active && working?.tested_at);
             return (
               <section className="model-config" key={`${role}-${model?.version}`}>
                 <div className="model-heading">
@@ -154,9 +156,9 @@ export function AdminPanel() {
                         ? 'CAD specialist'
                         : 'Engineering specialist'}
                   </strong>
-                  <span className={`status-chip ${model?.active && model.tested_at ? '' : 'neutral'}`}>
-                    {model?.active && model.tested_at
-                      ? 'Active'
+                  <span className={`status-chip ${connected ? '' : 'neutral'}`}>
+                    {connected
+                      ? model?.pending ? 'Active · changes pending' : 'Active'
                       : role !== 'coordinator'
                         ? 'Inherits default'
                         : model
@@ -171,7 +173,10 @@ export function AdminPanel() {
                     <code>{model.key_hint}</code>
                   </div>
                 )}
-                {model && role !== 'coordinator' && (!model.active || !model.tested_at) && (
+                {model?.pending && connected && <p className="muted-copy">
+                  Currently using {String(working?.model_id)}. The edited connection will take over after testing and activation.
+                </p>}
+                {model && role !== 'coordinator' && !connected && (
                   <p className="muted-copy">
                     Uses the active default model. This saved override takes effect after testing and activation.
                   </p>
@@ -188,6 +193,9 @@ export function AdminPanel() {
                         baseUrl: data.get('baseUrl'),
                         modelId: data.get('modelId'),
                         maxTokens: data.get('maxTokens') ? Number(data.get('maxTokens')) : null,
+                        contextLength: data.get('contextLength') ? Number(data.get('contextLength')) : null,
+                        reasoningTokenReserve: Number(data.get('reasoningTokenReserve') || 0),
+                        dataCollection: data.get('dataCollection'),
                         apiKeys: data.getAll('apiKeys')
                           .map(String)
                           .map((key) => key.trim())
@@ -245,7 +253,7 @@ export function AdminPanel() {
                       <input name="apiKeys" type="password" autoComplete="new-password" minLength={10} />
                     </label>
                   ))}
-                  <p className="muted-copy">Google AI Studio can try the fallback keys in order when a key reaches its rate limit.</p>
+                  <p className="muted-copy">Provider rate limits pause the request until retry is allowed. Saved work stays available.</p>
                   <label>
                     Max output tokens
                     <input
@@ -260,6 +268,23 @@ export function AdminPanel() {
                     />
                     <span className="muted-copy">Optional. The server uses this cap for normal requests; the connection test stays at 2,048.</span>
                   </label>
+                  <details><summary>Context and data settings</summary>
+                    <label>Model context capacity (tokens)
+                      <input name="contextLength" type="number" min={4096} step={1}
+                        defaultValue={model?.context_length ?? ''} placeholder="Use provider catalog when available" />
+                    </label>
+                    <label>Reserved reasoning tokens
+                      <input name="reasoningTokenReserve" type="number" min={0} step={1}
+                        defaultValue={model?.reasoning_token_reserve ?? 0} />
+                    </label>
+                    <label>OpenRouter provider data collection
+                      <select name="dataCollection" defaultValue={model?.data_collection ?? 'deny'}>
+                        <option value="deny">Require endpoints that disable collection</option>
+                        <option value="allow">Allow provider collection policies</option>
+                      </select>
+                    </label>
+                    <p className="muted-copy">Context capacity controls how much history fits in each request. Direct provider data handling follows your agreement with that provider.</p>
+                  </details>
                   <div className="model-actions">
                     <button className="primary-btn" disabled={busy}>
                       Save connection
@@ -283,7 +308,7 @@ export function AdminPanel() {
                         <button
                           className="subtle-btn"
                           type="button"
-                          disabled={busy || !model.tested_at || model.active}
+                          disabled={busy || !model.pending || !model.tested_at}
                           onClick={() =>
                             void act(
                               () => post(`admin/models/${role}/activate`),

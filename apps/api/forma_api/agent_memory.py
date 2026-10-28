@@ -47,7 +47,10 @@ def record_observation(state: dict, name: str, result: dict, *, candidate: str =
         for path in result.get("changedFiles") or []:
             changed[path] = {"candidateHash": candidate, "status": "edited_not_verified"}
         fact["changedFiles"] = result.get("changedFiles") or []
-    # Latest fact for the same failure/location replaces repeated identical noise.
+    history = memory.setdefault("history", [])
+    if candidate and (not history or history[-1] != fact):
+        history.append(fact)
+    # Latest facts are an index; history retains previous experiments separately.
     outcomes.pop(str(key), None)
     outcomes[str(key)] = fact
     return memory
@@ -56,7 +59,7 @@ def record_observation(state: dict, name: str, result: dict, *, candidate: str =
 def memory_context(state: dict, candidate: str = "", *, max_outcomes: int = 12,
                    include_user_updates: bool = False, text_limit: int = 3000) -> dict:
     memory = state.get("working_memory") or {}
-    facts = list((memory.get("outcomes") or {}).values())
+    facts = memory.get("history") or list((memory.get("outcomes") or {}).values())
     recent = []
     for fact in facts[-max(0, max_outcomes):] if max_outcomes else []:
         compact = dict(fact)
@@ -102,7 +105,7 @@ def compact_narrative(message: dict) -> dict:
     """A huge response without an action is not useful working state."""
     result = deepcopy(message)
     content = result.get("content") or ""
-    if not result.get("tool_calls") and len(content) > 8000:
+    if not result.get("tool_calls") and len(content) > 8000 and 'reasoning_details' not in result:
         result["content"] = ("The previous response contained no executable tool action. "
                              "Its full output is retained in the generation record. No workspace change occurred. "
                              "Choose the next action using the request, source and working memory.")
@@ -137,7 +140,7 @@ def update_notes(memory: dict, notes: dict) -> dict:
 
 
 def read_memory(memory: dict, offset: int, limit: int) -> dict:
-    facts = list(reversed(list((memory.get("outcomes") or {}).values())))
+    facts = list(reversed(memory.get("history") or list((memory.get("outcomes") or {}).values())))
     return {"outcomes": facts[offset:offset + limit], "total": len(facts),
             "nextOffset": offset + limit if offset + limit < len(facts) else None,
             "currentValidation": False}
@@ -148,15 +151,18 @@ def notes_just_saved(history: list[dict]) -> bool:
     index=len(history)-1
     while index>=1:
         result=history[index]
-        if result.get('role')!='tool': return False
+        if result.get('role')!='tool':
+            return False
         calls=history[index-1].get('tool_calls') or []
         call=next((call for call in calls if call.get('id')==result.get('tool_call_id')),None)
-        if not call: return False
+        if not call:
+            return False
         try:
             value=json.loads(result.get('content') or '{}')
         except (ValueError,TypeError):
             return False
-        if not isinstance(value,dict): return False
+        if not isinstance(value,dict):
+            return False
         if value.get('category') in {'note_progress','memory_progress'} and value.get('ok') is False:
             index-=2  # A rejected notes call is not a different task action.
             continue

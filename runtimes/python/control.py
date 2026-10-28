@@ -1,7 +1,6 @@
 """Root-owned sandbox supervisor. No source is imported into this process."""
 import argparse
 import ctypes
-import hashlib
 import importlib.util
 import json
 import os
@@ -140,7 +139,7 @@ def execute(operation, timeout, calculation_path):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("action", choices=["prepare", "execute", "cancel", "inspect", "read"])
-    parser.add_argument("--operation", choices=["build", "validate", "calculate"], default="build")
+    parser.add_argument("--operation", choices=["build", "validate", "calculate", "measure"], default="build")
     parser.add_argument("--timeout", type=int, default=180)
     parser.add_argument("--path", default="")
     args = parser.parse_args()

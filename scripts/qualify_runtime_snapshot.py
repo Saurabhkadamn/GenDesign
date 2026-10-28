@@ -19,7 +19,7 @@ from vercel.sandbox import SandboxCredentials, SandboxServiceOptions
 ROOT = Path(__file__).resolve().parents[1]
 RUNTIME = ROOT / "runtimes/python"
 SOURCES = ["uv.lock", "pyproject.toml", "forma_runtime.py", "requirements_check.py",
-           "geometry_inspection.py", "control.py", "assembly_state.py", "native_assembly.py",
+           "geometry_inspection.py", "geometry_queries.py", "control.py", "assembly_state.py", "native_assembly.py",
            "bom.py", "drawings.py", "drawing_export.py", "runtime_identity.py"]
 JSON_HASH = "aaf127c04cb31c406e5b04a63f1ae89369fccde6d8fa7cdda1ed4f32dfc5de63"
 

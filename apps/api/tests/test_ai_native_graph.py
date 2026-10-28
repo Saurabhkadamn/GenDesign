@@ -24,6 +24,37 @@ def state(**updates):
     return value
 
 
+def test_research_checkpoint_preserves_exact_requirement_bindings():
+    requirements = [{'id':'origin','kind':'center','description':'Keep grounding unchanged',
+                     'componentId':'explicit_datum','center':[1,2,3]}]
+    snapshot = {'manifest':{'nativeAssembly':{'groundedInstances':['root']},'rootComponentId':'root'},'files':{}}
+    result = design.checkpoint_view(state(harness_version=4,requirements=requirements),snapshot)
+    assert result['requirements'] == requirements
+    assert result['requirements'] is not requirements
+
+
+@pytest.mark.asyncio
+async def test_research_recovery_returns_evidence_to_lead_without_another_fixed_repair_plan(monkeypatch):
+    from forma_api.graphs import recovery
+    snapshot = {'manifest':{'components':[]},'files':{'parts/broken.py':'source'}}
+    async def load(_run): return snapshot
+    async def row(_state): return {'id':'run','project_id':'project'}
+    async def record(*args, **kwargs): return {'id':'recovery-record'}
+    async def event(*args, **kwargs): pass
+    monkeypatch.setattr(design.run_service,'load_candidate',load)
+    monkeypatch.setattr(design,'run_row',row)
+    monkeypatch.setattr(recovery,'append_record',record)
+    monkeypatch.setattr(design.repo,'event',event)
+    pending = {'id':'delegate','name':'delegate'}
+    result = await design.cad_replan(state(harness_version=4,research_mode=True,
+        coordinator_pending_call=pending,coordinator_history=[{'role':'assistant','tool_calls':[{
+            'id':'delegate','type':'function','function':{'name':'delegate','arguments':'{}'}}]}]))
+    assert result['phase']=='coordinator_session'
+    response = json.loads(result['coordinator_history'][-1]['content'])
+    assert response['ok'] is False and response['recordId']=='recovery-record'
+    assert result['coordinator_pending_call']=={} and result['final_message']==''
+
+
 @pytest.mark.asyncio
 async def test_multiple_provider_calls_checkpoint_remaining_actions(monkeypatch, graph_mocks):
     calls = [
@@ -53,6 +84,82 @@ async def test_multiple_provider_calls_checkpoint_remaining_actions(monkeypatch,
     assert "deferred_calls" not in calls[0]  # cached provider result remains immutable
     assert usage["model_calls"] == 1
     assert "candidate" not in graph_mocks  # no additional edit happened
+
+
+@pytest.mark.asyncio
+async def test_research_multi_call_preserves_signed_message_and_all_tool_relationships(monkeypatch, graph_mocks):
+    calls = [{'id':'first','name':'read_file','input':{'path':'parts/a.py'}},
+             {'id':'second','name':'read_file','input':{'path':'parts/b.py'}}]
+    message = {'role':'assistant','content':'Inspect both files.',
+        'reasoning_details':[{'type':'reasoning.encrypted','data':'opaque-signature'}],
+        'tool_calls':[{'id':c['id'],'type':'function','function':{'name':c['name'],
+            'arguments':json.dumps(c['input'])}} for c in calls]}
+    async def turn(*args,**kwargs):
+        return {'message':deepcopy(message),'calls':deepcopy(calls),'inputTokens':10,'outputTokens':20}
+    monkeypatch.setattr(design.models,'turn',turn)
+    call, history, usage = await design.agent_tool_turn(state(harness_version=4,research_mode=True),
+        model_role='cad',prompt_role='cad',node='cad-session',context={},history=[],tools=[])
+    assert history[0]==message
+    assert usage['cad_pending_actions']==[]
+    assert json.loads(history[1]['content'])['category']=='deferred'
+    complete = design.bounded_history([*history,design.tool_message(call,{'ok':True,'content':'source A'})])
+    assert complete[0]==message
+    assert {m['tool_call_id'] for m in complete[1:]}=={'first','second'}
+
+
+@pytest.mark.asyncio
+async def test_research_structured_correction_has_no_repair_counter_stop(monkeypatch, graph_mocks):
+    from forma_api.graphs import structured
+    from forma_api.contracts import Contract
+    from langgraph.checkpoint.memory import InMemorySaver
+    from langgraph.graph import StateGraph,START,END
+    from forma_api.graphs.state import AgentState
+    from forma_api.graphs.jobs import durable_node
+    from forma_api.services.runs import lease_context
+    class Result(Contract):
+        value: int
+    calls, records, jobs = [], [], {}
+    async def turn(config,messages,tools,**kwargs):
+        calls.append(deepcopy(messages))
+        arguments = {'value':'not-an-integer' if len(calls)<4 else 11}
+        return {'calls':[{'id':f'call-{len(calls)}','name':'submit','input':arguments}],
+            'message':{'role':'assistant','content':'','reasoning_details':[{'type':'reasoning.encrypted','data':f'signature-{len(calls)}'}],
+                'tool_calls':[{'id':f'call-{len(calls)}','type':'function','function':{
+                    'name':'submit','arguments':json.dumps(arguments)}}]},'inputTokens':10,'outputTokens':20}
+    async def record(*args,**kwargs): records.append(args)
+    async def rpc(name,args):
+        if name=='check_research_fence': return True
+        if name=='record_research_generation': return None
+        if name=='begin_research_job': return jobs.get(args['p_key'],{'status':'running'})
+        assert name=='commit_research_job'
+        jobs[args['p_key']]={'status':'complete','result':args['p_result']}
+        return 0
+    async def session(input_state):
+        result,usage = await design.structured_turn(input_state,'engineering','analysis','Calculate from the brief.','submit',Result)
+        assert result.value==11
+        return {**usage,'phase':'done'}
+    monkeypatch.setattr(design.models,'turn',turn)
+    monkeypatch.setattr(design.db,'rpc',rpc)
+    monkeypatch.setattr(structured,'append_record',record)
+    builder = StateGraph(AgentState)
+    builder.add_node('analysis',durable_node('analysis',session))
+    builder.add_edge(START,'analysis')
+    builder.add_conditional_edges('analysis',lambda s:END if s['phase']=='done' else 'analysis')
+    saver = InMemorySaver()
+    config = {'configurable':{'thread_id':'structured-recovery'}}
+    initial = state(harness_version=4,research_mode=True,phase='analysis')
+    token = lease_context.set({'run_id':initial['run_id'],'worker':'w','generation':1,'candidate_version':0})
+    try:
+        # A distinct graph instance resumes each scheduling boundary.
+        for index in range(4):
+            result = await builder.compile(checkpointer=saver,interrupt_after='*').ainvoke(initial if index==0 else None,config)
+        assert result['phase']=='done' and result['model_calls']==4
+        assert len(records)==3
+        prior_assistant = next(m for m in calls[1] if m['role']=='assistant')
+        assert prior_assistant['reasoning_details'][0]['data']=='signature-1'
+        assert any(m.get('tool_call_id')=='call-1' for m in calls[1])
+    finally:
+        lease_context.reset(token)
 
 
 @pytest.mark.asyncio
@@ -510,7 +617,7 @@ async def test_cad_session_enforces_calculation_role_boundary(monkeypatch, graph
 
 
 @pytest.mark.asyncio
-async def test_cad_session_does_not_repeat_engineering_for_unchanged_workspace(monkeypatch, graph_mocks):
+async def test_cad_can_revisit_engineering_for_unchanged_workspace(monkeypatch, graph_mocks):
     arguments = {"task": "Rerun the same calculation."}
 
     async def turn(*_args, **_kwargs):
@@ -524,51 +631,37 @@ async def test_cad_session_does_not_repeat_engineering_for_unchanged_workspace(m
     empty = await design.run_service.load_candidate(state()["run_id"])
     result = await design.cad_session(state(
         engineering_summary="Already analyzed.", engineering_candidate_hash=design.digest(empty)))
-    assert result["phase"] == "cad_session"
-    assert "unchanged_engineering_request" in result["cad_history"][-1]["content"]
+    assert result["phase"] == "engineering_analysis"
+    assert result["pending_cad_call"]["name"] == "request_engineering"
 
-
-@pytest.mark.asyncio
-async def test_engineering_contract_failure_continues_to_cad_as_unverified(monkeypatch, graph_mocks):
-    request = """Design Task: a mounting bracket with a 2g static load, material selection,
-    and a minimum factor of safety of 2. Create the complete CAD design."""
-
-    async def structured_failure(*_args, **_kwargs):
-        raise design.Pause("The engineering model returned an invalid analysis result twice. summary: missing")
-
-    monkeypatch.setattr(design, "structured_turn", structured_failure)
-    result = await design.engineering_analysis(state(original_request=request))
-
-    assert result["phase"] == "cad_session"
-    assert "typed analysis contract" in result["engineering_summary"]
-    assert any("unverified" in item.lower() for item in result["engineering_remarks"])
-    assert result["model_calls"] == 2
 
 
 @pytest.mark.asyncio
-async def test_coordinator_engineering_handoff_goes_to_cad_without_another_model_call(
-        monkeypatch, graph_mocks):
-    async def analysis(*_args, **_kwargs):
-        return design.Analysis(
-            summary="Axis and fit calculated.",
-            selected_material="Assembly components use different materials.",
-            manufacturing_method="Machined mount, purchased bushings and fasteners.",
-            recommendations=["Preserve the compound-angle axis."],
-        ), {"model_calls": 3, "search_count": 0}
+async def test_engineering_bad_tool_stays_repairable(monkeypatch, graph_mocks):
+    async def turn(*args, **kwargs):
+        call = {"id":"bad", "name":"calculate", "input":{"path":"not-a-file"}}
+        history = [{"role":"user","content":"Calculate"},{"role":"assistant","tool_calls":[{"id":"bad","type":"function","function":{"name":"calculate","arguments":json.dumps(call["input"])}}]}]
+        return call, history, {"model_calls":1}
+    monkeypatch.setattr(design, "agent_tool_turn", turn)
+    result = await design.engineering_analysis(state(original_request="Calculate the bracket stress."))
+    assert result["phase"] == "engineering_analysis"
+    feedback = json.loads(result["engineering_history"][-1]["content"])
+    assert feedback["ok"] is False
+    assert "repair" in feedback["instruction"].lower() or "correct" in feedback["instruction"].lower()
 
-    monkeypatch.setattr(design, "structured_turn", analysis)
-    request = "Design the suspension assembly."
-    result = await design.engineering_analysis(state(
-        original_request=request,
-        engineering_from_coordinator=True,
-        coordinator_pending_call={"id": "engineering-call"},
-        coordinator_history=[{"role": "user", "content": request}],
-    ))
+
+
+@pytest.mark.asyncio
+async def test_engineering_finish_returns_to_cad_with_current_evidence(monkeypatch, graph_mocks):
+    async def turn(*args, **kwargs):
+        return {"id":"finish", "name":"finish", "input":{"message":"Calculation remains unverified."}}, [], {"model_calls":3}
+    monkeypatch.setattr(design, "agent_tool_turn", turn)
+    result = await design.engineering_analysis(state(engineering_from_coordinator=True))
     assert result["phase"] == "cad_session"
-    assert result["coordinator_task"] == request
-    assert result["engineering_summary"] == "Axis and fit calculated."
+    assert result["engineering_summary"] == "Calculation remains unverified."
     assert result["model_calls"] == 3
-    assert result["coordinator_pending_call"] == {}
+    assert result["engineering_candidate_hash"]
+
 
 
 def test_engineering_analysis_accepts_component_specific_material_choices():
@@ -615,7 +708,7 @@ async def test_reviewer_returns_measured_defect_to_cad(monkeypatch, graph_mocks)
 
 
 @pytest.mark.asyncio
-async def test_two_reviewer_repair_cycles_publish_remaining_findings(monkeypatch, graph_mocks):
+async def test_two_review_repairs_do_not_publish_failed_geometry(monkeypatch, graph_mocks):
     graph_mocks["candidate"] = {
         "manifest": {"schemaVersion": 1, "units": "mm", "components": [], "instances": [],
             "rootComponentId": None, "references": [], "joints": [],
@@ -637,13 +730,14 @@ async def test_two_reviewer_repair_cycles_publish_remaining_findings(monkeypatch
     monkeypatch.setattr(design.models, "turn", turn)
     result = await design.review_session(state(
         validation={"report": {"inspection": {}}}, review_repairs=2))
-    assert result["phase"] == "publish"
-    assert result["review"]["action"] == "publish"
-    assert "remaining findings" in result["review"]["summary"]
+    assert result["phase"] == "cad_session"
+    assert result["review"]["action"] == "repair"
+    assert result["review"]["findings"]
+
 
 
 @pytest.mark.asyncio
-async def test_repeated_review_finding_stops_repair_loop(monkeypatch, graph_mocks):
+async def test_repeated_review_finding_remains_a_repair(monkeypatch, graph_mocks):
     graph_mocks["candidate"] = {
         "manifest": {"schemaVersion": 1, "units": "mm", "components": [], "instances": [],
             "rootComponentId": None, "references": [], "joints": [],
@@ -666,9 +760,10 @@ async def test_repeated_review_finding_stops_repair_loop(monkeypatch, graph_mock
     state_value = state(validation={"report": {"inspection": {}}}, review_repairs=1,
         review_fingerprint=design.review_fingerprint(review), candidate_hash="new-candidate")
     result = await design.review_session(state_value)
-    assert result["phase"] == "publish"
-    assert result["review"]["action"] == "publish"
-    assert "same actionable finding remained" in result["review"]["summary"]
+    assert result["phase"] == "cad_session"
+    assert result["review"]["action"] == "repair"
+    assert result["review"]["findings"]
+
 
 
 @pytest.mark.asyncio
@@ -752,7 +847,7 @@ async def test_reviewer_preflight_rejects_uninspectable_assembly_inventory(monke
 
 
 @pytest.mark.asyncio
-async def test_reviewer_tool_budget_forces_a_decision(monkeypatch, graph_mocks):
+async def test_reviewer_keeps_reading_and_retrieval_available(monkeypatch, graph_mocks):
     graph_mocks["candidate"] = {
         "manifest": {"schemaVersion": 1, "units": "mm", "components": [], "instances": [],
             "rootComponentId": None, "references": [], "joints": [],
@@ -762,7 +857,8 @@ async def test_reviewer_tool_budget_forces_a_decision(monkeypatch, graph_mocks):
     review = {"summary": "Enough evidence gathered.", "action": "publish", "findings": []}
 
     async def turn(*_args, **kwargs):
-        assert [tool["function"]["name"] for tool in _args[2]] == ["submit_review"]
+        assert {'submit_review','read_file','read_project_source','read_project_records','measure_geometry'} <= {
+            tool['function']['name'] for tool in _args[2]}
         return {"message": {"role": "assistant", "content": "", "tool_calls": [{
             "id": "review-budget", "type": "function", "function": {
                 "name": "submit_review", "arguments": json.dumps(review)}}]},
@@ -892,7 +988,7 @@ async def test_full_build_failure_survives_source_edit_and_scopes_component_prob
     assert captured["context"]["activeFailure"]["file"] == "parts/drive_gear.py"
     assert captured["context"]["activeFailure"]["componentId"] == "drive_gear"
     probe = next(tool for tool in captured["tools"] if tool["function"]["name"] == "test_component")
-    assert probe["function"]["parameters"]["properties"]["componentId"]["enum"] == ["drive_gear"]
+    assert "enum" not in probe["function"]["parameters"]["properties"]["componentId"]
 
     repeated_failure_after_line_shift = {**failure, "error": {
         **failure["error"], "fingerprint": "same-kernel-failure-after-edit",
@@ -905,7 +1001,7 @@ async def test_full_build_failure_survives_source_edit_and_scopes_component_prob
     captured.clear()
     await design.cad_session_turn(after_second_edit)
     assert captured["context"]["activeFailure"]["repeatedCount"] == 2
-    assert "test_component" not in {tool["function"]["name"] for tool in captured["tools"]}
+    assert "test_component" in {tool["function"]["name"] for tool in captured["tools"]}
 
     # Even when a source edit produces a fresh error fingerprint, one focused
     # probe is enough for this active failed file until a complete build passes.
@@ -913,7 +1009,7 @@ async def test_full_build_failure_survives_source_edit_and_scopes_component_prob
         "cad_component_probe_failures": [design.failure_probe_key(first["cad_last_build_failure"])]}
     captured.clear()
     await design.cad_session_turn(after_first_probe)
-    assert "test_component" not in {tool["function"]["name"] for tool in captured["tools"]}
+    assert "test_component" in {tool["function"]["name"] for tool in captured["tools"]}
 
 
 @pytest.mark.asyncio
@@ -936,7 +1032,7 @@ async def test_assembly_build_failure_does_not_offer_isolated_component_probe(mo
     monkeypatch.setattr(design, "agent_tool_turn", turn)
     await design.cad_session_turn({**state(run_id="run"), **stored, "build_result": {}})
     assert captured["context"]["activeFailure"]["failureScope"] == "assembly"
-    assert "test_component" not in {tool["function"]["name"] for tool in captured["tools"]}
+    assert "test_component" in {tool["function"]["name"] for tool in captured["tools"]}
 
 
 @pytest.mark.asyncio
@@ -967,7 +1063,7 @@ async def test_saved_repair_sets_durable_full_build_gate(monkeypatch, graph_mock
 
 
 @pytest.mark.asyncio
-async def test_active_build_failure_requires_full_build_after_saved_repair(monkeypatch, graph_mocks):
+async def test_active_build_failure_keeps_scoped_diagnostics_available(monkeypatch, graph_mocks):
     graph_mocks["candidate"] = design.Snapshot.model_validate({"manifest": {
         "components": [
             {"id": "pump", "name": "Pump", "kind": "assembly", "source": "assemblies/pump.py",
@@ -996,34 +1092,12 @@ async def test_active_build_failure_requires_full_build_after_saved_repair(monke
                     cad_recovery_build_required=True)
     rejected = await design.cad_session_turn(current)
 
-    offered = captured["tools"]
-    assert [tool["function"]["name"] for tool in offered] == ["build"]
-    assert offered[0]["function"]["parameters"]["properties"]["final"]["enum"] == [True]
-    assert "componentId" not in offered[0]["function"]["parameters"]["properties"]
-    assert captured["context"]["requiredBuildAfterRepair"]["editsSinceBuild"] == 0
-    assert rejected["cad_history"][-1]["content"].find("active_failure_requires_build") >= 0
-    assert rejected["cad_pending_actions"] == []
+    offered = {tool["function"]["name"] for tool in captured["tools"]}
+    assert {"read_file", "apply_changes", "test_component", "build"} <= offered
+    assert "requiredBuildAfterRepair" not in captured["context"]
+    feedback = json.loads(rejected["cad_history"][-1]["content"])
+    assert feedback["content"] == graph_mocks["candidate"]["files"]["assemblies/pump.py"]
 
-    build_calls = []
-
-    async def build(build_state):
-        build_calls.append(build_state)
-        return {"phase": "validate", "build_result": {"ok": True}}
-
-    monkeypatch.setattr(design, "build", build)
-    chosen.update({"id": "scoped-build", "name": "build",
-                   "input": {"final": True, "componentId": "housing"}})
-    scoped = await design.cad_session_turn(current)
-    assert scoped["phase"] == "cad_session"
-    assert len(build_calls) == 0
-    assert "active_failure_requires_build" in scoped["cad_history"][-1]["content"]
-
-    chosen.update({"id": "required-build", "name": "build", "input": {"final": True}})
-    accepted = await design.cad_session_turn(current)
-    assert accepted["phase"] == "validate"
-    assert len(build_calls) == 1
-    assert build_calls[0]["build_final"] is True
-    assert accepted["cad_recovery_build_required"] is False
 
 
 @pytest.mark.asyncio
@@ -1198,7 +1272,7 @@ Assembly Requirements:
 
 
 @pytest.mark.asyncio
-async def test_cad_session_withholds_repeated_observation_tools_after_six_decisions(monkeypatch, graph_mocks):
+async def test_cad_keeps_observation_tools_after_six_decisions(monkeypatch, graph_mocks):
     request = "Create a 10 mm cube and inspect the saved source."
     candidate = {"manifest": {
         "schemaVersion": 1, "units": "mm", "components": [{"id": "cube", "name": "Cube",
@@ -1224,14 +1298,13 @@ async def test_cad_session_withholds_repeated_observation_tools_after_six_decisi
     result = await design.cad_session(current)
 
     assert result["phase"] == "cad_session"
-    assert not {"read_file", "search_files", "inspect_geometry", "diagnose_workspace",
-                "read_working_memory"}.intersection(seen["tools"])
+    assert {"read_file", "search_files", "inspect_geometry", "diagnose_workspace"}.issubset(seen["tools"])
     assert {"apply_changes", "build", "test_component", "ask_user"}.issubset(seen["tools"])
-    assert seen["context"]["observationLimit"]["maximum"] == 3
+    assert "observationLimit" not in seen["context"]
 
 
 @pytest.mark.asyncio
-async def test_three_distinct_source_reads_force_an_edit_on_the_next_model_turn(monkeypatch, graph_mocks):
+async def test_three_distinct_source_reads_preserve_action_choice(monkeypatch, graph_mocks):
     request = "Build a cube and use its saved source to make a focused correction."
     graph_mocks["candidate"] = {"manifest": {
         "schemaVersion": 1, "units": "mm", "components": [{"id": "cube", "name": "Cube",
@@ -1268,7 +1341,7 @@ async def test_three_distinct_source_reads_force_an_edit_on_the_next_model_turn(
         current.update(await design.cad_session(current))
 
     assert [item["action"] for item in decisions] == ["read_file"] * 3 + ["apply_changes"]
-    assert "read_file" not in decisions[-1]["tools"]
+    assert "read_file" in decisions[-1]["tools"]
     assert "apply_changes" in decisions[-1]["tools"]
     assert graph_mocks["candidate"]["files"]["parts/cube.py"] == (
         "def build(parameters, dependencies):\n    return 1")
@@ -1534,8 +1607,7 @@ async def test_manifest_repair_survives_history_loss_and_accepts_atomic_fix(monk
     second = await design.cad_session(current)
     assert second["cad_contract_repair"]["stalledAttempts"] == 2
     assert contexts[-1][0]["workspaceRepair"]["issues"]
-    assert {tool["function"]["name"] for tool in contexts[-1][1]} == {
-        "apply_changes", "read_file", "search_files"}
+    assert {"apply_changes", "read_file", "search_files", "ask_user"} <= {tool["function"]["name"] for tool in contexts[-1][1]}
     manifest["components"].append({"id": "pump", "name": "Pump", "kind": "assembly",
                                    "source": "assemblies/pump.py", "dependencies": ["housing"]})
     current.update(second)
@@ -1734,7 +1806,7 @@ async def test_empty_workspace_does_not_offer_reads_of_nonexistent_files(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_second_reviewer_repair_publishes_findings_for_user_edit(monkeypatch, graph_mocks):
+async def test_second_reviewer_repair_preserves_failed_requirement(monkeypatch, graph_mocks):
     graph_mocks["candidate"] = {
         "manifest": {"schemaVersion": 1, "units": "mm", "components": [], "instances": [],
             "rootComponentId": None, "references": [], "joints": [],
@@ -1756,9 +1828,10 @@ async def test_second_reviewer_repair_publishes_findings_for_user_edit(monkeypat
     monkeypatch.setattr(design.models, "turn", turn)
     result = await design.review_session(state(
         validation={"report": {"inspection": {}}}, review_repairs=2))
-    assert result["phase"] == "publish"
-    assert result["review"]["action"] == "publish"
-    assert "remaining findings" in result["review"]["summary"]
+    assert result["phase"] == "cad_session"
+    assert result["review"]["action"] == "repair"
+    assert result["review"]["findings"]
+
 
 
 def test_engineering_material_and_process_can_be_explanatory_text():
@@ -1860,19 +1933,18 @@ async def test_resumed_cad_answer_is_presented_as_user_input(monkeypatch, graph_
     await design.cad_session({**initial, **resumed})
 
 
-def test_explicit_assumption_permission_turns_clarification_into_actionable_guidance():
+def test_assumption_keywords_do_not_grant_blanket_permission():
     current = state(original_request="Design the housing and gears.",
         clarified_request=("Design the housing and gears.\n\nUser clarification: "
             "Mark unspecified dimensions unverified or state any necessary modeling assumption explicitly."),
         project_context={"authoritativeInputs": {"originalBrief": "Use a 34 mm center distance.",
             "humanCorrections": []}})
     answer = design.permitted_assumption_answer(current, "What is the cover thickness and bolt spacing?")
-    assert answer
-    assert "Do not ask again for supplied values" in answer
-    assert "labeled as assumptions/unverified" in answer
+    assert answer is None  # Keyword permission cannot authorize an unrelated missing decision.
 
 
-def test_user_pump_correction_wording_authorizes_labeled_assumptions():
+
+def test_pump_wording_does_not_authorize_every_missing_choice():
     current = state(original_request="Build the external gear pump.",
         clarified_request=("Build the external gear pump. User clarification: The housing footprint, "
             "cover thicknesses, bolt and dowel positions, and exact O-ring size are not specified. "
@@ -1880,8 +1952,8 @@ def test_user_pump_correction_wording_authorizes_labeled_assumptions():
             "or make explicit modeling assumptions and label them."))
     answer = design.permitted_assumption_answer(current,
         "Please provide the housing footprint, cover thicknesses, bolt locations and exact O-ring size.")
-    assert answer
-    assert "Do not ask again for supplied values" in answer
+    assert answer is None  # Keyword permission cannot authorize an unrelated missing decision.
+
 
 
 def test_clarification_remains_available_without_user_assumption_permission():
@@ -1890,7 +1962,7 @@ def test_clarification_remains_available_without_user_assumption_permission():
 
 
 @pytest.mark.asyncio
-async def test_coordinator_does_not_pause_after_user_authorized_assumptions(monkeypatch, graph_mocks):
+async def test_coordinator_question_is_not_automatically_answered_by_keyword(monkeypatch, graph_mocks):
     arguments = {"question": "What are the housing footprint and cover thicknesses?"}
 
     async def turn(_config, _messages, _tools, **_kwargs):
@@ -1907,10 +1979,9 @@ async def test_coordinator_does_not_pause_after_user_authorized_assumptions(monk
         project_context={"revision": None, "recentRevisions": [], "previousMessages": [],
             "authoritativeInputs": {"originalBrief": "Gear module 2.0 mm.", "humanCorrections": []}})
     result = await design.coordinator_session(current)
-    assert result["phase"] == "coordinator_session"
-    feedback = json.loads(result["coordinator_history"][-1]["content"])
-    assert feedback["resolvedFromUserInstructions"] is True
-    assert "Do not ask again for supplied values" in feedback["message"]
+    assert result["phase"] == "coordinator_question"
+    assert result["question"] == arguments["question"]
+
 
 
 @pytest.mark.asyncio

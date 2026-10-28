@@ -1,5 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "crons": [{"path": "/api/maintenance/research-dispatch", "schedule": "0 3 * * *"}],
   "services": {
     "web": {
       "root": "apps/web",

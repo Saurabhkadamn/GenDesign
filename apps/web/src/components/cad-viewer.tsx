@@ -95,27 +95,35 @@ class ViewerBoundary extends Component<{ children: ReactNode }, { failed: boolea
     );
   }
 }
-export function CadViewer({
-  artifactId,
-  hidden,
-  selected,
-  onSelect,
-  fitVersion,
-  wireframe,
-  grid,
-}: {
+type CadViewerProps = {
   artifactId: string;
+  artifactEndpoint?: string;
   hidden: string[];
   selected: string[];
   onSelect: (id: string | null) => void;
   fitVersion: number;
   wireframe: boolean;
   grid: boolean;
-}) {
+};
+
+export function CadViewer(props: CadViewerProps) {
+  const endpoint = props.artifactEndpoint ?? `artifacts/${props.artifactId}`;
+  return <CadArtifactPreview key={endpoint} endpoint={endpoint} {...props} />;
+}
+
+function CadArtifactPreview({
+  endpoint,
+  hidden,
+  selected,
+  onSelect,
+  fitVersion,
+  wireframe,
+  grid,
+}: CadViewerProps & { endpoint: string }) {
   const [state, setState] = useState<{ url?: string; error?: string }>({});
   useEffect(() => {
     let active = true;
-    api<{ url: string }>(`artifacts/${artifactId}`)
+    api<{ url: string }>(endpoint)
       .then((data) => {
         if (active) setState(data);
       })
@@ -125,7 +133,7 @@ export function CadViewer({
     return () => {
       active = false;
     };
-  }, [artifactId]);
+  }, [endpoint]);
   if (state.error) return <div className="viewer-error">{state.error}</div>;
   if (!state.url) return <div className="viewer-loading">Loading geometry…</div>;
   return (

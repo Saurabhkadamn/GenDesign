@@ -2,16 +2,16 @@
 import asyncio
 import json
 import time
+from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4, uuid5, NAMESPACE_URL
 
-from fastapi import HTTPException
 from pydantic import ValidationError
 
 from . import db, models, repository as repo, tracing
 from .config import settings
 from .contracts import AppSettings, CalculationResult, Snapshot, TERMINAL
 from .execution import ExecutionFailure, SandboxExpired, build_error, digest, executor, identity
-from .prompts import VERSION as PROMPT_VERSION, system_prompt
+from .prompts_v3 import VERSION as PROMPT_VERSION, system_prompt
 from .requirements import design_work_requested, merge_requirements
 from .assembly_requirements import check_assembly_preservation, normalize_assembly_requirements
 from .tools import model_tools, parameter_patch, parse_tool, source_patch, updated_manifest
@@ -21,10 +21,43 @@ class Pause(Exception):
     pass
 
 
-async def operation(run, key, kind, callback, *, idempotent=False):
+class ProviderDeferred(Pause):
+    def __init__(self, seconds=60):
+        self.seconds = max(1,int(seconds))
+        super().__init__(f"Provider requested a cooldown of {self.seconds} seconds; saved work will resume automatically.")
+
+
+async def operation(run, key, kind, callback, *, idempotent=False, input_identity=None):
+    from .services.research_execution import fenced_operation
+    from .services.runs import lease_context
+    lease = lease_context.get()
+    if lease:
+        from .services.research_execution import renew_fence
+        await renew_fence()
+    input_hash = digest(input_identity) if input_identity is not None else None
+    if lease and input_hash is None:
+        input_hash = digest({'operation':key,'kind':kind,'candidateVersion':lease['candidate_version']})
     old = await db.one("run_operations", {"run_id": f"eq.{run['id']}", "operation_key": f"eq.{key}"}, required=False)
+    async def record(status, result=None):
+        if lease:
+            return await db.rpc('record_research_operation',{'p_run':run['id'],'p_worker':lease['worker'],
+                'p_generation':lease['generation'],'p_key':key,'p_kind':kind,'p_hash':input_hash,
+                'p_status':status,'p_result':result})
+        payload = {'status':status,'result':result,'updated_at':repo.utcnow()}
+        if old:
+            return await db.update('run_operations',payload,run_id=run['id'],operation_key=key)
+        return await db.insert('run_operations',{'run_id':run['id'],'operation_key':key,'kind':kind,
+            **payload,**({'input_hash':input_hash} if input_hash else {})})
+    if old and input_hash and old.get("input_hash") and old["input_hash"] != input_hash:
+        raise Pause("Operation identity belongs to different inputs; reconcile the saved job before executing.")
     if old and old["status"] == "complete":
         return old["result"]
+    not_before = (old or {}).get('result') or {}
+    if run.get('research_mode') and not_before.get('retryNotBefore'):
+        remaining = (datetime.fromisoformat(not_before['retryNotBefore'])-datetime.now(timezone.utc)).total_seconds()
+        if remaining>0:
+            import math
+            raise ProviderDeferred(math.ceil(remaining))
     # A definitive provider throttle did not execute a model request.  An
     # explicit Continue may retry it; timeouts and unknown failures remain
     # non-repeatable because the provider may have accepted the request.
@@ -36,20 +69,26 @@ async def operation(run, key, kind, callback, *, idempotent=False):
     )
     if old and not idempotent:
         if old["status"] == "started":
-            await db.update("run_operations", {"status": "ambiguous"}, run_id=run["id"], operation_key=key)
+            await record('ambiguous',old.get('result'))
         if not retryable_explicit_failure:
             raise Pause("The previous external request has an uncertain or failed outcome. It was not repeated automatically. Review the connection and Continue when ready.")
-        await db.update("run_operations", {"status": "started", "result": None, "updated_at": repo.utcnow()},
-                        run_id=run["id"], operation_key=key)
+        await record('started')
     if not old:
-        await db.insert("run_operations", {"run_id": run["id"], "operation_key": key, "kind": kind, "status": "started"})
+        await record('started')
+        old = {'status':'started','input_hash':input_hash}
     try:
-        result = await callback()
+        async with fenced_operation():
+            result = await callback()
     except models.ModelFailure as exc:
-        await db.update("run_operations", {"status": "ambiguous" if exc.category in ("timeout", "connection") else "failed",
-            "result": {"category": exc.category, "diagnostic": tracing.sanitize(exc.diagnostic)}}, run_id=run["id"], operation_key=key)
+        failure = {'category':exc.category,'diagnostic':tracing.sanitize(exc.diagnostic)}
+        if exc.category in {'rate_limit','overloaded'}:
+            failure['retryNotBefore'] = (datetime.now(timezone.utc)+timedelta(seconds=exc.retry_after_seconds)).isoformat()
+            failure['retryAfterSeconds'] = exc.retry_after_seconds
+        await record('ambiguous' if exc.category in ('timeout','connection') else 'failed',failure)
+        if run.get("research_mode") and exc.category in {"rate_limit","overloaded"}:
+            raise ProviderDeferred(getattr(exc,"retry_after_seconds",60)) from None
         raise Pause(str(exc)) from None
-    await db.update("run_operations", {"status": "complete", "result": result, "updated_at": repo.utcnow()}, run_id=run["id"], operation_key=key)
+    await record('complete',result)
     return result
 
 
@@ -108,7 +147,7 @@ async def destroy_sandboxes(cp):
 async def finish_run(run, cp, worker, status, message):
     await destroy_sandboxes(cp)
     await db.rpc("finish_run_v2", {"p_run": run["id"], "p_worker": worker, "p_status": status, "p_message": message, "p_checkpoint": cp})
-    await tracing.record(run, f"run", "Forma design run", cp["startedNs"], inputs={"request": run["message"]},
+    await tracing.record(run, "run", "Forma design run", cp["startedNs"], inputs={"request": run["message"]},
         outputs={"status": status, "message": message, "revisionId": cp.get("published")},
         attributes={"repair.count": cp["repairs"], "model.calls": cp["modelCalls"]}, error=status in ("failed", "paused"))
     return "done"
@@ -131,6 +170,16 @@ async def replace_expired_sandbox(run, cp):
     cp["sandboxReady"] = False
 
 
+async def reserve_sandbox_budget(run, key: str, seconds: int, budget: int) -> bool:
+    from .services.receipts import fence
+
+    owner = fence(run)
+    params = {"p_run": run["id"], "p_key": key, "p_seconds": seconds,
+              "p_budget": budget}
+    return await db.rpc("reserve_research_execution" if owner else "reserve_execution",
+                        {**params, **owner} if owner else params)
+
+
 async def ensure_sandbox(run, cp, limits):
     # A graph checkpoint can outlive its Vercel Sandbox. Do not trust the
     # persisted ready flag or a completed create operation without a live probe.
@@ -147,9 +196,9 @@ async def ensure_sandbox(run, cp, limits):
         # Reserve the execution budget before recording an external sandbox
         # operation. A local quota rejection means no provider call started;
         # it must not leave a misleading `started` ledger row behind.
-        if settings().executor == "vercel" and settings().resource_budgets_enabled:
-            reserved = await db.rpc("reserve_execution", {"p_run": run["id"], "p_key": name,
-                "p_seconds": 1800, "p_budget": limits.monthlySandboxSeconds})
+        if settings().executor == "vercel" and settings().resource_budgets_enabled and not run.get("research_mode"):
+            reserved = await reserve_sandbox_budget(
+                run, name, 1800, limits.monthlySandboxSeconds)
             if not reserved:
                 raise Pause("The monthly CAD execution budget is exhausted. Review the limit in Settings.")
 
@@ -233,7 +282,8 @@ async def model_turn(run, cp, limits):
 
 async def build_candidate(run, cp, limits, key):
     snapshot = Snapshot.model_validate(cp["snapshot"]).model_dump()
-    cp["requirements"] = normalize_assembly_requirements(cp["requirements"], snapshot["manifest"])
+    if run.get('harness_version',3)<4:
+        cp["requirements"] = normalize_assembly_requirements(cp["requirements"], snapshot["manifest"])
     expected = identity(snapshot, cp["requirements"])
     validated = cp.get("validated") or {}
     if validated.get("identity") == expected:
@@ -246,7 +296,8 @@ async def build_candidate(run, cp, limits, key):
     await ensure_sandbox(run, cp, limits)
     cp["attempts"] += 1
     await repo.event(run["id"], f"Building candidate · attempt {cp['attempts']}.", stage="execution", attempt=cp["attempts"])
-    encode = lambda x: json.dumps(x).encode()
+    def encode(value):
+        return json.dumps(value).encode()
     metadata = {"manifest.json": encode(snapshot["manifest"]), "requirements.json": encode(cp["requirements"]), "identity.json": encode(expected)}
     files = {**metadata, **{path: content.encode() for path, content in snapshot["files"].items() if not path.startswith("calculations/")}}
     started = time.time_ns()
@@ -279,6 +330,13 @@ async def build_candidate(run, cp, limits, key):
         outputs=receipt, attributes={"attempt": cp["attempts"], "candidate.hash": expected["candidate"], "runtime.hash": expected["runtime"]}, error=bool(receipt["exitCode"]))
     if not receipt["clean"] or receipt["timedOut"]:
         await destroy_sandboxes(cp)
+        if run.get('research_mode'):
+            # An isolated CAD operation exceeding its timeout is a repair result,
+            # not a reason to end the whole research run or require Continue.
+            error = build_error(receipt, 'build')
+            error['guidance'] = ('The CAD operation exceeded its execution boundary and its worker was discarded. '
+                'Inspect the failing operation, reduce its scope or change the construction, and continue with saved source.')
+            return await reject_candidate(run,cp,expected,error,limits)
         raise Pause("The CAD process timed out or could not be cleaned up. Its environment was discarded. Continue to create a fresh one.")
     if receipt["exitCode"]:
         return await reject_candidate(run, cp, expected, build_error(receipt, "build"), limits)
@@ -291,9 +349,10 @@ async def validate_step_candidate(run, cp, snapshot, metadata, step_files, limit
     # One fresh validator for this candidate; no Python source or builder memory crosses over.
     validator = cp["validator"]
     started = time.time_ns()
-    if settings().executor == "vercel" and settings().resource_budgets_enabled:
-        reserved = await db.rpc("reserve_execution", {"p_run": run["id"], "p_key": validator,
-            "p_seconds": limits.commandTimeoutSeconds + 60, "p_budget": limits.monthlySandboxSeconds})
+    if settings().executor == "vercel" and settings().resource_budgets_enabled and not run.get("research_mode"):
+        reserved = await reserve_sandbox_budget(
+            run, validator, limits.commandTimeoutSeconds + 60,
+            limits.monthlySandboxSeconds)
         if not reserved:
             raise Pause("The monthly validation budget is exhausted. The candidate was not published.")
     await executor().create(validator, lifetime=limits.commandTimeoutSeconds + 60)
@@ -324,15 +383,25 @@ async def validate_step_candidate(run, cp, snapshot, metadata, step_files, limit
             content = await executor().read(validator, artifact["name"])
             if len(content) != artifact["bytes"] or len(content) > limits.maxArtifactBytes:
                 raise ExecutionFailure("Artifact size validation failed")
-            storage_path = f"{run['owner_id']}/{run['project_id']}/{run['id']}/{expected['candidate']}/{artifact['name']}"
-            await db.insert("artifact_staging", {"storage_path": storage_path, "run_id": run["id"],
-                "project_id": run["project_id"], "bytes": len(content)}, conflict="storage_path")
+            from hashlib import sha256
+            content_hash = sha256(content).hexdigest()
+            suffix = f"{digest(expected)}/{content_hash}/" if run.get("harness_version",3)>=4 else ""
+            storage_path = f"{run['owner_id']}/{run['project_id']}/{run['id']}/{expected['candidate']}/{suffix}{artifact['name']}"
+            from .services.receipts import fence
+            owner = fence(run)
+            if owner:
+                await db.rpc('stage_research_artifact', {**owner,
+                    'p_project': run['project_id'], 'p_path': storage_path,
+                    'p_bytes': len(content)})
+            else:
+                await db.insert("artifact_staging", {"storage_path": storage_path, "run_id": run["id"],
+                    "project_id": run["project_id"], "bytes": len(content)}, conflict="storage_path")
             await db.storage(f"object/cad-private/{db.object_path(storage_path)}", "POST", content=content,
                 content_type={"glb": "model/gltf-binary", "step": "application/step",
                               "json": "application/json", "csv": "text/csv", "svg": "image/svg+xml",
                               "pdf": "application/pdf", "dxf": "image/vnd.dxf"}.get(
                     artifact["name"].rsplit(".", 1)[-1], "application/octet-stream"))
-            artifacts.append({**artifact, "storagePath": storage_path})
+            artifacts.append({**artifact, "storagePath": storage_path, "contentHash":content_hash})
         cp["validated"] = {"identity": expected, "report": report, "artifacts": artifacts}
         cp.pop("lastFailedCandidate", None)
         readiness = ("Draft ready for human review" if cp.get("buildFinal", True)
@@ -357,7 +426,7 @@ async def reject_candidate(run, cp, expected, error, limits):
     if repeated:
         cp["stopAfterTool"] = "The same build failure repeated. Change the source or re-plan the affected component."
     return {"ok": False, "error": error, "attempt": cp["attempts"], "repeated": repeated,
-        "repairsRemaining": max(0, limits.maxRepairs-cp["repairs"])}
+        "repairsRemaining": None if run.get('research_mode') else max(0, limits.maxRepairs-cp["repairs"])}
 
 
 async def execute_tool(run, cp, call, app_settings, worker):
@@ -417,8 +486,8 @@ async def execute_tool(run, cp, call, app_settings, worker):
     if name == "calculate":
         if not value["path"].startswith("calculations/"):
             raise ValueError("Only calculations/ modules may be calculated.")
-        box = cp["sandbox"]
         await ensure_sandbox(run, cp, limits)
+        box = cp["sandbox"]
         expected = identity(snapshot, [])
         await executor().stage(box, {"identity.json": json.dumps(expected).encode(), **{p: s.encode() for p, s in snapshot["files"].items() if p.startswith("calculations/")}})
         receipt = await executor().execute(box, "calculate", limits.commandTimeoutSeconds, value["path"])
@@ -439,8 +508,11 @@ async def execute_tool(run, cp, call, app_settings, worker):
                     f"Repair the calculation output fields and run it again. {details}",
             }}
         cid = str(uuid5(NAMESPACE_URL, f"{run['id']}:calculation:{cp['sequence']}"))
-        await db.insert("calculations", {"id": cid, "run_id": run["id"], "project_id": run["project_id"], "revision_id": run["base_revision_id"], "result": calculation, "reproducible": True}, conflict="id")
-        await db.insert("calculation_sources", {"calculation_id": cid, "source": snapshot["files"][value["path"]], "runtime_version": settings().runtime_version}, conflict="calculation_id")
+        from .services.receipts import calculation as save_calculation
+        await save_calculation(run, {"id": cid, "run_id": run["id"], "project_id": run["project_id"],
+            "revision_id": run["base_revision_id"], "result": calculation, "reproducible": True},
+            source=snapshot['files'][value['path']], source_path=value['path'],
+            candidate_hash=digest(snapshot), runtime=settings().runtime_version)
         cp["calculated"] = True
         return {"ok": True, "result": calculation, "reproducible": True}
     if name == "restore_revision":
@@ -457,13 +529,21 @@ async def execute_tool(run, cp, call, app_settings, worker):
         # Publication here means publishing a successfully built draft. Human
         # review owns design acceptance; automated requirement measurements are
         # advisory and may be empty or unverified for complex assemblies.
-        existing = await db.rest("artifacts", params={"select": "bytes"})
-        if sum(a["bytes"] for a in existing) + sum(a["bytes"] for a in validated["artifacts"]) > limits.storageBudgetBytes:
-            raise Pause("The configured artifact storage budget is exhausted.")
+        if not run.get("research_mode"):
+            existing = await db.rest("artifacts", params={"select": "bytes"})
+            if sum(a["bytes"] for a in existing) + sum(a["bytes"] for a in validated["artifacts"]) > limits.storageBudgetBytes:
+                raise Pause("The configured artifact storage budget is exhausted.")
         revision_id = str(uuid5(NAMESPACE_URL, f"{run['id']}:revision"))
-        cp["published"] = await db.rpc("publish_revision_v2", {"p_run": run["id"], "p_worker": worker, "p_revision": revision_id,
-            "p_summary": value["summary"], "p_manifest": snapshot["manifest"], "p_snapshot": snapshot,
-            "p_artifacts": validated["artifacts"], "p_report": validated["report"], "p_restored": cp.get("restored")})
+        from .services.runs import lease_context
+        lease = lease_context.get()
+        if run.get('harness_version',3)>=4 and (not lease or lease['run_id']!=run['id']):
+            raise ValueError('Research publication requires the current worker lease')
+        publication = {"p_run":run["id"],"p_worker":worker,"p_revision":revision_id,
+            "p_summary":value["summary"],"p_manifest":snapshot["manifest"],"p_snapshot":snapshot,
+            "p_artifacts":validated["artifacts"],"p_report":validated["report"],"p_restored":cp.get("restored")}
+        if lease:
+            publication["p_generation"] = lease["generation"]
+        cp["published"] = await db.rpc("publish_research_revision" if lease else "publish_revision_v2",publication)
         await repo.event(run["id"], "CAD draft and downloadable artifacts published for human review.", stage="publication")
         return {"revisionId": cp["published"], "requirements": validated["report"]["requirements"], "allRequirementsVerified": validated["report"]["allRequirementsVerified"]}
     if name == "ask_user":

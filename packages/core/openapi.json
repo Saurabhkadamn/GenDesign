@@ -21,6 +21,22 @@
         }
       }
     },
+    "/api/maintenance/research-dispatch": {
+      "get": {
+        "summary": "Reconcile Research Dispatch",
+        "operationId": "reconcile_research_dispatch_api_maintenance_research_dispatch_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/session": {
       "get": {
         "summary": "Session",
@@ -176,6 +192,144 @@
         }
       }
     },
+    "/api/runs/{run_id}/draft-artifact": {
+      "get": {
+        "summary": "Draft Artifact",
+        "operationId": "draft_artifact_api_runs__run_id__draft_artifact_get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Run Id"
+            }
+          },
+          {
+            "name": "name",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          },
+          {
+            "name": "candidate",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Candidate"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{project_id}/briefs": {
+      "post": {
+        "summary": "Store Brief",
+        "operationId": "store_brief_api_projects__project_id__briefs_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{project_id}/revisions/{revision_id}/accept": {
+      "post": {
+        "summary": "Accept Engineering Revision",
+        "operationId": "accept_engineering_revision_api_projects__project_id__revisions__revision_id__accept_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "revision_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Revision Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/projects/{project_id}/drawings": {
       "post": {
         "summary": "Submit Drawings",
@@ -294,7 +448,9 @@
               "plot",
               "bom",
               "assembly",
-              "drawing"
+              "drawing",
+              "notebook",
+              "report"
             ],
             "title": "Kind",
             "type": "string"
@@ -850,6 +1006,113 @@
           "offsetMm"
         ],
         "title": "DimensionSpec",
+        "type": "object"
+      },
+      "DraftArtifact": {
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "step",
+              "glb",
+              "plot",
+              "bom",
+              "assembly",
+              "drawing",
+              "notebook",
+              "report"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "bytes": {
+            "title": "Bytes",
+            "type": "integer"
+          },
+          "componentId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Componentid"
+          },
+          "contentHash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Contenthash"
+          }
+        },
+        "required": [
+          "name",
+          "kind",
+          "bytes"
+        ],
+        "title": "DraftArtifact",
+        "type": "object"
+      },
+      "DraftWorkspace": {
+        "properties": {
+          "runId": {
+            "title": "Runid",
+            "type": "string"
+          },
+          "candidateHash": {
+            "title": "Candidatehash",
+            "type": "string"
+          },
+          "current": {
+            "title": "Current",
+            "type": "boolean"
+          },
+          "savedAt": {
+            "title": "Savedat",
+            "type": "string"
+          },
+          "acceptanceState": {
+            "const": "draft",
+            "default": "draft",
+            "title": "Acceptancestate",
+            "type": "string"
+          },
+          "manifest": {
+            "$ref": "#/components/schemas/Manifest"
+          },
+          "artifacts": {
+            "items": {
+              "$ref": "#/components/schemas/DraftArtifact"
+            },
+            "title": "Artifacts",
+            "type": "array"
+          },
+          "validation": {
+            "$ref": "#/components/schemas/ValidationReport"
+          }
+        },
+        "required": [
+          "runId",
+          "candidateHash",
+          "current",
+          "savedAt",
+          "manifest",
+          "artifacts",
+          "validation"
+        ],
+        "title": "DraftWorkspace",
         "type": "object"
       },
       "DrawingReference": {
@@ -1678,6 +1941,55 @@
               }
             ],
             "title": "Tested At"
+          },
+          "pending": {
+            "default": false,
+            "title": "Pending",
+            "type": "boolean"
+          },
+          "activeConfig": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Activeconfig"
+          },
+          "context_length": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Context Length"
+          },
+          "reasoning_token_reserve": {
+            "default": 0,
+            "title": "Reasoning Token Reserve",
+            "type": "integer"
+          },
+          "data_collection": {
+            "default": "deny",
+            "enum": [
+              "deny",
+              "allow"
+            ],
+            "title": "Data Collection",
+            "type": "string"
+          },
+          "qualification": {
+            "additionalProperties": true,
+            "title": "Qualification",
+            "type": "object"
           }
         },
         "required": [
@@ -1895,6 +2207,11 @@
           "must_change_password": {
             "title": "Must Change Password",
             "type": "boolean"
+          },
+          "is_public_demo": {
+            "default": false,
+            "title": "Is Public Demo",
+            "type": "boolean"
           }
         },
         "required": [
@@ -2001,7 +2318,9 @@
             "enum": [
               "passed",
               "failed",
-              "unverified"
+              "unverified",
+              "conflicting",
+              "stale"
             ],
             "title": "Status",
             "type": "string"
@@ -2024,6 +2343,16 @@
       },
       "Revision": {
         "properties": {
+          "acceptance_state": {
+            "default": "draft",
+            "enum": [
+              "draft",
+              "ready_for_review",
+              "accepted"
+            ],
+            "title": "Acceptance State",
+            "type": "string"
+          },
           "id": {
             "title": "Id",
             "type": "string"
@@ -2089,6 +2418,27 @@
       },
       "Run": {
         "properties": {
+          "task_outcome": {
+            "default": "in_progress",
+            "enum": [
+              "in_progress",
+              "satisfied",
+              "incomplete",
+              "blocked"
+            ],
+            "title": "Task Outcome",
+            "type": "string"
+          },
+          "research_mode": {
+            "default": false,
+            "title": "Research Mode",
+            "type": "boolean"
+          },
+          "harness_version": {
+            "default": 3,
+            "title": "Harness Version",
+            "type": "integer"
+          },
           "id": {
             "title": "Id",
             "type": "string"
@@ -2502,6 +2852,19 @@
             "additionalProperties": true,
             "title": "Drawings",
             "type": "object"
+          },
+          "configurationExports": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Configurationexports",
+            "type": "array"
+          },
+          "completion": {
+            "additionalProperties": true,
+            "title": "Completion",
+            "type": "object"
           }
         },
         "required": [
@@ -2558,6 +2921,17 @@
             },
             "title": "Events",
             "type": "array"
+          },
+          "draft": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DraftWorkspace"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           }
         },
         "required": [

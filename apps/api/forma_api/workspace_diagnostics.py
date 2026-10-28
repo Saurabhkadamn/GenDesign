@@ -97,13 +97,27 @@ def workspace_contract_feedback(manifest: dict, files: dict, error: Exception) -
         if not covered:
             add("contract", ".".join(map(str, item["loc"])) or "workspace",
                 item["msg"][:500], "Correct this field using the current workspace and tool schema.")
+    if definitions and not files and "missing_source" in codes:
+        repair_guidance = (
+            "No executable source file was supplied, so none of the proposed definitions can build. "
+            "Stage one coherent part first: include its complete parts/ Python source in "
+            "apply_changes.files and include only the matching built definition and occurrence "
+            "in the current manifest. Add other parts in later edits. Their requirements remain "
+            "outstanding in the acceptance plan; omitting an unbuilt part from this intermediate "
+            "manifest does not remove it from the user's task."
+        )
+    else:
+        repair_guidance = (
+            "The entire edit was rejected; workspace and files are unchanged. "
+            "Fix the listed blockers in a coherent apply_changes action. Each staged definition "
+            "needs real source. Unbuilt requested parts may be staged in later edits while their "
+            "requirements remain outstanding in the acceptance plan."
+        )
     return {"ok": False, "category": "workspace_contract",
             "message": "; ".join(messages)[:1500], "issues": issues[:40],
             "availableComponents": [{"id": item["id"], "kind": item.get("kind"), "source": item.get("source")}
                 for item in sorted(definitions.values(), key=lambda value: value["id"])[:40]],
-            "repairGuidance": "The entire edit was rejected; workspace and files are unchanged. "
-            "Fix the listed blockers together in one coherent apply_changes action. Include real "
-            "source for every new definition. Do not remove requested parts or motion to claim completion."}
+            "repairGuidance": repair_guidance}
 
 
 def contract_repair_attempt(previous: dict, feedback: dict) -> int:

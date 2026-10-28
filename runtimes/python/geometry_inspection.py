@@ -140,6 +140,20 @@ def _combined_bounds(items: list[dict[str, Any]]) -> list[float] | None:
     ]
 
 
+def candidate_pairs(physical, distance=5.0):
+    """Conservative sweep-and-prune; exact OCCT checks remain the narrow phase."""
+    active = []
+    result = []
+    for index in sorted(range(len(physical)),key=lambda i:physical[i]["boundsMm"][0]):
+        bounds = physical[index]["boundsMm"]
+        active = [i for i in active if physical[i]["boundsMm"][3]+distance>=bounds[0]]
+        for other in active:
+            if _box_gap(physical[other]["boundsMm"],bounds)<=distance:
+                result.append(tuple(sorted((other,index))))
+        active.append(index)
+    return sorted(result)
+
+
 def _configuration_facts(
     shapes: dict[str, cq.Shape], manifest: dict[str, Any], configuration: dict[str, Any]
 ) -> dict[str, Any]:
@@ -178,29 +192,30 @@ def _configuration_facts(
     interferences: list[dict[str, Any]] = []
     near_pairs: list[dict[str, Any]] = []
     inspection_errors: list[dict[str, str]] = []
-    for index, first in enumerate(physical):
-        for second in physical[index + 1:]:
-            pair = [first["instanceId"], second["instanceId"]]
-            try:
-                if _boxes_overlap(first["boundsMm"], second["boundsMm"]):
-                    common = first["shape"].intersect(second["shape"], tol=1e-7)
-                    volume = _finite(sum(solid.Volume() for solid in common.Solids()))
-                    if volume > 1e-5:
-                        smaller = min(first["volumeMm3"], second["volumeMm3"])
-                        interferences.append({
-                            "instances": pair,
-                            "volumeMm3": volume,
-                            "percentOfSmaller": _finite(100 * volume / smaller) if smaller > 0 else None,
-                        })
-                        continue
-                # Only invoke the more expensive exact-distance operation for
-                # bounding boxes that are already close to each other.
-                if _box_gap(first["boundsMm"], second["boundsMm"]) <= 5.0:
-                    distance = _finite(first["shape"].distance(second["shape"]))
-                    if distance <= 5.0:
-                        near_pairs.append({"instances": pair, "distanceMm": distance})
-            except Exception as exc:  # OCCT reports the individual pair; the rest of the audit continues.
-                inspection_errors.append({"instances": "/".join(pair), "message": str(exc)[:500]})
+    pairs = candidate_pairs(physical)
+    for first_index, second_index in pairs:
+        first, second = physical[first_index],physical[second_index]
+        pair = [first["instanceId"], second["instanceId"]]
+        try:
+            if _boxes_overlap(first["boundsMm"], second["boundsMm"]):
+                common = first["shape"].intersect(second["shape"], tol=1e-7)
+                volume = _finite(sum(solid.Volume() for solid in common.Solids()))
+                if volume > 1e-5:
+                    smaller = min(first["volumeMm3"], second["volumeMm3"])
+                    interferences.append({
+                        "instances": pair,
+                        "volumeMm3": volume,
+                        "percentOfSmaller": _finite(100 * volume / smaller) if smaller > 0 else None,
+                    })
+                    continue
+            # Only invoke the more expensive exact-distance operation for
+            # bounding boxes that are already close to each other.
+            if _box_gap(first["boundsMm"], second["boundsMm"]) <= 5.0:
+                distance = _finite(first["shape"].distance(second["shape"]))
+                if distance <= 5.0:
+                    near_pairs.append({"instances": pair, "distanceMm": distance})
+        except Exception as exc:  # OCCT reports the individual pair; the rest of the audit continues.
+            inspection_errors.append({"instances": "/".join(pair), "message": str(exc)[:500]})
 
     public_instances = [{key: value for key, value in item.items() if key != "shape"} for item in physical]
     known_mass = [item["massKg"] for item in physical if item["massKg"] is not None]
@@ -214,6 +229,7 @@ def _configuration_facts(
         "interferences": interferences,
         "nearPairs": near_pairs,
         "inspectionErrors": inspection_errors,
+        "broadPhasePairs": len(pairs), "totalPossiblePairs": len(physical)*(len(physical)-1)//2,
     }
 
 

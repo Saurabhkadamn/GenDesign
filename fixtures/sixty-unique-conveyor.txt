@@ -1,0 +1,48 @@
+Design Task: Six-station inspection conveyor, 60 unique mechanical parts
+
+Build a code-driven, editable CAD assembly with six independently identifiable
+stations. Each station has ten different functional parts, for exactly 60 solid
+parts total. This is a test of distinct geometry, sub-assemblies, interfaces,
+assembly checks, BOMs, and independently reopened STEP exports. Do not replace
+the parts with repeated blocks, a fused monolith, or colored mesh placeholders.
+
+Use millimetres. For station index i = 0, 1, 2, 3, 4, 5, place its shaft axis at
+x = 50 + 100i, z = 28, parallel to Y. The following ten parts belong to each
+station and must have their own part IDs and different source geometry:
+
+1. Aluminium base plate, length 78 + 2i, width 82, thickness 6, with four
+   through mounting holes diameter 5.5 on a 58 x 62 rectangular pattern.
+2. Left aluminium bearing support, 18 x 16 x (25 + i), with a coaxial diameter
+   10.05 through bore and two mounting holes. Its bore axis is the shaft axis.
+3. Right aluminium bearing support, 18 x 18 x (25 + i), with a coaxial diameter
+   10.05 through bore and a distinct relieved outside face.
+4. Steel roller shaft, diameter 10.00 and overall length 76 + i, with two
+   diameter 8.00 end journals and one flat on its right end.
+5. Aluminium roller sleeve, outside diameter 24 + 0.5i, length 36 + i, with a
+   diameter 10.10 through bore, two 2 mm edge chamfers, and three axial grooves.
+6. Aluminium drive pulley, outside diameter 30 + i, width 8, with a diameter
+   10.10 bore, a shallow belt groove, and a flat matching the shaft end.
+7. Steel spacer, outside diameter 16 + 0.4i, width 4 + 0.2i, with a diameter
+   10.10 bore and a 1 mm outside chamfer.
+8. Aluminium sensor bracket, L profile with 4 mm wall, 20 + i horizontal leg,
+   26 + i vertical leg, one diameter 6.5 sensor hole and one slotted mount.
+9. Aluminium folded guard, 2 mm wall, with two flanges, radiused bends, and a
+   window over the roller. Vary window length by 1 mm per station.
+10. Aluminium tensioner block, 14 x (20 + i) x 12, with a 6 x (10 + i) slot,
+    a diameter 5.5 mounting hole, and a filleted outside edge.
+
+Use clear, non-overlapping placement for all non-mated parts. Put the two bearing
+supports on opposite ends of each roller shaft and fit the roller sleeve
+between them. Put the pulley outside the right support and the spacer outside
+the left support. Position the sensor bracket, guard, and tensioner above or
+beside their station without interference. State any placement or fit clearance
+you add and why. Do not change the specified dimensions silently.
+
+Deliver one STEP assembly with all 60 solids, a structured BOM with 60 unique
+part rows of quantity one, a component inventory, and a short measurement report.
+Independently reopen the STEP and report its solid count, overall envelope
+(required <= 650 x 140 x 120), six measured shaft-axis separations (target
+100.0 +/- 0.1 between adjacent stations), bearing-axis alignment (<= 0.05),
+selected-pair clearances, and all detected unintended interferences. Report
+mass using aluminium 2.70 g/cm3 and steel 7.85 g/cm3, flagging any missing
+density. Mark physical wear, vibration, and belt performance unverified.

@@ -46,6 +46,13 @@ class FormaPostgresSaver(AsyncPostgresSaver):
         async with super()._cursor(pipeline=False) as cursor:
             if pipeline:
                 async with cursor.connection.transaction():
+                    from .runs import lease_context
+                    lease = lease_context.get()
+                    if lease:
+                        # Lock/validate the lease in the very same transaction as
+                        # checkpoint writes; a check over HTTP would leave a race.
+                        await cursor.execute('select public.check_research_fence(%s,%s,%s)',
+                            (lease['run_id'],lease['worker'],lease['generation']))
                     yield _SequentialCursor(cursor)
             else:
                 yield cursor

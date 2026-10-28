@@ -61,6 +61,13 @@ def test_stalled_repair_stops_but_blocker_resolution_respects_progress():
     assert contract_repair_attempt({**result, "stalledAttempts": 2}, altered) == 3
 
 
+def test_manifest_without_source_guides_a_small_first_stage():
+    result = feedback(rejected_pump(), {})
+    assert "No executable source file was supplied" in result["repairGuidance"]
+    assert "Stage one coherent part first" in result["repairGuidance"]
+    assert "requirements remain outstanding" in result["repairGuidance"]
+
+
 def test_uncovered_contract_error_is_sanitized_and_still_rejected():
     manifest = {"components": [
         {"id": "part", "name": "Part", "source": "parts/part.py", "kind": "solid"},

@@ -19,6 +19,11 @@ async def cleanup_run(run_id):
     run = await db.one("runs", {"id": f"eq.{run_id}"})
     if run["status"] in ("queued", "running"):
         return
+    # Immutable research evidence may belong to older candidates and to LangGraph
+    # checkpoints, rather than the legacy run_private checkpoint. Quota cleanup
+    # must never erase those receipts or their artifacts.
+    if run.get('harness_version',3) >= 4:
+        return
     private = await db.one("run_private", {"run_id": f"eq.{run_id}"})
     # Cancellation may race sandbox creation. The workflow runs this only after
     # its in-flight step settles, so destroy any environment created after the

@@ -21,6 +21,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/maintenance/research-dispatch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Reconcile Research Dispatch */
+        get: operations["reconcile_research_dispatch_api_maintenance_research_dispatch_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/session": {
         parameters: {
             query?: never;
@@ -106,6 +123,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/runs/{run_id}/draft-artifact": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Draft Artifact */
+        get: operations["draft_artifact_api_runs__run_id__draft_artifact_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}/briefs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Store Brief */
+        post: operations["store_brief_api_projects__project_id__briefs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/projects/{project_id}/revisions/{revision_id}/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Accept Engineering Revision */
+        post: operations["accept_engineering_revision_api_projects__project_id__revisions__revision_id__accept_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/projects/{project_id}/drawings": {
         parameters: {
             query?: never;
@@ -177,7 +245,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "step" | "glb" | "plot" | "bom" | "assembly" | "drawing";
+            kind: "step" | "glb" | "plot" | "bom" | "assembly" | "drawing" | "notebook" | "report";
             /** Bytes */
             bytes: number;
             /** Storage Path */
@@ -365,6 +433,49 @@ export interface components {
              * @default 10
              */
             offsetMm: number;
+        };
+        /** DraftArtifact */
+        DraftArtifact: {
+            /** Name */
+            name: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "step" | "glb" | "plot" | "bom" | "assembly" | "drawing" | "notebook" | "report";
+            /** Bytes */
+            bytes: number;
+            /**
+             * Componentid
+             * @default null
+             */
+            componentId: string | null;
+            /**
+             * Contenthash
+             * @default null
+             */
+            contentHash: string | null;
+        };
+        /** DraftWorkspace */
+        DraftWorkspace: {
+            /** Runid */
+            runId: string;
+            /** Candidatehash */
+            candidateHash: string;
+            /** Current */
+            current: boolean;
+            /** Savedat */
+            savedAt: string;
+            /**
+             * Acceptancestate
+             * @default draft
+             * @constant
+             */
+            acceptanceState: "draft";
+            manifest: components["schemas"]["Manifest"];
+            /** Artifacts */
+            artifacts: components["schemas"]["DraftArtifact"][];
+            validation: components["schemas"]["ValidationReport"];
         };
         /**
          * DrawingReference
@@ -709,6 +820,38 @@ export interface components {
             version: number;
             /** Tested At */
             tested_at: string | null;
+            /**
+             * Pending
+             * @default false
+             */
+            pending: boolean;
+            /**
+             * Activeconfig
+             * @default null
+             */
+            activeConfig: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Context Length
+             * @default null
+             */
+            context_length: number | null;
+            /**
+             * Reasoning Token Reserve
+             * @default 0
+             */
+            reasoning_token_reserve: number;
+            /**
+             * Data Collection
+             * @default deny
+             * @enum {string}
+             */
+            data_collection: "deny" | "allow";
+            /** Qualification */
+            qualification?: {
+                [key: string]: unknown;
+            };
         };
         /** ModelOption */
         ModelOption: {
@@ -808,6 +951,11 @@ export interface components {
             active: boolean;
             /** Must Change Password */
             must_change_password: boolean;
+            /**
+             * Is Public Demo
+             * @default false
+             */
+            is_public_demo: boolean;
         };
         /** Project */
         Project: {
@@ -843,7 +991,7 @@ export interface components {
              * Status
              * @enum {string}
              */
-            status: "passed" | "failed" | "unverified";
+            status: "passed" | "failed" | "unverified" | "conflicting" | "stale";
             /** Evidence */
             evidence: {
                 [key: string]: unknown;
@@ -851,6 +999,12 @@ export interface components {
         };
         /** Revision */
         Revision: {
+            /**
+             * Acceptance State
+             * @default draft
+             * @enum {string}
+             */
+            acceptance_state: "draft" | "ready_for_review" | "accepted";
             /** Id */
             id: string;
             /** Project Id */
@@ -871,6 +1025,22 @@ export interface components {
         };
         /** Run */
         Run: {
+            /**
+             * Task Outcome
+             * @default in_progress
+             * @enum {string}
+             */
+            task_outcome: "in_progress" | "satisfied" | "incomplete" | "blocked";
+            /**
+             * Research Mode
+             * @default false
+             */
+            research_mode: boolean;
+            /**
+             * Harness Version
+             * @default 3
+             */
+            harness_version: number;
             /** Id */
             id: string;
             /** Project Id */
@@ -1032,6 +1202,14 @@ export interface components {
             drawings?: {
                 [key: string]: unknown;
             };
+            /** Configurationexports */
+            configurationExports?: {
+                [key: string]: unknown;
+            }[];
+            /** Completion */
+            completion?: {
+                [key: string]: unknown;
+            };
         };
         /** WorkspaceState */
         WorkspaceState: {
@@ -1048,6 +1226,8 @@ export interface components {
             calculations: components["schemas"]["CalculationRecord"][];
             /** Events */
             events: components["schemas"]["RunEvent"][];
+            /** @default null */
+            draft: components["schemas"]["DraftWorkspace"] | null;
         };
         /** AppSettings */
         AppSettings: {
@@ -1148,6 +1328,26 @@ export interface components {
 export type $defs = Record<string, never>;
 export interface operations {
     health_api_health_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    reconcile_research_dispatch_api_maintenance_research_dispatch_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -1287,6 +1487,103 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Run"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    draft_artifact_api_runs__run_id__draft_artifact_get: {
+        parameters: {
+            query: {
+                name: string;
+                candidate: string;
+            };
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    store_brief_api_projects__project_id__briefs_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    accept_engineering_revision_api_projects__project_id__revisions__revision_id__accept_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                revision_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */

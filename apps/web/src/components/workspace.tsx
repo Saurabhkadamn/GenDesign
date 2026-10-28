@@ -63,6 +63,9 @@ import {
   type RunEvent,
 } from '@forma/core';
 import { AdminPanel } from './admin-panel';
+import { EngineeringStatus } from './engineering-status';
+import { DraftDownloads } from './draft-downloads';
+import { BriefUpload } from './brief-upload';
 import { BomPanel, type BomDocument } from './bom-panel';
 import type { DrawingDocument } from './drawing-panel';
 const DrawingPanel = dynamic(() => import('./drawing-panel').then((m) => m.DrawingPanel), {
@@ -74,6 +77,7 @@ const CadViewer = dynamic(() => import('./cad-viewer').then((m) => m.CadViewer),
   loading: () => <div className="viewer-loading">Opening 3D viewer…</div>,
 });
 type Modal = 'projects' | 'history' | 'settings' | 'feedback' | 'help' | 'bom' | null;
+type DisplayArtifact = Artifact & { downloadEndpoint?: string };
 type ReviewFindingView = {
   id: string;
   statement: string;
@@ -162,14 +166,18 @@ export function Workspace({
   const [feedback, setFeedback] = useState('');
   const [notice, setNotice] = useState('');
   const [previewOverride, setPreviewOverride] = useState<string | null>(null);
+  const [preferPublished, setPreferPublished] = useState(false);
   const requestKey = useRef<{ message: string; key: string } | null>(null);
   const latestProject = useRef<string | null>(null);
   const textarea = useRef<HTMLTextAreaElement>(null);
   const project = state?.project;
   const revision = state?.revisions.find((r) => r.id === project?.current_revision_id);
-  const designReview = revision?.validation?.review as ReviewView | undefined;
-  const geometryInspection = revision?.validation?.inspection as InspectionView | undefined;
-  const bomEvidence = revision?.validation?.bom;
+  const builtDraft = state?.draft;
+  const showingDraft = Boolean(builtDraft && !preferPublished && viewerTab === 'preview');
+  const visibleValidation = showingDraft ? builtDraft?.validation : revision?.validation;
+  const designReview = visibleValidation?.review as ReviewView | undefined;
+  const geometryInspection = visibleValidation?.inspection as InspectionView | undefined;
+  const bomEvidence = visibleValidation?.bom;
   const billOfMaterials =
     bomEvidence &&
     Array.isArray(bomEvidence.flat) &&
@@ -182,7 +190,7 @@ export function Workspace({
     drawingEvidence && Array.isArray(drawingEvidence.sheets)
       ? (drawingEvidence as DrawingDocument)
       : undefined;
-  const assemblyEvidence = revision?.validation?.nativeAssembly;
+  const assemblyEvidence = visibleValidation?.nativeAssembly;
   const nativeAssembly =
     assemblyEvidence && typeof assemblyEvidence.solvedFrames === 'number'
       ? (assemblyEvidence as NativeAssemblyView)
@@ -190,7 +198,7 @@ export function Workspace({
   const asBuiltInspection = geometryInspection?.configurations?.find(
     (item) => item.id === 'as_built',
   );
-  const manifest = revision?.manifest ?? emptyManifest;
+  const manifest = (showingDraft ? builtDraft?.manifest : revision?.manifest) ?? emptyManifest;
   // A waiting_input run is still the current conversation. Treating it as
   // terminal here made the composer start a brand new run instead of sending
   // the answer/approval back to the paused LangGraph thread.
@@ -206,8 +214,16 @@ export function Workspace({
         .at(-1)?.content ?? '')
     : '';
   const pausedRequestUncertain = /uncertain|timed out|ambiguous/i.test(pausedMessage);
-  const currentArtifacts =
-    state?.artifacts.filter((a) => a.revision_id === project?.current_revision_id) ?? [];
+  const currentArtifacts: DisplayArtifact[] = showingDraft && builtDraft
+    ? builtDraft.artifacts.map((file) => ({ ...file,
+        id: `draft:${builtDraft.runId}:${builtDraft.candidateHash}:${file.name}`,
+        project_id: project!.id, revision_id: '', storage_path: '',
+        component_id: file.componentId ?? null,
+        downloadEndpoint: `runs/${builtDraft.runId}/draft-artifact?${new URLSearchParams({
+          name: file.name, candidate: builtDraft.candidateHash,
+        })}`,
+      }))
+    : state?.artifacts.filter((a) => a.revision_id === project?.current_revision_id) ?? [];
   const preview =
     currentArtifacts.find((a) => a.id === previewOverride) ??
     currentArtifacts.find((a) => a.name === 'preview.glb');
@@ -253,6 +269,7 @@ export function Workspace({
       setSelected(null);
       setHidden([]);
       setPreviewOverride(null);
+      setPreferPublished(false);
       try {
         await refresh(id);
         window.history.replaceState(null, '', `/?project=${id}`);
@@ -383,10 +400,10 @@ export function Workspace({
       setSubmitting(false);
     }
   }
-  async function download(artifact?: Artifact) {
+  async function download(artifact?: DisplayArtifact) {
     if (!artifact) return;
     try {
-      const { url } = await api<{ url: string }>(`artifacts/${artifact.id}`);
+      const { url } = await api<{ url: string }>(artifact.downloadEndpoint ?? `artifacts/${artifact.id}`);
       const response = await fetch(url);
       if (!response.ok) throw new Error('Download failed.');
       const blob = await response.blob();
@@ -706,7 +723,7 @@ export function Workspace({
                 onClick={() => setViewerTab('preview')}
               >
                 <Box size={15} />
-                3D preview{revision && <span>v{revision.ordinal}</span>}
+                3D preview{showingDraft ? <span>Draft</span> : revision && <span>v{revision.ordinal}</span>}
               </button>
               <button
                 className={viewerTab === 'calculations' ? 'active' : ''}
@@ -728,6 +745,12 @@ export function Workspace({
               </button>
             </div>
             <div className="toolbar-right">
+              {builtDraft && revision && viewerTab === 'preview' && (
+                <button className="subtle-btn" onClick={() => {
+                  setPreferPublished((value) => !value);
+                  setPreviewOverride(null); setSelected(null); setHidden([]);
+                }}>{showingDraft ? 'Show saved revision' : 'Show latest draft'}</button>
+              )}
               <span className="units-chip">mm</span>
               {previewOverride && (
                 <button className="subtle-btn" onClick={() => setPreviewOverride(null)}>
@@ -764,6 +787,7 @@ export function Workspace({
                 <CadViewer
                   key={preview.id}
                   artifactId={preview.id}
+                  artifactEndpoint={preview.downloadEndpoint}
                   selected={
                     previewOverride
                       ? selectedDefinition
@@ -863,10 +887,15 @@ export function Workspace({
                 </span>
                 <span>
                   {manifest.components.length} components <span className="footer-dot">·</span>{' '}
-                  {revision
-                    ? revision.validation?.allRequirementsVerified
-                      ? 'CAD draft · automated checks passed'
-                      : 'CAD draft · review requirements'
+                  {showingDraft
+                    ? builtDraft?.current ? 'Latest built draft · engineering checks incomplete'
+                      : 'Earlier built draft · newer changes not yet verified'
+                    : revision
+                    ? revision.acceptance_state === 'accepted'
+                      ? 'Engineering acceptance recorded'
+                      : revision.acceptance_state === 'ready_for_review'
+                        ? 'Checks complete · ready for engineering review'
+                        : 'Draft available · engineering checks incomplete'
                     : 'No geometry yet'}
                 </span>
               </div>
@@ -888,7 +917,7 @@ export function Workspace({
                         {c.stale
                           ? 'Needs recalculation'
                           : c.reproducible
-                            ? 'Reproduced'
+                            ? 'Calculation executed'
                             : 'Unverified'}
                       </span>
                     </div>
@@ -1113,6 +1142,7 @@ export function Workspace({
                   ))}
                 </details>
               ) : null}
+              {state?.draft && <DraftDownloads draft={state.draft} />}
               {revision?.validation && (
                 <div className="assembly-checks">
                   {nativeAssembly ? (
@@ -1140,19 +1170,26 @@ export function Workspace({
                           ? '✓ Verified'
                           : check.status === 'failed'
                             ? 'Failed'
-                            : 'Unverified'}
+                            : check.status === 'stale'
+                              ? 'Needs recheck after changes'
+                              : check.status === 'conflicting'
+                                ? 'Specification conflict'
+                                : 'Unverified'}
                       </strong>{' '}
                       · {check.description}
                     </p>
                   ))}
                   {!revision.validation.allRequirementsVerified && (
                     <p>
-                      These measurements are advisory. Review the draft before use; unsupported
-                      requirements were not checked automatically.
+                      The draft is available, but these requirements are not all satisfied. Unsupported
+                      checks remain unverified; changed geometry needs current evidence.
                     </p>
                   )}
                 </details>
               )}
+              {project && revision && <EngineeringStatus projectId={project.id} revisionId={revision.id}
+                acceptance={revision.acceptance_state} completion={revision.validation?.completion}
+                canAccept={Boolean(profile && !profile.is_public_demo && !run)} onAccepted={() => refresh(project.id)} />}
               {designReview?.summary && (
                 <details className="activity design-review" open>
                   <summary>
@@ -1208,6 +1245,9 @@ export function Workspace({
             {!!state?.messages.length && <ConversationScrollButton />}
           </Conversation>
           <div className="composer-area">
+            {run?.task_outcome === 'blocked' && run.error && <p role="status">Work is waiting: {run.error}</p>}
+            {!profile?.is_public_demo && <BriefUpload projectId={project?.id} disabled={Boolean(run) || submitting}
+              onStored={(title, id) => setDraft((current) => `${current}${current ? '\n' : ''}Use the stored brief "${title}" (source ${id}).`)} />}
             {!configured && (
               <div className="setup-notice">
                 <span className="setup-dot" />

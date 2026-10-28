@@ -4,6 +4,7 @@ from typing import Annotated, Literal
 from pydantic import Field, field_validator, model_validator
 
 from .contracts import Contract, Manifest, Parameter, Requirement, Role, SafeId, SourcePath, safe_path
+from .research_tools import SPECS as RESEARCH_SPECS
 
 
 class SourcePatch(Contract):
@@ -215,6 +216,7 @@ class ReadWorkingMemory(Contract):
 
 
 SPECS = {
+    **RESEARCH_SPECS,
     "diagnose_workspace": (Empty, "Inspect source entrypoints, registered definitions and root staging problems without running code. Saved files are not built geometry. Does not modify or lock parts."),
     "read_working_memory": (ReadWorkingMemory, "Read older retained tool outcomes, newest first. The most recent 12 are already supplied in context; use offset 12 for older outcomes. Offered when older outcomes exist. This is previous evidence with source provenance, not current validation."),
     "update_working_notes": (WorkingNotes, "Save durable task notes, decisions, pending requirements and failed approaches. Supplied fields replace only those fields; omitted fields are preserved. These are agent-reported notes, not validation. Does not edit or lock parts."),
@@ -407,13 +409,14 @@ def provider_tools(config: dict, tools: list[dict]) -> list[dict]:
 
 def model_tools(role: Role, *, review_response: bool = False, working_memory: bool = False) -> list[dict]:
     names = (*ROLE_TOOLS[role], "update_working_notes", "read_working_memory", "diagnose_workspace") if working_memory and role in {"cad", "coordinator"} else ROLE_TOOLS[role]
+    names = (*names, *RESEARCH_SPECS)
     return [{"type": "function", "function": {"name": name, "description": SPECS[name][1],
             "parameters": json_schema((FullBuild if name == "build" else SPECS[name][0]).model_json_schema())}} for name in names
             if name != "respond_to_review" or review_response]
 
 
 def parse_tool(role: Role, name: str, value: dict):
-    if name not in ROLE_TOOLS[role] and not (name in {"update_working_notes", "read_working_memory", "diagnose_workspace"} and role in {"cad", "coordinator"}):
+    if name not in RESEARCH_SPECS and name not in ROLE_TOOLS[role] and not (name in {"update_working_notes", "read_working_memory", "diagnose_workspace"} and role in {"cad", "coordinator"}):
         raise ValueError("This role cannot use that tool.")
     parsed = SPECS[name][0].model_validate(value)
     if isinstance(parsed, ReadFile):

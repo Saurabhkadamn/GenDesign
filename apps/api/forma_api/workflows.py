@@ -51,24 +51,33 @@ async def advance(*, run_id: str, worker: str, resume: dict | None = None) -> st
 
 
 @wf.step(max_retries=1)
-async def pause_interrupted(*, run_id: str, worker: str, diagnostic: str = "") -> None:
+async def pause_interrupted(*, run_id: str, worker: str, diagnostic: str = "") -> str:
     from . import db
     from .services.runs import finish
     run = await db.one("runs", {"id": f"eq.{run_id}"})
-    try:
-        message = ("Execution was interrupted. LangGraph preserved the last completed node; "
-                   "Continue when the connection is ready.")
-        if diagnostic:
-            message += f" Diagnostic: {diagnostic[:1200]}"
-        await finish(run, worker, "paused", message)
-    except Exception:
-        pass
+    from .tracing import sanitize
+    message = ("Execution was interrupted. The last completed step and built files are saved. "
+               "Continue to resume from that point.")
+    if diagnostic:
+        message += f" Diagnostic: {sanitize(diagnostic)[:1200]}"
+    if run.get('harness_version',3)>=4:
+        return await db.rpc('interrupt_research_workflow',{
+            'p_run':run_id,'p_worker':worker,'p_message':message})
+    await finish(run, worker, "paused", message)
+    return 'paused'
+
+
+@wf.step(max_retries=1)
+async def continue_research(*, run_id: str, worker: str, generation: int):
+    from .services.research_execution import rollover
+    return await rollover(run_id,worker,generation)
 
 
 @wf.workflow
-async def design_workflow(*, run_id: str, worker: str, resume: dict | None = None):
+async def design_workflow(*, run_id: str, worker: str, resume: dict | None = None, research: bool = False):
     pending_resume = resume
     transitions = 0
+    generation = None
     busy_delay = 5
     try:
         # Budget completed graph transitions, not queue polling. A queued run
@@ -77,6 +86,13 @@ async def design_workflow(*, run_id: str, worker: str, resume: dict | None = Non
         # for non-model build/validation/recovery nodes within those budgets.
         while transitions < 512:
             state = await advance(run_id=run_id, worker=worker, resume=pending_resume)
+            if state.startswith("wait:"):
+                fields = state.split(':')
+                if len(fields)>2:
+                    generation = int(fields[2])
+                await workflow.sleep(f"{int(fields[1])} seconds")
+                pending_resume = None
+                continue
             if state == "busy":
                 await workflow.sleep(f"{busy_delay} seconds")
                 busy_delay = min(busy_delay * 2, 60)
@@ -87,7 +103,9 @@ async def design_workflow(*, run_id: str, worker: str, resume: dict | None = Non
             transitions += 1
             if state in ("done", "waiting_input"):
                 return {"runId": run_id, "state": state}
-            if state != "next":
+            if state.startswith('next:'):
+                generation = int(state.split(':',1)[1])
+            elif state != "next":
                 raise ValueError("Unexpected graph scheduling state")
     except Exception as exc:
         # Never hide a workflow/runtime exception behind a generic pause. The
@@ -95,12 +113,19 @@ async def design_workflow(*, run_id: str, worker: str, resume: dict | None = Non
         # provider, serialization, and resume failures actionable to the user
         # and visible in Vercel runtime logs.
         diagnostic = f"{type(exc).__name__}: {exc}"
-        print(f"Forma workflow interrupted for {run_id}: {diagnostic}", flush=True)
-        await pause_interrupted(run_id=run_id, worker=worker, diagnostic=diagnostic)
-        return {"runId": run_id, "state": "paused"}
+        # Keep unsanitized exception payloads out of platform logs. The step
+        # records a bounded, redacted reason and verifies the dispatch owner.
+        state = await pause_interrupted(run_id=run_id, worker=worker, diagnostic=diagnostic)
+        return {"runId": run_id, "state": state or ("interruption_pending" if research else "paused")}
+    if research:
+        if generation is None:
+            raise ValueError('Research continuation has no completed transition fencing token')
+        dispatch_state = await continue_research(run_id=run_id,worker=worker,generation=generation)
+        return {"runId":run_id,"state":"continued" if dispatch_state=='dispatched'
+                else 'continuation_pending','dispatchState':dispatch_state}
     # The workflow's transition cap is a scheduling boundary, not a terminal
     # graph state. Clear its lease and expose Continue so the same LangGraph
     # thread can be resumed by a fresh Workflow invocation.
-    await pause_interrupted(run_id=run_id, worker=worker,
+    state = await pause_interrupted(run_id=run_id, worker=worker,
         diagnostic="The workflow transition limit was reached; Continue to resume the saved design.")
-    return {"runId": run_id, "state": "paused"}
+    return {"runId": run_id, "state": state or "paused"}

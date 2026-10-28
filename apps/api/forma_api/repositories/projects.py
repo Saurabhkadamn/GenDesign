@@ -47,8 +47,14 @@ async def workspace(project_id: str, owner_id: str):
         db.rest("calculations", params={**query, "order": "created_at.desc", "limit": 100}),
     )
     events = await db.rest("run_events", params={"run_id": f"in.({','.join(r['id'] for r in runs[:3])})", "order": "id.desc", "limit": 50}) if runs else []
+    calculations = [{**item, 'stale': item['stale'] or bool(item.get('candidate_hash')
+        and item.get('runtime_version') != settings().runtime_version)} for item in calculations]
+    from ..services.drafts import view as draft_view
+    draft = (await draft_view(runs[0]) if runs and runs[0].get('harness_version',3)>=4
+        and not any(r['run_id']==runs[0]['id'] for r in revisions) else None)
     return {"project": project, "revisions": revisions, "messages": list(reversed(messages)),
-            "runs": runs, "artifacts": artifacts, "calculations": calculations, "events": list(reversed(events))}
+            "runs": runs, "artifacts": artifacts, "calculations": calculations, "events": list(reversed(events)),
+            'draft':draft}
 
 
 async def agent_context(project_id: str, owner_id: str, run_id: str,
@@ -82,7 +88,10 @@ async def agent_context(project_id: str, owner_id: str, run_id: str,
     # stable fields. A rolling dialogue is useful history, but it is too easy
     # for a delegated agent to miss the authoritative brief among repeated
     # retries and copied prompts.
-    user_messages = [row for row in previous if row.get("role") == "user"]
+    from ..project_record import all_user_messages, brief_documents
+    all_messages = await all_user_messages(project_id)
+    documents = await brief_documents(project_id)
+    user_messages = [row for row in all_messages if row.get("run_id") != run_id]
     original_brief = first_brief.get("content", "") if first_brief else ""
     human_corrections = []
     seen_user_content = {original_brief} if original_brief else set()
@@ -90,7 +99,7 @@ async def agent_context(project_id: str, owner_id: str, run_id: str,
         content = str(row.get("content", ""))
         if content and content not in seen_user_content:
             seen_user_content.add(content)
-            human_corrections.append(content[:12000])
+            human_corrections.append(content)
     revision = (await db.one("revisions", {"id": f"eq.{revision_id}",
         "project_id": f"eq.{project_id}"}, required=False)) if revision_id else None
     prior_runs = [row for row in run_rows if row["id"] != run_id]
@@ -104,8 +113,14 @@ async def agent_context(project_id: str, owner_id: str, run_id: str,
     return sanitize({
         "project": {"id": project_id, "name": project.get("name")},
         "authoritativeInputs": {
-            "originalBrief": original_brief[:12000],
-            "humanCorrections": human_corrections[-8:],
+            "originalBrief": original_brief,
+            "humanCorrections": human_corrections,
+            "sourceMessages": [{"id": row.get("id"), "content": row.get("content", "")} for row in all_messages]
+                + [{'id':row['id'],'content':row['body']['content'][:240],
+                    'title':row['body']['title'],'characters':len(row['body']['content']),
+                    'requiresRetrieval':True} for row in documents],
+            'historyStatus':'All available stored user messages and brief references. Messages overwritten by older software cannot be reconstructed; do not invent missing history.',
+            "retrievalTool": "read_project_records",
             "instruction": ("Treat originalBrief as the original design specification and apply humanCorrections "
                 "in order. Do not ask again for supplied values. If a human explicitly permits assumptions or "
                 "unverified items, proceed with a labeled draft rather than pausing for those items."),
@@ -132,6 +147,16 @@ async def agent_context(project_id: str, owner_id: str, run_id: str,
 
 
 async def event(run_id: str, message: str, *, kind="status", stage=None, attempt=None, elapsed_ms=None):
+    from ..services.runs import lease_context
+    lease = lease_context.get()
+    if lease and lease['run_id'] == run_id:
+        await db.rpc('append_research_event', {
+            'p_run': run_id, 'p_worker': lease['worker'],
+            'p_generation': lease['generation'], 'p_kind': kind,
+            'p_message': message, 'p_stage': stage, 'p_attempt': attempt,
+            'p_elapsed_ms': elapsed_ms,
+        })
+        return
     await db.insert("run_events", {"run_id": run_id, "kind": kind, "message": message,
                                   "stage": stage, "attempt": attempt, "elapsed_ms": elapsed_ms})
 

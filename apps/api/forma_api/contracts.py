@@ -1,6 +1,4 @@
 """Pydantic contracts shared by HTTP, agent tools and the isolated CAD runner."""
-import json
-import math
 import re
 from typing import Annotated, Any, Literal
 from uuid import UUID
@@ -411,6 +409,7 @@ class Profile(BaseModel):
     role: Literal["admin", "engineer"]
     active: bool
     must_change_password: bool
+    is_public_demo: bool = False
 
 
 class SessionView(Contract):
@@ -450,7 +449,7 @@ class RequirementCheck(BaseModel):
     id: str
     description: str
     kind: str
-    status: Literal["passed", "failed", "unverified"]
+    status: Literal["passed", "failed", "unverified", "conflicting", "stale"]
     evidence: dict
 
 
@@ -464,9 +463,12 @@ class ValidationReport(BaseModel):
     nativeAssembly: dict[str, Any] = Field(default_factory=dict)
     assemblyPlacement: dict[str, Any] = Field(default_factory=dict)
     drawings: dict[str, Any] = Field(default_factory=dict)
+    configurationExports: list[dict[str, Any]] = Field(default_factory=list)
+    completion: dict[str, Any] = Field(default_factory=dict)
 
 
 class Revision(BaseModel):
+    acceptance_state: Literal["draft", "ready_for_review", "accepted"] = "draft"
     id: str
     project_id: str
     run_id: str
@@ -479,6 +481,9 @@ class Revision(BaseModel):
 
 
 class Run(BaseModel):
+    task_outcome: Literal["in_progress", "satisfied", "incomplete", "blocked"] = "in_progress"
+    research_mode: bool = False
+    harness_version: int = 3
     id: str
     project_id: str
     owner_id: str
@@ -510,7 +515,7 @@ class Artifact(BaseModel):
     revision_id: str
     component_id: str | None
     name: str
-    kind: Literal["step", "glb", "plot", "bom", "assembly", "drawing"]
+    kind: Literal["step", "glb", "plot", "bom", "assembly", "drawing", "notebook", "report"]
     bytes: int
     storage_path: str
 
@@ -526,6 +531,25 @@ class CalculationRecord(BaseModel):
     created_at: str
 
 
+class DraftArtifact(BaseModel):
+    name: str
+    kind: Literal['step', 'glb', 'plot', 'bom', 'assembly', 'drawing', 'notebook', 'report']
+    bytes: int
+    componentId: str | None = None
+    contentHash: str | None = None
+
+
+class DraftWorkspace(BaseModel):
+    runId: str
+    candidateHash: str
+    current: bool
+    savedAt: str
+    acceptanceState: Literal['draft'] = 'draft'
+    manifest: Manifest
+    artifacts: list[DraftArtifact]
+    validation: ValidationReport
+
+
 class WorkspaceState(BaseModel):
     project: Project
     revisions: list[Revision]
@@ -534,6 +558,7 @@ class WorkspaceState(BaseModel):
     artifacts: list[Artifact]
     calculations: list[CalculationRecord]
     events: list[RunEvent]
+    draft: DraftWorkspace | None = None
 
 
 class ModelOption(BaseModel):
@@ -558,6 +583,12 @@ class ModelConfigView(BaseModel):
     active: bool
     version: int
     tested_at: str | None
+    pending: bool = False
+    activeConfig: dict | None = None
+    context_length: int | None = None
+    reasoning_token_reserve: int = 0
+    data_collection: Literal['deny','allow'] = 'deny'
+    qualification: dict = Field(default_factory=dict)
 
 
 class FrontendContracts(BaseModel):

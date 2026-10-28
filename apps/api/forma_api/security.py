@@ -2,7 +2,6 @@
 import base64
 import json
 import os
-import time
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from fastapi import HTTPException, Request, Response
@@ -27,7 +26,8 @@ def decrypt_secret(value: str, role: str) -> str:
     if version != "v1":
         raise ValueError("Unsupported credential envelope")
     key = base64.b64decode(settings().encryption_key, validate=True)
-    decode = lambda v: base64.b64decode(v, validate=True)
+    def decode(encoded: str) -> bytes:
+        return base64.b64decode(encoded, validate=True)
     return AESGCM(key).decrypt(decode(nonce), decode(ciphertext) + decode(tag), f"forma:model:{role}:v1".encode()).decode()
 
 

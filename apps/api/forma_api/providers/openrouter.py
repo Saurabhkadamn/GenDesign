@@ -14,6 +14,8 @@ from langsmith import traceable
 from .. import db
 from ..config import settings
 from ..security import decrypt_secret_set
+from .capabilities import validate_qualification
+from .cooldown import with_cooldown
 
 _catalog: tuple[float, list] = (0, [])
 NEMOTRON = "nvidia/nemotron-3-ultra-550b-a55b:free"
@@ -79,7 +81,7 @@ def _tool_protocol_retry_result(body):
     usage = usage if isinstance(usage, dict) else {}
     server_tool_use = usage.get("server_tool_use")
     server_tool_use = server_tool_use if isinstance(server_tool_use, dict) else {}
-    return {"message": {"role": "assistant", "content":
+    return {"protocolRetry": True, "message": {"role": "assistant", "content":
             "The provider response did not contain a valid tool action. Retry with exactly one valid action from the supplied tool schema."},
         "calls": [], "inputTokens": usage.get("prompt_tokens", 0),
         "outputTokens": usage.get("completion_tokens", 0), "cost": usage.get("cost"),
@@ -91,6 +93,7 @@ class ModelFailure(Exception):
         self.category = category
         self.diagnostic = diagnostic
         self.status_code = status_code
+        self.retry_after_seconds = 60
         super().__init__(message)
 
 
@@ -105,9 +108,16 @@ def select_config(rows: list[dict], role: str, testing=False):
 
 
 async def configuration(role: str, testing=False):
-    row = select_config(await db.rest("model_configs", params={"role": f"in.({role},coordinator)"}), role, testing)
+    table = "model_config_candidates" if testing else "model_configs"
+    row = select_config(await db.rest(table, params={"role": f"in.({role},coordinator)"}), role, testing)
     if not row:
         raise ModelFailure("configuration", f"No usable {role} connection. Test and activate the default or this specialist in Settings, then Continue.")
+    if row.get("provider", "openrouter") == "openrouter" and not row.get("context_length"):
+        try:
+            entry = next((item for item in await catalog() if item["id"] == row["model_id"]), {})
+            row = {**row, "context_length":entry.get("context_length")}
+        except ModelFailure:
+            pass
     keys = decrypt_secret_set(row["encrypted_key"], row["role"])
     return {"provider": row.get("provider", "openrouter"), "base_url": row.get("base_url"), **row,
             "api_key": keys[0], "api_key_fallbacks": keys[1:]}
@@ -173,6 +183,13 @@ def tool_choice_setting(model_id: str, tools: list[dict]) -> str:
 
 
 def failure(status: int, body: str) -> ModelFailure:
+    if status in (400, 413, 422) and any(term in body.lower() for term in (
+        "context length", "context_length", "context window", "prompt is too long",
+        "too many input tokens", "input token limit", "prompt token limit",
+    )):
+        return ModelFailure("context_overflow",
+            "The model rejected the prompt as larger than its context window. Forma can retry with less dialogue while preserving the authoritative request.",
+            body[:8000], status_code=status)
     if status >= 500 and any(word in body.lower() for word in ("overload", "capacity", "unavailable")):
         return ModelFailure("overloaded", "The selected model's provider is temporarily overloaded. Wait, then Continue, or select another connection in Settings.", body[:8000])
     if status in (401, 403):
@@ -198,7 +215,13 @@ async def _openrouter_chat(*, api_key: str, model_id: str, messages: list[dict],
     if web_search and max_searches > 0:
         request_tools.append({"type": "openrouter:web_search", "parameters": {
             "max_total_results": min(3, max_searches * 3), "search_context_size": "low"}})
-    payload = {"model": model_id, "messages": messages, "tools": request_tools,
+    from .tool_history import normalized_tool_history
+
+    try:
+        replay_messages = normalized_tool_history(messages)
+    except ValueError as exc:
+        raise ModelFailure("tool_protocol", str(exc)) from exc
+    payload = {"model": model_id, "messages": replay_messages, "tools": request_tools,
         "tool_choice": tool_choice_setting(model_id, tools), "provider": provider,
         token_parameter: output_tokens}
     if parallel_tool_calls:
@@ -206,16 +229,16 @@ async def _openrouter_chat(*, api_key: str, model_id: str, messages: list[dict],
     response = await db.client().post("https://openrouter.ai/api/v1/chat/completions",
         headers={"Authorization": f"Bearer {api_key}"},
         json=payload, timeout=240)
-    return {"status": response.status_code, "body": response.text}
+    return {"status": response.status_code, "body": response.text, 'retry_after':response.headers.get('retry-after')}
 
 
 async def _turn_openrouter(config: dict, messages: list[dict], tools: list[dict], *, max_tokens: int | None = None,
-               web_search=False, max_searches=0):
+               web_search=False, max_searches=0, allow_fallback=True):
     cfg = settings()
     model = None
     try:
         model = next((m for m in await catalog() if m["id"] == config["model_id"]), None)
-    except ModelFailure:
+    except (ModelFailure,ValueError):
         if cfg.free_only:
             raise
     if cfg.free_only:
@@ -226,8 +249,8 @@ async def _turn_openrouter(config: dict, messages: list[dict], tools: list[dict]
     supports_parallel_parameter = "parallel_tool_calls" in set((model or {}).get("supported_parameters") or [])
     # The request contains one exact model ID, so provider fallback may select a
     # different compatible endpoint but cannot silently substitute another model.
-    policy = {"allow_fallbacks": True, "require_parameters": True,
-              "data_collection": "allow"}
+    policy = {"allow_fallbacks": allow_fallback, "require_parameters": True,
+              "data_collection": config.get("data_collection", "deny")}
     if cfg.free_only:
         policy["max_price"] = {k: 0 for k in ("prompt", "completion", "request", "image", "audio")}
     try:
@@ -269,7 +292,7 @@ async def _turn_openrouter(config: dict, messages: list[dict], tools: list[dict]
     except httpx.HTTPError:
         raise ModelFailure("connection", "The model connection was interrupted. Continue deliberately to retry.") from None
     if raw["status"] < 200 or raw["status"] >= 300:
-        raise failure(raw["status"], raw["body"])
+        raise with_cooldown(failure(raw["status"], raw["body"]),raw)
     try:
         body = json.loads(raw["body"])
     except (TypeError, ValueError, json.JSONDecodeError):
@@ -279,8 +302,11 @@ async def _turn_openrouter(config: dict, messages: list[dict], tools: list[dict]
         raise failure(int(error.get("code", 500)), str(error.get("message", "")))
     try:
         message = body["choices"][0]["message"]
-        # Preserve tool protocol, but do not retain provider headers, credentials or reasoning fields.
+        # Preserve opaque protocol fields in private state; never expose them as engineering evidence.
         safe_message = {"role": "assistant", "content": message.get("content") or ""}
+        for field in ("reasoning_content", "reasoning_details"):
+            if message.get(field):
+                safe_message[field] = message[field]
         calls = []
         if message.get("tool_calls"):
             safe_message["tool_calls"] = message["tool_calls"]
@@ -294,7 +320,8 @@ async def _turn_openrouter(config: dict, messages: list[dict], tools: list[dict]
                 calls.append({"id": recovered["id"], "name": recovered["name"],
                               "input": recovered["input"]})
         usage = body.get("usage", {})
-        return {"message": safe_message, "calls": calls, "inputTokens": usage.get("prompt_tokens", 0),
+        from .provenance import response_provenance
+        return {"provenance": response_provenance(config, body, output_tokens), "message": safe_message, "calls": calls, "inputTokens": usage.get("prompt_tokens", 0),
                 "outputTokens": usage.get("completion_tokens", 0), "cost": usage.get("cost"),
                 "webSearchRequests": (usage.get("server_tool_use") or {}).get("web_search_requests", 0)}
     except (KeyError, IndexError, ValueError, TypeError, AttributeError):
@@ -305,14 +332,18 @@ async def turn(config: dict, messages: list[dict], tools: list[dict], *, max_tok
                web_search=False, max_searches=0, allow_fallback=True):
     """Dispatch through the configured provider without leaking provider details into graph code."""
     from ..tools import provider_tools
+    from .provenance import require_qualified_identity
     tools = provider_tools(config, tools)
     if config.get("provider", "openrouter") == "openai_compatible":
         from .openai_compatible import turn as compatible_turn
-        return await compatible_turn(config, messages, tools, max_tokens=max_tokens,
+        result = await compatible_turn(config, messages, tools, max_tokens=max_tokens,
                                      web_search=web_search, max_searches=max_searches,
                                      allow_fallback=allow_fallback)
-    return await _turn_openrouter(config, messages, tools, max_tokens=max_tokens,
-                                  web_search=web_search, max_searches=max_searches)
+        return require_qualified_identity(config, result)
+    result = await _turn_openrouter(config, messages, tools, max_tokens=max_tokens,
+                                  web_search=web_search, max_searches=max_searches,
+                                  allow_fallback=allow_fallback)
+    return require_qualified_identity(config, result)
 
 
 def retry_config(config: dict) -> dict:
@@ -324,21 +355,43 @@ def retry_config(config: dict) -> dict:
 
 
 async def test_connection(role: str):
-    config = await configuration(role, testing=True)
+    candidate = await db.one('model_config_candidates', {'role': f'eq.{role}'}, required=False)
+    # Retesting a working connection is read-only. Failed qualification of a
+    # staged replacement must never disable the active configuration.
+    config = await configuration(role, testing=bool(candidate))
     test_tool = [{"type": "function", "function": {"name": "connection_check", "description": "Check tool calling",
                   "parameters": {"type": "object", "properties": {"value": {"type": "string", "enum": ["ready"]}},
                                  "required": ["value"], "additionalProperties": False}}}]
     try:
         # A connection test must prove the selected model itself works. Do not
         # let a production fallback mark a rate-limited primary as tested.
-        result = await turn(config, [{"role": "user", "content": "Call connection_check with value ready. Do not answer with text."}], test_tool, max_tokens=2048, allow_fallback=False)
-        if not any(c["name"] == "connection_check" and c["input"] == {"value": "ready"} for c in result["calls"]):
-            raise ModelFailure("tool_protocol", "The model did not produce a valid connection-check tool call.")
-    except ModelFailure:
-        await db.update("model_configs", {"active": False, "tested_at": None}, role=role, version=config["version"])
+        messages = [{"role":"user","content":"Call connection_check with value ready. Do not answer with text."}]
+        receipts = []
+        for _ in range(2):
+            from ..agent_context import fit_context
+            messages = fit_context(messages,test_tool,config,2048,lambda history:history)
+            result = await turn(config,messages,test_tool,max_tokens=2048,allow_fallback=False)
+            calls = result.get('calls') or []
+            if len(calls)!=1 or calls[0]['name']!='connection_check' or calls[0]['input']!={'value':'ready'}:
+                raise ModelFailure('tool_protocol','The model did not preserve the multi-turn tool protocol.')
+            receipts.append(result.get('provenance') or {})
+            # Preserve the full assistant envelope, including opaque provider
+            # reasoning/signature fields, followed by the exact matching result.
+            messages += [result['message'],{'role':'tool','tool_call_id':calls[0]['id'],
+                'content':'{"ok":true,"instruction":"Call connection_check with value ready again to confirm receipt."}'}]
+        identity = validate_qualification(config, receipts)
+    except (ModelFailure, ValueError) as exc:
+        if candidate:
+            await db.update("model_config_candidates", {"active": False, "tested_at": None}, role=role, version=config["version"])
+        if isinstance(exc, ValueError):
+            raise ModelFailure('configuration', 'The context capacity and token reservations cannot fit the connection check. Review the saved model settings.') from None
         raise
+    if not candidate:
+        return {'ok': True, 'activeConnectionUnchanged': True}
     from datetime import datetime, timezone
-    rows = await db.update("model_configs", {"tested_at": datetime.now(timezone.utc).isoformat()}, role=role, version=config["version"])
+    rows = await db.update("model_config_candidates", {"tested_at": datetime.now(timezone.utc).isoformat(),
+        'qualification':{'protocol':'multi_turn_tools_v1','configurationVersion':config['version'],
+                         'turns':receipts,'competenceQualified':False, **identity}}, role=role, version=config["version"])
     if not rows:
         raise HTTPException(409, "The configuration changed. Test the current version.")
     return {"ok": True}

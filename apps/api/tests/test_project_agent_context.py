@@ -12,10 +12,11 @@ async def test_context_keeps_first_brief_latest_turns_and_revision_evidence(monk
     async def rest(table, *, params):
         if table == "revisions":
             return [{"id": "r1", "ordinal": 1, "summary": "First draft"}]
-        if table in ("runs", "calculations"):
+        if table in ("runs", "calculations", "project_records"):
             return []
         if params.get("role") == "eq.user":
-            return [{"run_id": "old", "role": "user", "content": "Original bearing design brief"}]
+            rows = [{"run_id": "old", "role": "user", "content": "Original bearing design brief"}]
+            return rows if params.get("limit") == 1 else [*rows, {"run_id":"prior", "role":"user", "content":"Use eight balls."}]
         return [
             {"run_id": "current", "role": "user", "content": "Change the groove"},
             {"run_id": "prior", "role": "assistant", "content": "The draft has unverified checks."},
@@ -51,7 +52,7 @@ async def test_context_redacts_credentials_from_old_messages(monkeypatch):
         return {"name": "Test"}
 
     async def rest(table, *, params):
-        if table in ("revisions", "runs", "calculations"):
+        if table in ("revisions", "runs", "calculations", "project_records"):
             return []
         return [{"run_id": "old", "role": "user",
             "content": "my key is nvapi-exampleprivatevalue123456"}]

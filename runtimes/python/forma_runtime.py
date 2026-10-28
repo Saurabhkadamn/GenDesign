@@ -268,6 +268,25 @@ def validate(root: Path, output: Path) -> None:
     inspector = importlib.util.module_from_spec(inspection_spec)
     inspection_spec.loader.exec_module(inspector)
     report["inspection"] = inspector.inspect_project(shapes, solved_manifest)
+    report["inspection"]["resolvedFrames"] = {i["id"]:i["frame"] for i in solved_manifest.get("instances",[])}
+    report["configurationExports"] = []
+    for configuration in solved_manifest.get("configurations", []):
+        posed = json.loads(json.dumps(solved_manifest))
+        overrides = {item["instanceId"]:item["frame"] for item in configuration.get("frames",[])}
+        for instance in posed["instances"]:
+            instance["frame"] = overrides.get(instance["id"],instance["frame"])
+        worlds = state.occurrence_transforms(posed)
+        assembly = state.canonical_assembly(posed,shapes,worlds)
+        name = "configuration-"+configuration["id"]+".step"
+        path = output/name
+        assembly.export(str(path),exportType="STEP")
+        reopened = cq.importers.importStep(str(path)).val()
+        properties(reopened,"assembly")
+        configuration_shapes = {**shapes, root_id:reopened}
+        checked = state.verify_step_occurrences(configuration_shapes,posed,worlds,step_path=path)
+        report["configurationExports"].append({"id":configuration["id"],"artifact":name,
+            "reopened":True,"placement":checked,"motionValidation":"unverified"})
+        report["artifacts"].append({"name":name,"kind":"step","componentId":None,"bytes":path.stat().st_size})
     if (root / "identity.json").exists():
         report["identity"] = read_json(root / "identity.json")
     # An assembly without an occurrence inventory cannot yield a trustworthy
@@ -349,7 +368,7 @@ def calculate(root: Path, output: Path, path: str) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "operation", choices=["build", "validate", "calculate", "calculate-once"]
+        "operation", choices=["build", "validate", "measure", "calculate", "calculate-once"]
     )
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
@@ -361,6 +380,8 @@ def main() -> None:
         build(args.root, args.output)
     elif args.operation == "validate":
         validate(args.root, args.output)
+    elif args.operation == "measure":
+        trusted_support("geometry_queries").execute(args.root,args.output,trusted_support)
     elif args.operation == "calculate-once":
         calculate_once(
             args.root, args.path, args.output / f"calculation-{args.index}.json"

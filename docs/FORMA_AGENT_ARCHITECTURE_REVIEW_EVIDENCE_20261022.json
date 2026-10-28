@@ -1,0 +1,53 @@
+{
+  "reviewed_commit": "c9205e1",
+  "kind": "offline_mocked_behavior_probes",
+  "results": {
+    "hardcoded_calculation": {
+      "expected_nominal_mm": 10.0,
+      "returned_nominal_mm": 0.1,
+      "request_gap_mm": 40.0,
+      "used_gap_mm": 50.0
+    },
+    "cross_run_context": {
+      "original_length": 12035,
+      "retained_original_length": 12000,
+      "retained_corrections": 8,
+      "tail_requirement_missing": true,
+      "early_correction_missing": true
+    },
+    "engineering_handoff": {
+      "current_validation_measurement_in_analysis_packet": false,
+      "current_build_report_in_analysis_packet": false,
+      "note": "A CAD task string could manually copy facts; automatic evidence transfer is absent."
+    },
+    "review_budget": {
+      "known_geometric_error_after_two_repairs": "publish",
+      "finding_preserved": true,
+      "note": "Draft publication is intentional; this is not full task acceptance."
+    },
+    "working_memory_is_not_event_history": {
+      "two_successful_build_observations": 2,
+      "retrievable_build_observations": 1,
+      "note": "Operation records may retain full history; this agent tool exposes only deduplicated latest facts."
+    },
+    "pump_spec_arithmetic": {
+      "listed_instance_count": 27,
+      "radial_mm": {
+        "min": 0.065,
+        "max": 0.0875,
+        "passes": true
+      },
+      "axial_mm": {
+        "min": 0.06,
+        "max": 0.09,
+        "passes": false
+      },
+      "journal_diametral_mm": {
+        "min": 0.016,
+        "max": 0.052,
+        "passes": true
+      },
+      "basis": "User-specified tolerances only; not measurements of a built model."
+    }
+  }
+}

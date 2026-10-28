@@ -2,7 +2,6 @@
 import json
 import re
 import time
-import os
 from collections import Counter
 from copy import deepcopy
 import ast
@@ -23,6 +22,7 @@ from ..providers.openrouter import ModelFailure
 from ..requirements import design_work_requested, merge_requirements
 from ..assembly_requirements import normalize_assembly_requirements
 from ..services import runs as run_service
+from ..services.receipts import generation as save_generation
 from ..tools import model_tools, parameter_patch, parse_tool, json_schema, provider_tools, source_patch, updated_manifest
 from ..workspace_diagnostics import contract_repair_attempt, workspace_contract_feedback
 from ..source_contracts import validate_component_entrypoints
@@ -31,8 +31,10 @@ from ..harness import (acceptance_context, component_snapshot, probe_context, re
                       observation_context, record_observation_action, recovery_source_context,
                       focused_recovery_paths, record_observation_decision)
 from ..agent_memory import (user_update, memory_context, capture_history, record_observation,
-                            fit_dialogue, compact_narrative, update_notes, estimate_tokens, read_memory, notes_just_saved, older_outcomes_available)
+                            compact_narrative, update_notes, estimate_tokens, read_memory, notes_just_saved, older_outcomes_available)
 from .state import AgentState
+from ..research_tools import SPECS as RESEARCH_SPECS, execute as execute_research_tool
+from ..acceptance_plan import state_update as research_state_update
 
 _worker: ContextVar[str] = ContextVar("forma_graph_worker", default="graph")
 
@@ -168,70 +170,6 @@ class Analysis(Contract):
     user_question: str = Field(default="", max_length=3000)
 
 
-def deterministic_tolerance_calculation_source(request: str) -> str | None:
-    """Build the fully specified spacer-chain calculation when needed."""
-    text = request.lower()
-    required = ("spacer a", "spacer b", "spacer c", "end-float", "tolerance")
-    if not all(token in text for token in required):
-        return None
-    return '''
-gap_nominal = 50.00
-gap_min = 50.00
-gap_max = 50.10
-spacers_nominal = [20.00, 15.00, 14.90]
-spacers_min = [19.98, 14.97, 14.88]
-spacers_max = [20.02, 15.03, 14.92]
-nominal_stack = sum(spacers_nominal)
-minimum_stack = sum(spacers_min)
-maximum_stack = sum(spacers_max)
-nominal_float = gap_nominal - nominal_stack
-tightest_float = gap_min - maximum_stack
-loosest_float = gap_max - minimum_stack
-def calculate():
-    result = {
-    "title": "Three-spacer worst-case tolerance chain",
-    "inputs": {
-        "gap_nominal": {"value": gap_nominal, "unit": "mm"},
-        "gap_min": {"value": gap_min, "unit": "mm"},
-        "gap_max": {"value": gap_max, "unit": "mm"},
-        "spacer_a_nominal": {"value": spacers_nominal[0], "unit": "mm"},
-        "spacer_b_nominal": {"value": spacers_nominal[1], "unit": "mm"},
-        "spacer_c_nominal": {"value": spacers_nominal[2], "unit": "mm"},
-    },
-    "assumptions": [
-        "Independent worst-case stack-up uses each stated bilateral spacer tolerance.",
-        "The specified gap tolerance is one-sided: 50.00 to 50.10 mm.",
-    ],
-    "equations": [
-        "stack = spacer_A + spacer_B + spacer_C",
-        "end_float = gap - stack",
-    ],
-    "results": {
-        "nominal_stack": {"value": nominal_stack, "unit": "mm"},
-        "minimum_stack": {"value": minimum_stack, "unit": "mm"},
-        "maximum_stack": {"value": maximum_stack, "unit": "mm"},
-        "nominal_end_float": {"value": nominal_float, "unit": "mm"},
-        "tightest_end_float": {"value": tightest_float, "unit": "mm"},
-        "loosest_end_float": {"value": loosest_float, "unit": "mm"},
-    },
-    "checks": [
-        {"name": "tightest_end_float_minimum", "passed": tightest_float >= 0.05,
-         "detail": f"{tightest_float:.2f} mm against required minimum 0.05 mm"},
-        {"name": "loosest_end_float_maximum", "passed": loosest_float <= 0.15,
-         "detail": f"{loosest_float:.2f} mm against required maximum 0.15 mm"},
-        {"name": "full_range_requirement", "passed": 0.05 <= tightest_float and loosest_float <= 0.15,
-         "detail": "The specified tolerances do not guarantee the required 0.05 to 0.15 mm range."},
-    ],
-    "conclusion": (
-        "The nominal end-float is 0.10 mm, but the design does not satisfy the full tolerance range: "
-        f"the tightest case is {tightest_float:.2f} mm and the loosest case is {loosest_float:.2f} mm. "
-        "Tighten spacer C (or the other spacer tolerances) and/or reduce the gap tolerance before release."
-    ),
-    }
-    return result
-'''
-
-
 def deterministic_analysis_needed(request: str) -> bool:
     """Keep explicit math/load requests on the engineering branch.
 
@@ -326,6 +264,8 @@ class ReviewResult(Contract):
     summary: str = Field(min_length=1, max_length=5000)
     action: Literal["repair", "publish"]
     findings: list[ReviewFinding] = Field(default_factory=list, max_length=100)
+    coveragePlanVersion: str | None = None
+    coverageComplete: bool = False
 
 
 def submission_tool(name: str, description: str, contract: type[Contract]) -> dict:
@@ -343,12 +283,15 @@ async def run_row(state: AgentState) -> dict:
 
 async def structured_turn(state: AgentState, role: str, node: str, prompt: str,
                           tool_name: str, contract: type[Contract], *, web=False):
+    if state.get('harness_version',3)>=4:
+        from .structured import structured_step
+        return await structured_step(state,role,node,prompt,tool_name,contract,web=web)
     run = await run_row(state)
     config = await models.configuration(role)
     ordinal = state.get("model_calls", 0)
     cycle_calls = state.get("model_calls_this_cycle", ordinal)
     max_model_calls = (await app_settings()).limits.maxModelCalls
-    if cycle_calls >= max_model_calls:
+    if not state.get("research_mode") and cycle_calls >= max_model_calls:
         raise Pause("The model-call limit for this cycle was reached. Continue to grant another bounded cycle.")
     tools = provider_tools(config, [submission_tool(tool_name, f"Submit the complete {node} result.", contract)])
     messages = [{"role": "system", "content": system_prompt(role)},
@@ -360,6 +303,8 @@ async def structured_turn(state: AgentState, role: str, node: str, prompt: str,
     web_enabled = web and config.get("provider", "openrouter") == "openrouter"
 
     async def call(call_messages):
+        from ..agent_context import fit_context
+        call_messages = fit_context(call_messages, tools, config, model_step_token_budget(config, node), protocol_safe_history)
         return await models.turn(config, call_messages, tools,
             max_tokens=model_step_token_budget(config, node),
             web_search=web_enabled, max_searches=max(0, 2-state.get("search_count", 0)))
@@ -437,7 +382,7 @@ async def structured_turn(state: AgentState, role: str, node: str, prompt: str,
             await db.update("run_operations", {"status": "failed", "result": {
                 "category": "tool_protocol", "diagnostic": feedback}, "updated_at": repo.utcnow()},
                 run_id=run["id"], operation_key=primary_key)
-            if cycle_calls + 1 >= max_model_calls:
+            if not state.get("research_mode") and cycle_calls + 1 >= max_model_calls:
                 raise Pause(f"The {role} result violated the required contract: {feedback}") from None
             await repo.event(run["id"],
                 f"{role.capitalize()} returned an invalid {node} contract; requesting one bounded correction.",
@@ -461,7 +406,7 @@ async def structured_turn(state: AgentState, role: str, node: str, prompt: str,
     await db.insert("generations", {"id": str(uuid5(NAMESPACE_URL, f"{run['id']}:graph:{generation_ordinal}")),
         "run_id": run["id"], "ordinal": generation_ordinal, "role": role, "model_id": config["model_id"],
         "config_version": config["version"], "prompt_version": PROMPT_VERSION, "status": "complete",
-        "output": result["message"], "input_tokens": result["inputTokens"],
+        "output": result["message"], "provenance":result.get("provenance", {}), "input_tokens": result["inputTokens"],
         "output_tokens": result["outputTokens"]}, conflict="run_id,ordinal")
     return value, {"model_calls": ordinal + calls_used,
         "model_calls_this_cycle": cycle_calls + calls_used,
@@ -496,10 +441,10 @@ def protocol_safe_history(history: list[dict], *, allow_pending: bool = False) -
             cursor += 1
         if {item.get("tool_call_id") for item in results} == expected:
             safe.extend([message, *results])
-        elif allow_pending and cursor == len(history) and not results:
+        elif allow_pending and cursor == len(history):
             # agent_tool_turn returns the assistant request to its caller, which
             # executes the tool and appends the result immediately afterwards.
-            safe.append(message)
+            safe.extend([message,*results])
         index = cursor
     return safe
 
@@ -511,7 +456,8 @@ def compact_completed_changes(history: list[dict]) -> list[dict]:
     while index < len(history):
         message = history[index]
         calls = (message.get("tool_calls") or []) if message.get("role") == "assistant" else []
-        if len(calls) == 1 and index + 1 < len(history):
+        if len(calls) == 1 and index + 1 < len(history) and not any(
+                k in message for k in ('reasoning','reasoning_details','reasoning_content')):
             call = calls[0]
             following = history[index + 1]
             if (call.get("function", {}).get("name") == "apply_changes"
@@ -570,32 +516,43 @@ async def agent_tool_turn(state: AgentState, *, model_role: str, prompt_role: st
     tools = provider_tools(config, tools)
     ordinal = state.get("model_calls", 0)
     cycle_calls = state.get("model_calls_this_cycle", ordinal)
-    if cycle_calls >= (await app_settings()).limits.maxModelCalls:
+    if not state.get("research_mode") and cycle_calls >= (await app_settings()).limits.maxModelCalls:
         raise Pause("The model-call budget for this cycle was reached. The current draft and completed evidence were preserved. Continue to grant another bounded cycle.")
     memory = capture_history(state, history)
-    context = {**context, "workingMemory": memory_context({**state, "working_memory": memory},
-        (context.get("workspace") or context.get("currentWorkspace") or {}).get("candidateHash", ""),
-        max_outcomes=8, text_limit=1500)}
+    from ..agent_context import shared_context
+    context = shared_context(state,context,memory)
     history = bounded_history(history)
+    from ..agent_context import prompt_context
+    context = prompt_context(context)
     messages = [
         {"role": "system", "content": system_prompt(prompt_role)},
         {"role": "system", "content": "Current private design context: " + json.dumps(context, ensure_ascii=False)},
         *history,
     ]
     try:
-        budget = int(os.getenv("FORMA_AGENT_CONTEXT_TOKENS", "48000"))
-        messages = fit_dialogue(messages, tools, budget, protocol_safe_history)
+        from ..agent_context import fit_context
+        messages = fit_context(messages, tools, config, model_step_token_budget(config, node), protocol_safe_history)
     except ValueError as exc:
         raise Pause(str(exc)) from None
 
     async def call():
-        return await models.turn(config, messages, tools,
-                                 max_tokens=model_step_token_budget(config, node))
+        from ..agent_context import turn_with_context_recovery
 
-    result = await operation(run, f"graph:{node}:{ordinal}", "model", call)
+        async def request(fitted):
+            return await models.turn(config, fitted, tools,
+                                     max_tokens=model_step_token_budget(config, node))
+
+        return await turn_with_context_recovery(
+            messages, tools, config, model_step_token_budget(config, node),
+            protocol_safe_history, request,
+        )
+
+    result = await operation(run, f"graph:{node}:{ordinal}", "model", call,
+        input_identity={"messages":messages,"tools":tools,"model":config["model_id"],"configVersion":config["version"]})
     call_value = deepcopy(result["calls"][0]) if result.get("calls") else None
     pending_actions = []
-    if call_value and node == "cad-session" and len(result["calls"]) > 1:
+    research = state.get('harness_version',3)>=4
+    if not research and call_value and node == "cad-session" and len(result["calls"]) > 1:
         # Keep provider-returned actions durable. One graph transition executes
         # one action; subsequent actions do not need another model generation.
         for following in result["calls"][1:]:
@@ -612,21 +569,25 @@ async def agent_tool_turn(state: AgentState, *, model_role: str, prompt_role: st
             for item in result["calls"][1:]
         ]
     assistant = deepcopy(result["message"])
-    if call_value and assistant.get("tool_calls"):
+    if not research and call_value and assistant.get("tool_calls"):
         assistant["tool_calls"] = [
             item for item in assistant["tool_calls"] if item.get("id") == call_value["id"]
         ][:1]
-    elif not call_value:
+    elif not research and not call_value:
         assistant.pop("tool_calls", None)
+    deferred_results = [tool_message(item,{'ok':False,'category':'deferred',
+        'message':'This action was not executed. Inspect the preceding action outcome, then request it again if still needed.'})
+        for item in result.get('calls',[])[1:]] if research else []
     # Store the original generation below; keep only useful narrative in active context.
-    next_history = bounded_history([*messages[2:], compact_narrative(assistant)], allow_pending=True)
-    await db.insert("generations", {
+    next_history = bounded_history([*messages[2:], compact_narrative(assistant),*deferred_results], allow_pending=True)
+    await save_generation(run, {
         "id": str(uuid5(NAMESPACE_URL, f"{run['id']}:graph:{ordinal}")),
         "run_id": run["id"], "ordinal": ordinal, "role": prompt_role,
         "model_id": config["model_id"], "config_version": config["version"],
         "prompt_version": PROMPT_VERSION, "status": "complete", "output": assistant,
+        "provenance":{**result.get("provenance", {}), "fallback":result.get("fallback"), "retry":result.get("provider_retry")},
         "input_tokens": result["inputTokens"], "output_tokens": result["outputTokens"],
-    }, conflict="run_id,ordinal")
+    })
     return call_value, next_history, {
         **({"cad_pending_actions": pending_actions, "cad_queue_feedback": {}} if node == "cad-session" else {}),
         "working_memory": memory,
@@ -697,6 +658,8 @@ async def coordinator(state: AgentState) -> dict:
     project_context = await repo.agent_context(run["project_id"], run["owner_id"],
         run["id"], run["base_revision_id"], run.get("selected_ids") or [])
     project_context["sourceFiles"] = sorted(snapshot["files"])
+    from ..acceptance_plan import current_plan
+    plan = await current_plan(run['project_id']) if state.get('harness_version',3)>=4 else {}
     await repo.event(run["id"], "Coordinator loaded project history and current design evidence.", stage="coordination")
     return {"phase": "coordinator_session", "candidate_hash": candidate_hash,
         "repairs": 0, "attempts": 0, "model_calls": 0, "model_calls_this_cycle": 0, "search_count": 0,
@@ -704,7 +667,9 @@ async def coordinator(state: AgentState) -> dict:
         "coordinator_history": [{"role": "user", "content": state["original_request"]}],
         "coordinator_actions": 0,
         "engineering_remarks": [], "engineering_assumptions": [],
-        "requirements": merge_requirements(state["original_request"], []),
+        "acceptance_plan":plan,
+        "requirements": [item['requirement'] for item in plan['requirements']] if plan else (
+            [] if state.get('harness_version',3)>=4 else merge_requirements(state["original_request"], [])),
         "cad_edits_since_build": 0,
         "cad_recovery_build_required": False,
         "cad_history": [{"role": "user", "content": state["original_request"]}],
@@ -714,15 +679,16 @@ async def coordinator(state: AgentState) -> dict:
 
 
 COORDINATOR_SESSION_TOOL_NAMES = {
+    *RESEARCH_SPECS,
     "inspect_project", "read_file", "search_files", "inspect_geometry",
-    "delegate", "restore_revision", "ask_user", "finish", "update_working_notes", "read_working_memory", "diagnose_workspace",
+    "delegate", "publish_revision", "restore_revision", "ask_user", "finish", "update_working_notes", "read_working_memory", "diagnose_workspace",
 }
 
 
 async def coordinator_session(state: AgentState) -> dict:
     """One bounded project-aware reasoning/tool step, persisted by LangGraph."""
     actions = state.get("coordinator_actions", 0)
-    if actions >= 12:
+    if not state.get("research_mode") and actions >= 12:
         raise Pause("The coordinator reached its tool-action limit. Continue with a focused follow-up.")
     snapshot = await run_service.load_candidate(state["run_id"])
     project_context = state.get("project_context", {})
@@ -743,6 +709,7 @@ async def coordinator_session(state: AgentState) -> dict:
         "build": state.get("build_result"),
         "validation": state.get("validation", {}).get("report") if state.get("validation") else None,
         "publishedRevisionId": state.get("published_revision_id"),
+        "remainingWork": state.get('completion'),
         "toolRepair": state.get("coordinator_contract_repair") or None,
     }
     context_hash = digest(project_context)
@@ -767,6 +734,8 @@ async def coordinator_session(state: AgentState) -> dict:
         allowed = allowed - {"read_file", "search_files"}
     if not state.get("validation") and not project_context.get("revision"):
         allowed = allowed - {"inspect_geometry"}
+    if not state.get('validation'):
+        allowed.discard('publish_revision')
     tools = [item for item in model_tools("coordinator", working_memory=True)
              if item["function"]["name"] in allowed
              and not (inspected and item["function"]["name"] == "inspect_project")]
@@ -826,6 +795,14 @@ async def coordinator_session(state: AgentState) -> dict:
         return {**update, "coordinator_contract_repair": feedback,
             "coordinator_history": bounded_history([*history, tool_message(call, feedback)])}
     name = call["name"]
+    if name in RESEARCH_SPECS:
+        try:
+            result = await execute_research_tool(await run_row(state), snapshot, name, value, state)
+        except ValueError as exc:
+            result = {"ok": False, "error": str(exc)}
+        return {**update, **research_state_update(result,state),
+                "coordinator_history": bounded_history([*history, tool_message(call, result)])}
+
     if name == "update_working_notes":
         notes = parse_tool("coordinator", name, call["input"]).model_dump(exclude_unset=True)
         update["working_memory"] = update_notes(update.get("working_memory") or state.get("working_memory") or {}, notes)
@@ -866,7 +843,9 @@ async def coordinator_session(state: AgentState) -> dict:
             "coordinator_pending_call": call}
     elif name == "delegate":
         update["coordinator_contract_repair"] = {}
-        requirements = merge_requirements(state.get("clarified_request") or state["original_request"], value.get("requirements") or [])
+        # Delegating a focused edit must not replace the project's acceptance criteria.
+        requirements = state.get('requirements',[]) if state.get('harness_version',3)>=4 or state.get('acceptance_plan') else merge_requirements(
+            state.get("clarified_request") or state["original_request"], value.get("requirements") or [])
         if value["role"] == "engineering":
             await repo.event(state["run_id"], "Coordinator requested engineering analysis.", stage="engineering")
             return {**update, "phase": "engineering_analysis", "engineering_request": value["task"],
@@ -922,7 +901,22 @@ async def coordinator_session(state: AgentState) -> dict:
             "cad_history": [{"role": "user", "content":
                 f"Rebuild restored revision {revision['id']} as a new reviewable draft. Do not change unrelated geometry."}],
             "coordinator_pending_call": call}
+    elif name == 'publish_revision':
+        if state.get('harness_version',3)>=4:
+            from ..execution import identity
+            if (state.get('validation') or {}).get('identity')!=identity(snapshot,state.get('requirements',[])):
+                result = {'ok':False,'message':'The design changed after validation. Rebuild the current candidate before saving its downloadable revision.'}
+            elif state.get('reviewed_candidate_hash')!=digest(snapshot):
+                return {**update,'phase':'review_session','candidate_summary':value['summary'],
+                    'coordinator_pending_call':call,'review_history':[]}
+            else:
+                return {**update,'phase':'publish','candidate_summary':value['summary'],'coordinator_pending_call':call}
+        else:
+            result = {'ok':False,'message':'Publication follows the current CAD review.'}
     elif name == "finish":
+        if state.get('harness_version',3)>=4 and state.get('validation') and not state.get('published_revision_id'):
+            result = {'ok':False,'message':'A built candidate exists but its downloads have not been published. Continue the outstanding work, or use publish_revision to preserve a labeled draft with the recorded limitations.'}
+            return {**update,'coordinator_history':bounded_history([*history,tool_message(call,result)])}
         return {**update, "phase": "final", "final_message": value["message"]}
     else:
         result = {"ok": False, "category": "unsupported_action"}
@@ -945,6 +939,10 @@ async def coordinator_question(state: AgentState) -> dict:
 
 
 async def engineering_triage(state: AgentState) -> dict:
+    if state.get('harness_version',3)>=4:
+        # Research tasks are planned from their sourced project record. Old
+        # keyword-based routing cannot replace or reinterpret that record.
+        return {'phase':'coordinator_session'}
     request_text = state["original_request"].lower()
     # Explicit, self-contained CAD briefs already contain the component list
     # and assembly requirements needed to start geometry. Keep the graph node
@@ -1024,166 +1022,8 @@ async def clarification(state: AgentState) -> dict:
 
 
 async def engineering_analysis(state: AgentState) -> dict:
-    packet = {
-        "originalRequest": state["original_request"],
-        "projectContext": state.get("project_context", {}),
-        "clarifiedRequest": state.get("clarified_request", ""),
-        "explicitRequirements": state.get("requirements", []),
-        "triageAssumptions": state.get("engineering_assumptions", []),
-        "triageRemarks": state.get("engineering_remarks", []),
-        "cadRequest": state.get("engineering_request", ""),
-        "workingMemory": memory_context(state),
-    }
-    prompt = """Perform the engineering analysis needed before geometry. Use the engineering packet below as the
-source of truth and do not call a value missing when it is present in the original request, explicit requirements,
-or clarification. The CAD agent's request is the immediate task. For a single part or assembly, make only the
-material and manufacturing choices the brief permits. Use selected_material and manufacturing_method for concise
-summaries; put component-specific choices, dimensions, clearances, load paths and caveats in recommendations and
-design_parameters. Distinguish a design choice from a truly blocking unknown in open_items. State equations,
-loads, units, assumptions, recommended parameters and limitations that apply to this request. When numerical
-validation is useful, provide calculation_source as ordinary Python source exposing calculate() that returns
-Forma's CalculationResult contract. The runtime executes it twice in isolated processes and records
-calculation.json. Use real newline characters, not literal backslash-n escape sequences. Set requires_user_input
-only when a missing user choice prevents useful geometry; visible assumptions and limitations do not require an
-approval pause. Do not claim FEA, certification or physical performance from geometric checks alone.
-
-Engineering packet:
-""" + json.dumps(packet, ensure_ascii=False)
-    deterministic_source = deterministic_tolerance_calculation_source(
-        state["original_request"] + "\n" + state.get("engineering_request", ""))
-    if deterministic_source:
-        value = Analysis(
-            summary=("The spacer stack is fully specified. I will run the required worst-case tolerance chain "
-                     "before CAD and preserve the failing range as engineering evidence."),
-            assumptions=["Use the stated bilateral spacer tolerances and one-sided gap tolerance."],
-            recommendations=["Tighten spacer C or reduce the gap tolerance before production release."],
-            design_parameters=["Model the all-nominal stack combination."],
-            calculation_source=deterministic_source,
-        )
-        usage = {"model_calls": state.get("model_calls", 0),
-                 "search_count": state.get("search_count", 0)}
-    else:
-        try:
-            value, usage = await structured_turn(
-                state, "engineering", "analysis", prompt, "submit_analysis", Analysis, web=True)
-        except Pause as exc:
-            # OpenAI-compatible gateways can return a successful response whose
-            # structured tool payload is absent or malformed.  That is a
-            # provider protocol problem, not evidence that the user's design
-            # is unsafe or that CAD cannot proceed.  Preserve the failure as an
-            # explicit unverified engineering note and continue to the user-
-            # reviewable CAD draft.  Provider outages, calculation failures,
-            # model budgets and real missing-input pauses still propagate.
-            diagnostic = str(exc)
-            contract_failure = ("invalid analysis" in diagnostic.lower()
-                                 or "analysis result violated" in diagnostic.lower())
-            if not contract_failure:
-                raise
-            value = Analysis(
-                summary=(
-                    "The engineering provider did not return its typed analysis contract. "
-                    "The request is explicit enough to prepare a CAD draft, but no numerical "
-                    "engineering claim is verified from this step. Review the generated design "
-                    "and add or approve calculations before relying on it."
-                ),
-                assumptions=[
-                    "No material, load, tolerance, or safety value was invented after the provider contract failure."
-                ],
-                recommendations=[
-                    "Treat engineering calculations and safety factors as unverified until a valid analysis is available."
-                ],
-                open_items=["Typed engineering analysis was unavailable from the selected model."],
-                requires_user_input=False,
-            )
-            usage = {
-                "model_calls": state.get("model_calls", 0) + 2,
-                "model_calls_this_cycle": state.get("model_calls_this_cycle", state.get("model_calls", 0)) + 2,
-                "search_count": state.get("search_count", 0),
-            }
-            await repo.event(
-                state["run_id"],
-                "Engineering analysis contract was unavailable; preserved as unverified and continued to CAD review.",
-                kind="validation", stage="engineering",
-            )
-    output = {**usage, "phase": "approval" if value.requires_user_input else "cad_session",
-        "engineering_summary": value.summary,
-        "engineering_assumptions": [*state.get("engineering_assumptions", []), *value.assumptions],
-        "engineering_remarks": [*state.get("engineering_remarks", []),
-            *value.recommendations,
-            *(f"Selected material: {value.selected_material}" for _ in [0] if value.selected_material),
-            *(f"Manufacturing method: {value.manufacturing_method}" for _ in [0] if value.manufacturing_method),
-            *value.design_parameters,
-            *(f"Open item: {item}" for item in value.open_items)],
-        "approval_summary": value.user_question or value.summary,
-        "question": value.user_question}
-    calculation_result = None
-    calculation_source = value.calculation_source or deterministic_tolerance_calculation_source(
-        state["original_request"] + "\n" + state.get("engineering_request", ""))
-    if calculation_source:
-        if not value.calculation_source:
-            output["engineering_remarks"] = [*output["engineering_remarks"],
-                "Forma supplied the deterministic tolerance-chain calculation because the model omitted it."]
-        calculation_source = normalize_python_source(calculation_source)
-        snapshot = await run_service.load_candidate(state["run_id"])
-        snapshot = Snapshot.model_validate({"manifest": snapshot["manifest"],
-            "files": {**snapshot["files"], "calculations/analysis.py": calculation_source}}).model_dump()
-        calculation_candidate_hash = digest(snapshot)
-        await run_service.save_candidate(state["run_id"], snapshot, calculation_candidate_hash)
-        output["candidate_hash"] = calculation_candidate_hash
-        run = await run_row(state)
-        cp = checkpoint_view(state, snapshot)
-        cp["role"] = "engineering"
-        cp["sandbox"] = cp.get("sandbox") or sandbox_name(run["id"], "engineering")
-        async def calculate():
-            result = await execute_tool(run, cp, {"id": "analysis", "name": "calculate",
-                "input": {"path": "calculations/analysis.py"}}, await app_settings(), worker())
-            return {"result": result, "checkpoint": cp}
-        calculation_key = f"graph:engineering-calculation:{digest(calculation_source)[:16]}"
-        calculated = await operation(run, calculation_key, "calculate", calculate)
-        cp = calculated["checkpoint"]
-        result = calculated["result"]
-        if not result.get("ok"):
-            error = result.get("error", {})
-            location = error.get("location") or {}
-            where = f" at {location['file']}:{location['line']}" if location.get("file") and location.get("line") else ""
-            category = error.get("category") or "execution"
-            guidance = error.get("guidance") or "Review the engineering assumptions and calculation source."
-            diagnostic = f"Engineering calculation failed ({category}){where}. {guidance}"
-            output["engineering_summary"] = value.summary + "\n\n" + diagnostic
-            output["engineering_remarks"] = [*output["engineering_remarks"], diagnostic]
-            calculation_result = {"ok": False, "error": error}
-        else:
-            output["engineering_summary"] = value.summary + "\n\nCalculation verified: " + result["result"]["conclusion"]
-            calculation_result = result
-        output.update(sync_checkpoint(cp))
-    pending = state.get("pending_cad_call")
-    if pending:
-        output["cad_history"] = bounded_history([*state.get("cad_history", []), tool_message(pending, {
-            "ok": calculation_result is None or calculation_result.get("ok", False),
-            "summary": output["engineering_summary"],
-            "recommendations": output["engineering_remarks"],
-            "calculation": calculation_result,
-            "requiresUserInput": value.requires_user_input,
-        })])
-        output["pending_cad_call"] = {}
-    current_snapshot = await run_service.load_candidate(state["run_id"])
-    output["engineering_candidate_hash"] = digest(current_snapshot)
-    if state.get("engineering_from_coordinator") and not value.requires_user_input:
-        call = state.get("coordinator_pending_call") or {"id": "engineering"}
-        # The engineer has already resolved the delegated task. CAD receives
-        # the original design request and engineering findings directly; a
-        # second coordinator model call adds latency without a new decision.
-        output["phase"] = "cad_session"
-        output["engineering_from_coordinator"] = False
-        output["coordinator_pending_call"] = {}
-        output["coordinator_task"] = state.get("clarified_request") or state["original_request"]
-        output["coordinator_history"] = bounded_history([
-            *state.get("coordinator_history", []), tool_message(call, {
-                "ok": True, "summary": output["engineering_summary"],
-                "remarks": output["engineering_remarks"], "calculation": calculation_result,
-            }),
-        ])
-    return output
+    from .engineering import step
+    return await step(state)
 
 
 async def approval(state: AgentState) -> dict:
@@ -1214,8 +1054,12 @@ def sandbox_name(run_id: str, suffix: str) -> str:
 
 
 def checkpoint_view(state: AgentState, snapshot: dict) -> dict:
-    return {"snapshot": snapshot, "role": "cad", "requirements": normalize_assembly_requirements(merge_requirements(
-        state.get("original_request", ""), state.get("requirements", [])), snapshot.get("manifest", {})),
+    requirements = deepcopy(state.get('requirements', []))
+    if state.get('harness_version',3)<4:
+        requirements = normalize_assembly_requirements(
+            requirements if state.get('acceptance_plan') else merge_requirements(
+                state.get('original_request',''),requirements),snapshot.get('manifest',{}))
+    return {"snapshot": snapshot, "role": "cad", "requirements": requirements,
         "repairs": state.get("repairs", 0), "attempts": state.get("attempts", 0),
         "sequence": state.get("model_calls", 0), "modelCalls": state.get("model_calls", 0),
         "startedNs": state.get("started_ns", time.time_ns()), "sandbox": state.get("sandbox"),
@@ -1365,6 +1209,7 @@ def normalize_instance_hierarchy(manifest: dict) -> tuple[dict, bool]:
 
 
 CAD_SESSION_TOOL_NAMES = {
+    *RESEARCH_SPECS,
     "read_file", "search_files", "apply_changes", "update_parameters", "build", "test_component",
     "inspect_geometry", "request_engineering", "respond_to_review", "ask_user", "update_working_notes", "read_working_memory", "diagnose_workspace",
 }
@@ -1479,19 +1324,9 @@ async def record_review_result(state: AgentState, review: dict, snapshot: dict,
         review["summary"] += (" No evidence-backed, geometry-actionable mismatch was available for CAD to fix; "
             "the remaining findings are included for your review.")
     if review.get("action") == "repair" and same_defect_repeated:
-        review["action"] = "publish"
-        response = state.get("review_response") or {}
-        if response.get("candidateHash") == digest(snapshot):
-            review["cadResponse"] = response
-            review["summary"] += (" The reviewer retained a disputed finding after read-only evidence reassessment. "
-                "No geometry was changed by that response. The built draft, finding and CAD response require human review.")
-        else:
-            review["summary"] += (" The same actionable finding remained after a focused repair, so further "
-                "automatic retries stopped. The built draft and remaining finding are published for your review.")
-    if review.get("action") == "repair" and repairs_done >= MAX_REVIEW_REPAIR_CYCLES:
-        review["action"] = "publish"
-        review["summary"] += (f" The maximum of {MAX_REVIEW_REPAIR_CYCLES} focused review repair cycles is "
-            "complete; remaining findings are published with the draft for user-directed editing.")
+        review["recoveryRequired"] = True
+        review["summary"] += (" The finding persists. Revisit its evidence and hypothesis before another repair; "
+            "repetition is not acceptance and does not make this draft compliant.")
 
     validation = deepcopy(validation)
     validation.setdefault("report", {})["review"] = review
@@ -1509,6 +1344,16 @@ async def record_review_result(state: AgentState, review: dict, snapshot: dict,
         }])
         return {**common, "phase": "cad_session", "cad_history": cad_history,
             "review_repairs": repairs_done + 1}
+    if state.get('harness_version',3)>=4:
+        from ..completion import assess_completion
+        completion = assess_completion({**state,**common},snapshot)
+        pending = state.get('coordinator_pending_call')
+        result = {'ok':True,'candidateHash':digest(snapshot),'review':review,'completion':completion,
+            'instruction':'The build and review are available. Continue remaining measurements, reports or independent tasks. When the deliverables are ready, or only explicitly recorded blockers/unsupported checks remain, use publish_revision to save the exact candidate as a labeled draft. Do not change specified dimensions to hide a failure.'}
+        history = [*state.get('coordinator_history',[])]
+        history.append(tool_message(pending,result) if pending else {'role':'user','content':json.dumps(result)})
+        return {**common,'phase':'coordinator_session','completion':completion,
+            'task_outcome':'in_progress','coordinator_pending_call':{},'coordinator_history':bounded_history(history)}
     return {**common, "phase": "publish"}
 
 
@@ -1655,6 +1500,8 @@ async def cad_session(state: AgentState) -> dict:
                     "Human guidance changed after the queued proposal. Remaining queued actions were cancelled without execution. "
                     "Use the updated exact request and saved source for the next action."}])}
     result = await cad_session_turn(state)
+    if state.get('harness_version',3)>=4 and result.get('phase')=='cad_recovery':
+        result['final_message'] = 'The specialist has not resolved the current action. Return the saved evidence to the lead for reconsideration and continue useful work.'
     pending = result.get("cad_pending_actions", state.get("cad_pending_actions") or [])
     if not pending:
         return result
@@ -1691,7 +1538,8 @@ async def cad_session(state: AgentState) -> dict:
 async def cad_session_turn(state: AgentState) -> dict:
     """Let the CAD model choose one incremental workspace/tool action."""
     snapshot = await run_service.load_candidate(state["run_id"])
-    bound = normalize_assembly_requirements(state.get("requirements", []), snapshot["manifest"])
+    bound = (state.get('requirements',[]) if state.get('harness_version',3)>=4
+        else normalize_assembly_requirements(state.get("requirements", []), snapshot["manifest"]))
     if bound != state.get("requirements", []):
         await repo.event(state["run_id"], "Corrected an assembly requirement binding; rebuilding unchanged geometry against its owned base revision.", stage="validation")
         reset = {"requirements": bound, "validation": {}, "build_result": {},
@@ -1757,18 +1605,7 @@ async def cad_session_turn(state: AgentState) -> dict:
     }
     tools = [item for item in model_tools("cad", working_memory=True, review_response=(state.get("review") or {}).get("action") == "repair")
              if item["function"]["name"] in CAD_SESSION_TOOL_NAMES]
-    observation_decisions = context["observationProgress"].get("observationOnlyDecisions", 0)
-    observation_limit = context["observationProgress"]["maximumObservationOnlyDecisions"]
-    if observation_decisions >= observation_limit:
-        tools = bound_cad_observation_tools(tools, observation_decisions, observation_limit)
-        context["observationLimit"] = {
-            "completedObservationOnlyDecisions": observation_decisions,
-            "maximum": observation_limit,
-            "instruction": ("The unchanged candidate and evidence have already had three observation-only model decisions. "
-                "Use a focused edit, part test, assembly build, engineering request, or ask a specific question. "
-                "Do not repeat reads or workspace inventory."),
-        }
-    if patch_mismatch:
+    if patch_mismatch and state.get('harness_version',3)<4:
         tools = deepcopy(tools)
         for item in tools:
             if item["function"]["name"] == "apply_changes":
@@ -1779,17 +1616,8 @@ async def cad_session_turn(state: AgentState) -> dict:
     active_failure = context.get("activeFailure")
     if active_failure:
         context["activeFailure"]["toolPolicy"] = (
-            "This failure remains active across source edits until a complete assembly build succeeds. "
-            "Use test_component only for the named failing component when failureScope is component; "
-            "a component test cannot diagnose or clear an assembly-level failure. Run at most one isolated "
-            "probe for this failing file/component while its full-build failure remains active; after that, edit "
-            "the exact target and rebuild the complete assembly. A passing part probe never clears the failure.")
-        if (active_failure.get("failureScope") == "component" and active_failure.get("componentId")
-                and active_failure.get("repeatedCount", 0) < 2
-                and failure_probe_key(active_failure) not in state.get("cad_component_probe_failures", [])):
-            tools = restrict_component_probe(tools, active_failure["componentId"])
-        else:
-            tools = [tool for tool in tools if tool["function"]["name"] != "test_component"]
+            "The full-build failure remains unresolved. Choose any scoped diagnostic needed to test its cause. "
+            "A passing component probe is scoped evidence and never clears an assembly failure.")
     if len(requested_components) > 1:
         staged = staged_component_count(snapshot["manifest"])
         context["componentMilestone"] = {
@@ -1822,11 +1650,6 @@ async def cad_session_turn(state: AgentState) -> dict:
         )
         # An unfinished root is a diagnostic, not a reason to remove source
         # inspection and isolated part tests from the agent's toolset.
-    if state.get("cad_contract_repair"):
-        # Carry the rejection outside the rolling dialogue. Reads must not erase
-        # it, and another build cannot fix an edit that was never staged.
-        tools = [item for item in model_tools("cad")
-                 if item["function"]["name"] in {"apply_changes", "read_file", "search_files"}]
     if not snapshot["files"]:
         tools = [item for item in tools if item["function"]["name"] not in {
             "search_files", "inspect_geometry", "build", "update_parameters"} and
@@ -1839,32 +1662,8 @@ async def cad_session_turn(state: AgentState) -> dict:
     if not older_memory:
         tools=[item for item in tools if item['function']['name']!='read_working_memory']
         context['memoryAvailability']='All retained outcomes are already included in current working memory; there are no older outcomes to retrieve. Advance the task using the request and workspace.'
-    require_build_after_repair = bool(active_failure and buildable
-        and (edits_since_build > 0 or state.get("cad_recovery_build_required"))
-        and not state.get("cad_contract_repair"))
-    if require_build_after_repair:
-        # A saved edit after a failed full build is not evidence of recovery.
-        # Require the next decision to exercise the complete saved root before
-        # allowing more edits, reads, or part-only tests. This also bounds
-        # queued provider actions, which are checked again in cad_session.
-        tools = [item for item in tools if item["function"]["name"] == "build"]
-        for item in tools:
-            properties = item["function"].get("parameters", {}).get("properties", {})
-            properties.pop("componentId", None)
-            final = properties.get("final")
-            if final is not None:
-                final["enum"] = [True]
-                final["description"] = (
-                    "Must be true while recovering a failed full assembly build. "
-                    "The backend will still treat an incomplete candidate as an intermediate milestone.")
-        context["requiredBuildAfterRepair"] = {
-            "instruction": ("A source edit has been saved since the active full-assembly failure. "
-                "Rebuild the complete saved root now with build(final=true). Do not inspect, edit, "
-                "probe a component, or request more analysis before this build."),
-            "editsSinceBuild": edits_since_build,
-            "activeFailure": active_failure,
-        }
-    pending_actions = [] if require_build_after_repair else (state.get("cad_pending_actions") or [])
+    require_build_after_repair = False
+    pending_actions = state.get("cad_pending_actions") or []
     if pending_actions:
         queued = pending_actions[0]
         call = deepcopy(queued["call"])
@@ -1896,7 +1695,7 @@ async def cad_session_turn(state: AgentState) -> dict:
                     "The saved design and feedback are retained. Continue with a focused correction to retry.")}
         return {**usage, "phase": "cad_session", "cad_invalid_tool_attempts": invalid_attempts,
             "cad_history": history}
-    if state.get("cad_contract_repair") and call["name"] not in {
+    if state.get('harness_version',3)<4 and state.get("cad_contract_repair") and call["name"] not in {
             "apply_changes", "read_file", "search_files"}:
         feedback = {**state["cad_contract_repair"],
                     "message": "Repair the rejected edit before building or completing the design."}
@@ -1974,6 +1773,8 @@ async def cad_session_turn(state: AgentState) -> dict:
         }
         usage['working_memory']=record_observation({'working_memory':usage.get('working_memory') or
             state.get('working_memory')},call['name'],feedback,candidate=digest(snapshot))
+        if is_patch_mismatch and state.get('harness_version',3)>=4:
+            feedback['repairGuidance'] = 'Inspect the current file and choose a unique patch or a coherent file replacement. The rejected edit made no changes. Related reads and diagnostics remain available.'
         next_history = bounded_history([*history, tool_message(call, feedback)])
         if invalid_attempts >= 3:
             return {**usage, "phase": "cad_recovery",
@@ -1986,7 +1787,7 @@ async def cad_session_turn(state: AgentState) -> dict:
 
     queued_observation = bool(usage.get("cad_pending_actions")) and call["name"] in {
         "read_file", "search_files", "diagnose_workspace", "inspect_geometry"}
-    if repeated_tool_action(history, call) and not queued_observation:
+    if state.get('harness_version',3)<4 and repeated_tool_action(history, call) and not queued_observation:
         invalid_attempts = state.get("cad_invalid_tool_attempts", 0) + 1
         feedback = {
             "ok": False,
@@ -2009,14 +1810,14 @@ async def cad_session_turn(state: AgentState) -> dict:
             "cad_history": next_history}
 
     name = call["name"]
-    if (name == "read_file" and str(value.get("path", "")).startswith("calculations/")
-            and state.get("engineering_summary")):
-        feedback = {"ok": False, "category": "role_boundary",
-            "message": "Engineering has already executed the calculation and supplied its result; CAD cannot edit or re-read calculations.",
-            "engineeringSummary": state.get("engineering_summary", ""),
-            "repairGuidance": "Use the engineering summary and parameters, then create or build the requested CAD source."}
-        return {**usage, "phase": "cad_session", "last_read_path": None,
-            "cad_history": bounded_history([*history, tool_message(call, feedback)])}
+    if name in RESEARCH_SPECS:
+        try:
+            result = await execute_research_tool(await run_row(state), snapshot, name, value, state)
+        except ValueError as exc:
+            result = {"ok": False, "error": str(exc)}
+        return {**usage, **research_state_update(result,state), "phase": "cad_session",
+                "cad_history": bounded_history([*history, tool_message(call, result)])}
+
     if name == "update_working_notes":
         notes = parsed.model_dump(exclude_unset=True)
         memory = update_notes(usage.get("working_memory") or state.get("working_memory") or {}, notes)
@@ -2028,7 +1829,7 @@ async def cad_session_turn(state: AgentState) -> dict:
     if name == "diagnose_workspace":
         return observation_result(state, snapshot, call, value, history, usage, workspace_status(snapshot))
     read_key = ("rejected:" if value.get("version") == "rejected" else "") + str(value.get("path", ""))
-    if name == "read_file" and state.get("last_read_path") == read_key and not queued_observation:
+    if state.get('harness_version',3)<4 and name == "read_file" and state.get("last_read_path") == read_key and not queued_observation:
         feedback = {"ok": False, "category": "repeated_tool_action",
             "message": "This file was just read in the previous CAD turn.",
             "repairGuidance": "Use the returned source now. Patch it with apply_changes or build the candidate."}
@@ -2214,21 +2015,6 @@ async def cad_session_turn(state: AgentState) -> dict:
     if name == "request_engineering":
         candidate_digest = digest(snapshot)
         request_count = state.get("engineering_request_count", 0) + 1
-        if request_count > 2:
-            result = {"ok": False, "category": "engineering_request_limit",
-                "message": ("Engineering has already analyzed two CAD candidates for this run. "
-                    "Use the latest engineering result, edit the geometry, or build the current candidate.")}
-            return {**usage, "phase": "cad_session", "engineering_request_count": request_count,
-                "last_engineering_request_hash": candidate_digest,
-                "cad_history": bounded_history([*history, tool_message(call, result)])}
-        if state.get("engineering_summary") and state.get("engineering_candidate_hash") == candidate_digest:
-            result = {"ok": False, "category": "unchanged_engineering_request",
-                "message": ("Engineering already analyzed this unchanged workspace. Use the returned parameters, "
-                    "edit geometry, or build before requesting another calculation.")}
-            return {**usage, "phase": "cad_session", "engineering_request_count": request_count,
-                "last_engineering_request_hash": candidate_digest,
-                "cad_history": bounded_history([
-                *history, tool_message(call, result)])}
         await repo.event(state["run_id"], "CAD requested an engineering calculation or parameter study.", stage="engineering")
         return {**usage, "phase": "engineering_analysis", "engineering_request": value["task"],
             "engineering_request_count": request_count, "last_engineering_request_hash": candidate_digest,
@@ -2265,24 +2051,6 @@ async def cad_session_turn(state: AgentState) -> dict:
         return {**usage, "phase": "cad_question", "question": value["question"],
             "pending_cad_call": call, "last_read_path": None, "cad_history": history}
     if name == "test_component" or name == "build" and value.get("componentId"):
-        failure = active_failure_context(state, snapshot)
-        if name == "test_component" and failure and (
-                failure.get("failureScope") != "component"
-                or value["componentId"] != failure.get("componentId")
-                or failure.get("repeatedCount", 0) >= 2
-                or failure_probe_key(failure) in state.get("cad_component_probe_failures", [])):
-            expected = failure.get("componentId")
-            scope_message = (f"A component probe has already been used for this active full-build failure. Edit {failure.get('file') or expected} and rebuild the complete assembly before any further probe."
-                             if failure_probe_key(failure) in state.get("cad_component_probe_failures", []) else
-                             f"The same full-build failure has repeated. Edit {failure.get('file') or expected} and rebuild before another component probe."
-                             if failure.get("repeatedCount", 0) >= 2 else
-                             f"The current build failure targets component {expected}; test that component or repair the failed operation."
-                             if expected else
-                             "The current build failure is assembly-level or has no safely identified component. "
-                             "A part-only test cannot diagnose it; inspect and repair the active failure, then build the assembly.")
-            return {**usage, "phase": "cad_session", "cad_history": bounded_history([
-                *history, tool_message(call, {"ok": False, "category": "active_failure_scope",
-                    "message": scope_message, "activeFailure": failure})])}
         if name == "build" and value.get("final", True):
             return {**usage, "phase": "cad_session", "cad_history": bounded_history([*history, tool_message(call, {
                 "ok": False, "category": "build_scope",
@@ -2333,6 +2101,13 @@ async def cad_session_turn(state: AgentState) -> dict:
                 "message": "This exact intermediate candidate already built. If the requested inventory is complete, call build(final=true) for final review. Otherwise add the remaining parts or instances.",
             })])
             return {**usage, "phase": "cad_session", "cad_history": history}
+        if state.get('harness_version',3)>=4:
+            # The build has its own durable node/receipt. Saving this decision
+            # and the source candidate is atomic before the scheduler advances.
+            return {**usage,'phase':'build','pending_cad_call':call,'cad_history':history,
+                'cad_edits_since_build':0,'cad_recovery_build_required':False,'last_read_path':None,
+                'build_final':final_build,'requested_part_types':required_part_types or 0,
+                'built_part_types':built_part_types}
         # Execute the build transition in the same graph step as the explicit
         # CAD build action.  Hosted LangGraph interrupts after each node; in
         # practice that boundary could lose the phase update and schedule
@@ -2412,7 +2187,7 @@ async def cad_candidate(state: AgentState, *, repair=False) -> dict:
         await repo.event(state["run_id"],
             f"CAD candidate contract failed before execution: {feedback}",
             kind="validation", stage="cad", attempt=repairs)
-        if repairs > (await app_settings()).limits.maxRepairs:
+        if not state.get("research_mode") and repairs > (await app_settings()).limits.maxRepairs:
             return {**usage, "phase": "final", "repairs": repairs, "terminal_status": "failed", "final_message":
                 "The CAD model repeatedly returned an invalid workspace contract. No generated code was executed "
                 "and the saved design is unchanged."}
@@ -2425,7 +2200,8 @@ async def cad_candidate(state: AgentState, *, repair=False) -> dict:
         raise Pause("The CAD repair returned an unchanged candidate, so it was not rebuilt.")
     await run_service.save_candidate(state["run_id"], candidate, candidate_hash)
     await repo.event(state["run_id"], "CAD prepared a complete candidate workspace.", stage="cad")
-    requirements = bind_requirements_to_manifest(state.get("requirements", []), candidate["manifest"])
+    requirements = (state.get('requirements',[]) if state.get('harness_version',3)>=4
+        else bind_requirements_to_manifest(state.get("requirements", []), candidate["manifest"]))
     return {**usage, "phase": "build", "candidate_hash": candidate_hash,
         "requirements": requirements,
         "candidate_summary": value.summary, "validation": {}}
@@ -2569,7 +2345,7 @@ async def validate(state: AgentState) -> dict:
         # Bound automatic repair, but retain the draft and a resumable graph.
         # A successfully validated milestone starts a new repair allowance.
         limits = (await app_settings()).limits
-        if state.get("repairs", 0) >= limits.maxRepairs:
+        if not state.get("research_mode") and state.get("repairs", 0) >= limits.maxRepairs:
             guidance = error.get("guidance", "Repair the failed CAD operation.")
             return {"phase": "cad_recovery", "repairs": state.get("repairs", 0),
                 "working_memory": memory,
@@ -2616,9 +2392,8 @@ async def validate(state: AgentState) -> dict:
                 "cad_last_build_failure": {},
                 "cad_component_probe_failures": [],
                 "last_milestone_hash": state.get("candidate_hash", "")}
-    # Every final build gets a focused evidence review before draft publication.
-    # This is a bounded quality pass, not a release gate: after at most two
-    # focused repairs, publish the last buildable draft with its findings.
+    # Every final build gets an evidence review. The lead agent then completes
+    # remaining deliverables or explicitly publishes a draft with its blockers.
     return {"phase": "review_session", "cad_history": history,
         "working_memory": memory,
         "cad_last_build_failure": {},
@@ -2649,37 +2424,8 @@ def human_followups(state: AgentState) -> list[dict]:
 
 
 def permitted_assumption_answer(state: AgentState, question: str) -> str | None:
-    """Resolve a pause when the user has already authorized explicit assumptions.
-
-    This keeps genuinely blocking decisions available to the user while
-    preventing an agent from repeatedly pausing on unspecified details that
-    the user has explicitly allowed it to label as assumptions/unverified.
-    """
-    project_inputs = (state.get("project_context") or {}).get("authoritativeInputs") or {}
-    corpus = "\n".join([
-        str(state.get("original_request") or ""),
-        str(state.get("clarified_request") or ""),
-        "\n".join(str(item.get("message") or "") for item in human_followups(state)),
-        str(project_inputs.get("originalBrief") or ""),
-        "\n".join(str(item) for item in project_inputs.get("humanCorrections", [])),
-    ]).lower()
-    normalized = re.sub(r"\s+", " ", corpus)
-    explicit_permission = any(phrase in normalized for phrase in (
-        "modeling assumption explicitly", "modeling assumptions explicitly",
-        "state any necessary modeling assumption", "mark them unverified",
-        "mark those unverified", "use explicit assumptions", "state assumptions explicitly",
-        "make explicit modeling assumption", "make explicit modeling assumptions",
-        "assumptions/unverified", "assumption/unverified",
-    ))
-    if not explicit_permission:
-        return None
-    return (
-        "The user has already authorized progress with explicitly labeled modeling assumptions or "
-        "unverified items. Use every value in authoritativeInputs.originalBrief and apply its human "
-        "corrections in order. Do not ask again for supplied values. Keep genuinely unspecified "
-        "geometry and checks labeled as assumptions/unverified, then continue with the requested CAD action. "
-        f"Your question was: {str(question or '').strip()}"
-    )
+    """No blanket keyword authorization: the lead agent must scope each assumption to its source."""
+    return None
 
 
 def current_candidate_facts(snapshot: dict) -> dict:
@@ -2845,11 +2591,14 @@ def compact_workspace_status(value: dict) -> dict:
 async def cad_replan(state: AgentState) -> dict:
     """Automatic bounded replanning before requiring human recovery input."""
     snapshot = await run_service.load_candidate(state["run_id"])
+    if state.get('harness_version',3)>=4:
+        from .recovery import return_to_lead
+        return await return_to_lead(state,snapshot)
     counts = dict(state.get("recovery_counts") or {})
     key = recovery_key(state, snapshot)
     total = state.get("recovery_plan_count", 0)
-    exhausted = total >= 6 or counts.get(key, 0) >= 2
-    if not exhausted:
+    exhausted = not state.get("research_mode") and (total >= 6 or counts.get(key, 0) >= 2)
+    if not exhausted and not state.get("research_mode"):
         exhausted = state.get("model_calls_this_cycle", state.get("model_calls", 0)) + 1 >= (await app_settings()).limits.maxModelCalls
     if exhausted:
         return {"phase": "cad_recovery", "final_message": (
@@ -2909,6 +2658,8 @@ async def cad_replan(state: AgentState) -> dict:
 
 
 async def cad_recovery(state: AgentState) -> dict:
+    if state.get("research_mode"):
+        return await cad_replan(state)
     response = interrupt({"kind": "recovery", "message": state["final_message"]})
     if (response or {}).get("kind") not in {"continue", "answer"}:
         raise Pause("Continue is required to restart the bounded CAD repair allowance.")
@@ -2990,6 +2741,7 @@ async def review_session(state: AgentState) -> dict:
         return await record_review_result(state, preflight, snapshot, validation, [])
     context = {
         "originalRequest": state["original_request"],
+        "projectContext": state.get('project_context') or {},
         "clarifiedRequest": state.get("clarified_request", ""),
         "engineeringSummary": state.get("engineering_summary", ""),
         "engineeringRemarks": state.get("engineering_remarks", []),
@@ -3005,15 +2757,12 @@ async def review_session(state: AgentState) -> dict:
     }
     history = state.get("review_history") or [{"role": "user", "content":
         "Independently review this built CAD candidate against the original request. Use tools for evidence, then call submit_review."}]
-    if state.get("review_actions", 0) >= MAX_REVIEW_ACTIONS:
+    if not state.get("research_mode") and state.get("review_actions", 0) >= MAX_REVIEW_ACTIONS:
         return await record_review_result(state,
             unavailable_review(f"the reviewer used its {MAX_REVIEW_ACTIONS}-action evidence budget"),
             snapshot, validation, history)
-    allowed_review_tools = set()
-    if state.get("review_reads", 0) < 3:
-        allowed_review_tools.add("read_file")
-    if not state.get("review_inspected", False):
-        allowed_review_tools.add("inspect_geometry")
+    allowed_review_tools = {'read_file','search_files','inspect_geometry',
+                            'read_project_source','read_project_records','read_acceptance_plan','measure_geometry'}
     tools = [item for item in model_tools("cad")
              if item["function"]["name"] in allowed_review_tools]
     tools.append(submission_tool("submit_review", "Submit evidence-backed findings for this candidate.", ReviewResult))
@@ -3023,6 +2772,8 @@ async def review_session(state: AgentState) -> dict:
             context=context, history=history, tools=tools,
         )
     except (Pause, ModelFailure) as exc:
+        if state.get('research_mode'):
+            raise
         return await record_review_result(state, unavailable_review(str(exc)), snapshot, validation, history)
     if not call:
         return {**usage, "phase": "review_session", "review_history": bounded_history([
@@ -3040,8 +2791,6 @@ async def review_session(state: AgentState) -> dict:
         except (ValidationError, ValueError) as exc:
             result = {"ok": False, "category": "tool_contract", "message": str(exc)[:3000]}
         reads = state.get("review_reads", 0) + 1
-        if reads >= 3:
-            result["reviewInstruction"] = "Source-read budget reached; submit the review using gathered evidence."
         return {**usage, "phase": "review_session", "review_reads": reads,
             "review_history": bounded_history([*history, tool_message(call, result)]),
             "review_actions": state.get("review_actions", 0) + 1}
@@ -3050,6 +2799,18 @@ async def review_session(state: AgentState) -> dict:
             "review_history": bounded_history([
                 *history, tool_message(call, validation.get("report", validation))]),
             "review_actions": state.get("review_actions", 0) + 1}
+    if name in {'read_project_source','read_project_records','read_acceptance_plan','measure_geometry','search_files'}:
+        try:
+            if name == 'search_files':
+                value = parse_tool('cad',name,call['input']).model_dump()
+                result = {'matches':[{'path':path,'line':i+1,'text':line[:300]} for path,source in snapshot['files'].items()
+                    for i,line in enumerate(source.splitlines()) if value['query'] in line][:100]}
+            else:
+                result = await execute_research_tool(await run_row(state),snapshot,name,call['input'],state)
+        except ValueError as exc:
+            result = {'ok':False,'message':str(exc)}
+        return {**usage,'phase':'review_session','review_history':bounded_history([*history,tool_message(call,result)]),
+                'review_actions':state.get('review_actions',0)+1}
     if name != "submit_review":
         return {**usage, "phase": "review_session", "review_history": bounded_history([
             *history, tool_message(call, {"ok": False, "message": "Reviewer tools are read-only."})]),
@@ -3073,6 +2834,10 @@ async def publish(state: AgentState) -> dict:
     # authorization context before invoking the publish adapter.
     cp["role"] = "coordinator"
     settings_value = await app_settings()
+    from ..completion import assess_completion
+    completion = assess_completion(state, snapshot)
+    cp['validated'] = deepcopy(cp['validated'])
+    cp['validated']['report']['completion'] = completion
     async def publish_candidate():
         return await execute_tool(run, cp, {"id": "publish", "name": "publish_revision",
             "input": {"summary": state.get("candidate_summary") or "CAD draft for human review"}},
@@ -3080,7 +2845,9 @@ async def publish(state: AgentState) -> dict:
     result = await operation(run, "graph:publish", "publish_revision", publish_candidate, idempotent=True)
     await destroy_sandboxes(cp)
     review = state.get("review") or {}
-    message = "The CAD draft built successfully and is ready for your review."
+    message = ("The CAD draft is available. " + ("Recorded requirements and deliverables are satisfied."
+        if completion["taskOutcome"] == "satisfied" else
+        f"The task remains incomplete: {len(completion['outstanding'])} checks or deliverables need evidence."))
     if review.get("summary"):
         message += " Independent review: " + review["summary"]
     message += " You can continue editing or download the files; engineering and physical validation remain your responsibility."
@@ -3092,7 +2859,8 @@ async def publish(state: AgentState) -> dict:
     })])
     return {**sync_checkpoint(cp), "phase": "final",
         "coordinator_pending_call": {}, "coordinator_history": history,
-        "published_revision_id": result["revisionId"], "final_message": message}
+        "published_revision_id": result["revisionId"], "final_message": message,
+        "task_outcome": completion["taskOutcome"], "completion": completion}
 
 
 async def final(state: AgentState) -> dict:
@@ -3103,8 +2871,9 @@ async def final(state: AgentState) -> dict:
     # already released them and this remains idempotent.
     cleanup = {"sandbox": state.get("sandbox"), "validator": state.get("validator")}
     await destroy_sandboxes(cleanup)
-    await run_service.finish(run, worker(), state.get("terminal_status", "succeeded"),
-        state.get("final_message") or "Completed.")
+    if state.get('harness_version',3)<4:
+        await run_service.finish(run, worker(), state.get("terminal_status", "succeeded"),
+            state.get("final_message") or "Completed.")
     return {"phase": "done"}
 
 
@@ -3161,6 +2930,7 @@ async def drawing_build(state: AgentState) -> dict:
 
 
 def build_graph(checkpointer):
+    from .jobs import durable_node
     graph = StateGraph(AgentState)
     for name, node in (("coordinator", coordinator), ("coordinator_session", coordinator_session),
         ("coordinator_question", coordinator_question), ("engineering_triage", engineering_triage),
@@ -3169,7 +2939,10 @@ def build_graph(checkpointer):
         ("approval", approval), ("build", build), ("validate", validate), ("cad_recovery", cad_recovery), ("cad_replan", cad_replan),
         ("review_session", review_session), ("publish", publish), ("final", final),
         ("drawing_prepare",drawing_prepare),("drawing_build",drawing_build)):
-        graph.add_node(name, node)
+        # Interrupt nodes have no external effects before receiving the human
+        # answer; LangGraph owns their resume protocol and checkpoint identity.
+        graph.add_node(name,node if name in {'coordinator_question','clarification','cad_question','approval','cad_recovery'}
+                       else durable_node(name,node))
     graph.add_conditional_edges(START, lambda state: 'drawing_prepare' if state.get('drawing_request') else 'coordinator',
                                 {'drawing_prepare':'drawing_prepare','coordinator':'coordinator'})
     graph.add_edge('drawing_prepare','drawing_build')
@@ -3178,9 +2951,12 @@ def build_graph(checkpointer):
     graph.add_conditional_edges("coordinator_session", phase_route, {
         "coordinator_session": "coordinator_session", "coordinator_question": "coordinator_question",
         "engineering_analysis": "engineering_analysis", "cad_session": "cad_session", "final": "final",
+        "review_session":"review_session","publish":"publish",
     })
     graph.add_edge("coordinator_question", "coordinator_session")
     graph.add_conditional_edges("engineering_triage", phase_route, {
+        "engineering_triage":"engineering_triage",
+        "coordinator_session":"coordinator_session",
         "clarification": "clarification", "engineering_analysis": "engineering_analysis",
         "cad_session": "cad_session", "final": "final",
     })
@@ -3192,19 +2968,20 @@ def build_graph(checkpointer):
     })
     graph.add_edge("cad_question", "cad_session")
     graph.add_conditional_edges("engineering_analysis", phase_route,
-        {"cad_session": "cad_session", "coordinator_session": "coordinator_session",
+        {"engineering_analysis":"engineering_analysis", "cad_session": "cad_session", "coordinator_session": "coordinator_session",
          "approval": "approval", "final": "final"})
     graph.add_conditional_edges("approval", phase_route,
         {"cad_session": "cad_session", "coordinator_session": "coordinator_session", "final": "final"})
     graph.add_edge("build", "validate")
     graph.add_edge("cad_recovery", "cad_session")
     graph.add_conditional_edges("cad_replan", phase_route,
-        {"cad_session": "cad_session", "cad_replan": "cad_replan", "cad_recovery": "cad_recovery"})
+        {"cad_session": "cad_session", "cad_replan": "cad_replan", "cad_recovery": "cad_recovery",
+         "coordinator_session":"coordinator_session"})
     graph.add_conditional_edges("validate", phase_route,
         {"cad_session": "cad_session", "cad_recovery": "cad_replan", "review_session": "review_session", "final": "final"})
     graph.add_conditional_edges("review_session", phase_route, {
         "review_session": "review_session", "cad_session": "cad_session",
-        "publish": "publish", "final": "final",
+        "publish": "publish", "final": "final", "coordinator_session":"coordinator_session",
     })
     graph.add_edge("publish", "final")
     graph.add_edge("final", END)
