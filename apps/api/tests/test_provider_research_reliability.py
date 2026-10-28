@@ -7,7 +7,7 @@ import pytest
 
 from forma_api import engine
 from forma_api.providers import openrouter, openai_compatible
-from forma_api.providers.cooldown import retry_after_seconds
+from forma_api.providers.cooldown import retry_after_seconds, with_cooldown
 from forma_api.providers.capabilities import validate_candidate, validate_qualification
 from forma_api.providers.provenance import require_qualified_identity
 from forma_api.providers.tool_history import normalized_tool_history
@@ -66,6 +66,13 @@ def test_provider_cooldown_parses_seconds_and_http_date():
     assert retry_after_seconds("nan") == 60
 
 
+def test_daily_free_quota_waits_for_reset_unless_provider_sets_deadline():
+    now = datetime(2026, 10, 28, 13, 0, tzinfo=timezone.utc)
+    error = openrouter.ModelFailure("quota", "Daily allowance reached")
+    assert with_cooldown(error, {"retry_after": None}, now=now).retry_after_seconds == 11 * 3600 + 60
+    assert with_cooldown(error, {"retry_after": "120"}, now=now).retry_after_seconds == 120
+
+
 @pytest.mark.asyncio
 async def test_compatible_throttle_keeps_provider_cooldown_without_fallback(monkeypatch):
     requests = []
@@ -117,6 +124,32 @@ async def test_restart_during_provider_cooldown_never_calls_provider(monkeypatch
             {"id": "run", "research_mode": True}, "same-request", "model", unexpected
         )
     assert 119 <= caught.value.seconds <= 120
+
+
+@pytest.mark.asyncio
+async def test_research_operation_retries_recorded_daily_quota_after_cooldown(monkeypatch):
+    saved = []
+
+    async def previous(*args, **kwargs):
+        return {"status": "failed", "result": {
+            "category": "quota",
+            "retryNotBefore": (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat(),
+        }}
+
+    async def update(*args, **kwargs):
+        saved.append(args[1])
+        return [args[1]]
+
+    async def completed():
+        return {"ok": True}
+
+    monkeypatch.setattr(engine.db, "one", previous)
+    monkeypatch.setattr(engine.db, "update", update)
+    result = await engine.operation(
+        {"id": "run", "research_mode": True}, "saved-model", "model", completed
+    )
+    assert result == {"ok": True}
+    assert [item["status"] for item in saved] == ["started", "complete"]
 
 
 @pytest.mark.asyncio

@@ -64,7 +64,7 @@ async def operation(run, key, kind, callback, *, idempotent=False, input_identit
     retryable_explicit_failure = (
         old and old["status"] == "failed"
         and (old.get("result") or {}).get("category") in {
-            "rate_limit", "overloaded", "tool_protocol", "user_retry_authorized"}
+            "rate_limit", "quota", "overloaded", "tool_protocol", "user_retry_authorized"}
         and kind in {"model", "calculate", "drawing_build"}
     )
     if old and not idempotent:
@@ -81,11 +81,11 @@ async def operation(run, key, kind, callback, *, idempotent=False, input_identit
             result = await callback()
     except models.ModelFailure as exc:
         failure = {'category':exc.category,'diagnostic':tracing.sanitize(exc.diagnostic)}
-        if exc.category in {'rate_limit','overloaded'}:
+        if exc.category in {'rate_limit','quota','overloaded'}:
             failure['retryNotBefore'] = (datetime.now(timezone.utc)+timedelta(seconds=exc.retry_after_seconds)).isoformat()
             failure['retryAfterSeconds'] = exc.retry_after_seconds
         await record('ambiguous' if exc.category in ('timeout','connection') else 'failed',failure)
-        if run.get("research_mode") and exc.category in {"rate_limit","overloaded"}:
+        if run.get("research_mode") and exc.category in {"rate_limit","quota","overloaded"}:
             raise ProviderDeferred(getattr(exc,"retry_after_seconds",60)) from None
         raise Pause(str(exc)) from None
     await record('complete',result)

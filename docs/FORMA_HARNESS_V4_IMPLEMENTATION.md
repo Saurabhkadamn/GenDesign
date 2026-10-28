@@ -92,6 +92,15 @@ No mechanical recipes or pump-specific runtime logic.
 - Temporary environment, cookie and login files used during qualification
   were moved out of test reports into the private local Forma directory.
   A staged-source scan found no matching provider keys or evaluation secrets.
+- Follow-up repair: OpenRouter free-model daily-quota errors now enter the
+  durable provider-wait path used for throttling. `Retry-After` wins when
+  supplied; without it, the wait targets the next UTC day plus a brief margin.
+  That fallback is an inference from OpenRouter's documented daily free cap
+  and UTC daily key resets, not a promised reset time for every endpoint.
+  The failed operation can retry after that deadline without a false blocked
+  task outcome. Existing already-paused evaluations still need one deliberate
+  resume after quota returns. Focused provider tests passed 17 checks. This
+  follow-up is pending deployment at the time of this record.
 
 Next: resume the saved runs when a capable provider has available quota; follow
 both run receipts through build, engineering, and export; fix any
