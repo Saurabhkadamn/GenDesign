@@ -100,7 +100,13 @@ No mechanical recipes or pump-specific runtime logic.
   The failed operation can retry after that deadline without a false blocked
   task outcome. Existing already-paused evaluations still need one deliberate
   resume after quota returns. Focused provider tests passed 17 checks. This
-  follow-up is pending deployment at the time of this record.
+  follow-up was promoted as production deployment
+  `dpl_GbFH6NHNSb35TfhkUjjFV5xq261b` from commit `09fbc43`; the public
+  API and main page returned HTTP 200 afterward. The isolated evaluation
+  preview was refreshed at
+  `https://forma-kx6bshiih-negens-projects.vercel.app`
+  (`dpl_9HUCdfWFKE1jzz16HPpyrrAX7zqV`), with health 200, login 200 and
+  the same two pinned evaluation models. It remains separate from production.
 
 Next: resume the saved runs when a capable provider has available quota; follow
 both run receipts through build, engineering, and export; fix any
