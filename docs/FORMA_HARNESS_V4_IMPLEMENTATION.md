@@ -80,14 +80,26 @@ No mechanical recipes or pump-specific runtime logic.
   checkpoint the pump has ten model calls; the 60-part run has thirty.
 - After the provider repair, the full API suite passed 446 tests, the v4
   database suite passed 13, ESLint, frontend typecheck and API Ruff passed.
+- Commit `b0a5be4` was pushed to
+  `codex/cad-observation-budget-20261022`. Production-target deployment
+  `dpl_6aedStxhpWhLXQjkTpeWNjZtqhbh` passed API health and main-page
+  checks, then was promoted to the public Forma domain. Direct public health
+  and main-page checks returned HTTP 200 after promotion. The production
+  environment does not set `FORMA_HARNESS_VERSION=4`, so v4 remains guarded;
+  the database schema and code are live, but the new agentic path is not the
+  public default. Prior public deployment
+  `dpl_3KrKnE5xeRsXTVEE2xRK26nZJ4Gj` is the rollback reference.
+- Temporary environment, cookie and login files used during qualification
+  were moved out of test reports into the private local Forma directory.
+  A staged-source scan found no matching provider keys or evaluation secrets.
 
 Next: resume the saved runs when a capable provider has available quota; follow
 both run receipts through build, engineering, and export; fix any
 observed harness failure; independently reopen STEP artifacts and inspect
 requirement evidence. Then run numeric variants, conflicting briefs, the
-remaining evaluation corpus and interruption tests before any default rollout,
-push, or production code deployment. Production schema is live; production v4
-code and model configuration are not.
+remaining evaluation corpus and interruption tests before any default-v4
+release. Production schema and guarded v4 code are live; the production v4
+route and model configuration remain disabled.
 
 ### Implemented locally, not yet release-qualified (updated 2026-10-25)
 
