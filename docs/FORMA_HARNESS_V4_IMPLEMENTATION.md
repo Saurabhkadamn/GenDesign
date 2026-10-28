@@ -129,16 +129,21 @@ No mechanical recipes or pump-specific runtime logic.
   predates an edit, while source retrieval remains available. The 20-part read
   regression and relevant agent, history, and safety checks passed (157 tests);
   the full API suite passed 451 tests. Touched files pass Ruff and Git
-  whitespace checks. These changes are not yet
-  deployed and do not alter the currently running workflow.
+  whitespace checks. Commit `c51b18f` was pushed and deployed as production
+  target `dpl_DPy8gwHBqvJnGBYS3BuEdjs3hy1W`; API health and main page
+  passed on the target and after promotion to the public Forma domain. The
+  production v4 route remains guarded and provider settings unchanged. The
+  isolated evaluation workflows remain bound to their earlier deployment, so
+  this fix does not alter the currently running pump or queued 60-part run.
 
-Next: resume the saved runs when a capable provider has available quota; follow
-both run receipts through build, engineering, and export; fix any
-observed harness failure; independently reopen STEP artifacts and inspect
-requirement evidence. Then run numeric variants, conflicting briefs, the
-remaining evaluation corpus and interruption tests before any default-v4
-release. Production schema and guarded v4 code are live; the production v4
-route and model configuration remain disabled.
+Next: monitor the two saved evaluation runs through build, engineering and
+export; diagnose the engineering session's repeated reads and empty-action
+turns without interrupting a live workflow. Refresh the isolated preview with
+this context fix at a safe boundary, then independently reopen STEP artifacts
+and inspect requirement evidence. Run numeric variants, conflicting briefs,
+the remaining evaluation corpus and interruption tests before any default-v4
+release. Production schema and guarded v4 code are live; the public v4 route
+and production model configuration remain disabled.
 
 ### Implemented locally, not yet release-qualified (updated 2026-10-25)
 
