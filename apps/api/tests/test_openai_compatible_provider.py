@@ -428,6 +428,18 @@ def test_nebius_glm_requires_a_tool_action():
     }, [{"type": "function", "function": {"name": "build"}}]) == "required"
 
 
+def test_gateway_minimax_flash_requires_a_tool_action():
+    tools = [{"type": "function", "function": {"name": "read_file"}}]
+    assert openai_compatible._tool_choice({
+        "base_url": "https://ai-gateway.vercel.sh/v1",
+        "model_id": "minimax/minimax-m3.1-flash",
+    }, tools) == "required"
+    assert openai_compatible._tool_choice({
+        "base_url": "https://ai-gateway.vercel.sh/v1",
+        "model_id": "xiaomi/mimo-v2.6-flash",
+    }, tools) == "auto"
+
+
 def test_provider_failures_keep_http_status_for_retry_routing():
     rate_limited = openai_compatible._failure(429, '{"error":"RESOURCE_EXHAUSTED"}')
     overloaded = openai_compatible._failure(503, '{"error":"UNAVAILABLE"}')

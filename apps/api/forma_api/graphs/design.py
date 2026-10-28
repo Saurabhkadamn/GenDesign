@@ -579,7 +579,15 @@ async def agent_tool_turn(state: AgentState, *, model_role: str, prompt_role: st
         'message':'This action was not executed. Inspect the preceding action outcome, then request it again if still needed.'})
         for item in result.get('calls',[])[1:]] if research else []
     # Store the original generation below; keep only useful narrative in active context.
-    next_history = bounded_history([*messages[2:], compact_narrative(assistant),*deferred_results], allow_pending=True)
+    if research and not result.get("calls"):
+        # Full reasoning remains in the immutable generation record below.
+        # An actionless response has no tool relationship to replay, and a
+        # large opaque reasoning field would evict useful source observations.
+        active_assistant = {"role": "assistant", "content":
+            "The previous response made no executable tool call. Its full output is retained in the generation record."}
+    else:
+        active_assistant = compact_narrative(assistant)
+    next_history = bounded_history([*messages[2:], active_assistant,*deferred_results], allow_pending=True)
     await save_generation(run, {
         "id": str(uuid5(NAMESPACE_URL, f"{run['id']}:graph:{ordinal}")),
         "run_id": run["id"], "ordinal": ordinal, "role": prompt_role,

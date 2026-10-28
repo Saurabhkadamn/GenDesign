@@ -136,10 +136,25 @@ No mechanical recipes or pump-specific runtime logic.
   isolated evaluation workflows remain bound to their earlier deployment, so
   this fix does not alter the currently running pump or queued 60-part run.
 
+- The pump's live engineering session then exposed a second loop defect. With
+  `tool_choice=auto`, the pinned Gateway MiniMax model repeatedly used its
+  full 16,384-token output allowance for reasoning without requesting an
+  action. Those long, actionless assistant messages entered active history,
+  displaced source observations and caused more reads. A direct two-turn
+  Gateway check with an approximately 80,000-token prompt confirmed this exact
+  pinned model supports `tool_choice=required` and returns tool calls. The
+  provider adapter now requests an action for that model only. In v4 research
+  sessions, an actionless response retains its complete immutable generation
+  record but contributes only a short notice to active dialogue; signed tool
+  messages remain intact. The focused agent/provider checks passed 141 tests,
+  the complete API suite passed 453 tests, and touched files passed Ruff and
+  Git whitespace checks. This repair is local at this checkpoint; the active
+  isolated workflow remains on its earlier deployment. At 18:57 UTC the pump
+  was still running at 104 model calls and the 60-part run was queued at 30.
+
 Next: monitor the two saved evaluation runs through build, engineering and
-export; diagnose the engineering session's repeated reads and empty-action
-turns without interrupting a live workflow. Refresh the isolated preview with
-this context fix at a safe boundary, then independently reopen STEP artifacts
+export without interrupting a live workflow. Refresh the isolated preview with
+the context and actionless-response fixes at a safe boundary, then independently reopen STEP artifacts
 and inspect requirement evidence. Run numeric variants, conflicting briefs,
 the remaining evaluation corpus and interruption tests before any default-v4
 release. Production schema and guarded v4 code are live; the public v4 route
@@ -288,9 +303,10 @@ Targeted checks on 25 October 2026:
   newly required context size and an SDK local-world test-order issue; both were
   corrected, then the complete suite passed.
 
-No fresh agentic pump, 60-unique-part run, hosted acceptance, 120-run evaluation,
-production deployment or complex-task completion has yet qualified v4. Production
-readiness remains unproven. Tracked files were restored to their original line-ending
+As of the 25 October local baseline, no fresh agentic pump, 60-unique-part run,
+hosted acceptance, 120-run evaluation, production deployment or complex-task
+completion had qualified v4. The hosted qualification section above supersedes
+that deployment status. Production readiness remains unproven. Tracked files were restored to their original line-ending
 style for substantive review; unrelated work and baseline evidence remain preserved.
 
 Next session: finish the scheduler/restart and legacy-successor boundaries, add

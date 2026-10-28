@@ -108,6 +108,32 @@ async def test_research_multi_call_preserves_signed_message_and_all_tool_relatio
 
 
 @pytest.mark.asyncio
+async def test_research_actionless_reasoning_is_saved_without_eviction(monkeypatch, graph_mocks):
+    original = {"role": "assistant", "content": "",
+                "reasoning_details": [{"type": "reasoning.text", "text": "thinking" * 12_000}]}
+    saved = {}
+
+    async def turn(*_args, **_kwargs):
+        return {"message": deepcopy(original), "calls": [], "inputTokens": 10,
+                "outputTokens": 16_384, "webSearchRequests": 0}
+
+    async def save_generation(_run, record):
+        saved.update(record)
+
+    monkeypatch.setattr(design.models, "turn", turn)
+    monkeypatch.setattr(design, "save_generation", save_generation)
+    call, history, _usage = await design.agent_tool_turn(
+        state(harness_version=4, research_mode=True), model_role="engineering",
+        prompt_role="engineering", node="engineering-session", context={},
+        history=[{"role": "user", "content": "Read the candidate and calculate."}], tools=[])
+
+    assert call is None
+    assert saved["output"] == original
+    assert len(json.dumps(history)) < 1000
+    assert "reasoning_details" not in history[-1]
+
+
+@pytest.mark.asyncio
 async def test_research_structured_correction_has_no_repair_counter_stop(monkeypatch, graph_mocks):
     from forma_api.graphs import structured
     from forma_api.contracts import Contract
@@ -128,9 +154,12 @@ async def test_research_structured_correction_has_no_repair_counter_stop(monkeyp
                     'name':'submit','arguments':json.dumps(arguments)}}]},'inputTokens':10,'outputTokens':20}
     async def record(*args,**kwargs): records.append(args)
     async def rpc(name,args):
-        if name=='check_research_fence': return True
-        if name=='record_research_generation': return None
-        if name=='begin_research_job': return jobs.get(args['p_key'],{'status':'running'})
+        if name=='check_research_fence':
+            return True
+        if name=='record_research_generation':
+            return None
+        if name=='begin_research_job':
+            return jobs.get(args['p_key'],{'status':'running'})
         assert name=='commit_research_job'
         jobs[args['p_key']]={'status':'complete','result':args['p_result']}
         return 0
@@ -315,7 +344,8 @@ async def test_disputed_review_can_be_reassessed_once_without_editing_or_publish
         "explanation": "The exact ground frame is still zero; the aggregate centre belongs to the whole assembly.",
         "evidence": ["ground frame [0,0,0]", "current native grounding check passed"]}
     validated = {"identity": design.identity(snapshot, [])}
-    if case == "stale": validated["identity"]["candidate"] = "stale"
+    if case == "stale":
+        validated["identity"]["candidate"] = "stale"
     response_key = f"{design.digest(snapshot)}:grounding"
 
     async def turn(_config, _messages, tools, **_kwargs):

@@ -34,6 +34,7 @@ DEEPSEEK_V4_PREFIX = "deepseek-ai/DeepSeek-V4"
 NEBIUS_MINIMAX_PREFIX = "MiniMaxAI/MiniMax-M3"
 NEBIUS_FIRST_FALLBACK = "MiniMaxAI/MiniMax-M3"
 VERCEL_GATEWAY_HOST = "ai-gateway.vercel.sh"
+VERCEL_MINIMAX_FLASH_MODEL = "minimax/minimax-m3.1-flash"
 NEBIUS_TOKEN_FACTORY_HOSTS = {
     "api.tokenfactory.us-central1.nebius.com",
     "api.tokenfactory.nebius.com",
@@ -297,6 +298,12 @@ def _tool_choice(config: dict, tools: list[dict]) -> str:
     # supported by the endpoint and keeps the graph advancing one action at a
     # time, just like the other agent providers.
     if host in NEBIUS_TOKEN_FACTORY_HOSTS:
+        return "required"
+    if host == VERCEL_GATEWAY_HOST and config.get("model_id") == VERCEL_MINIMAX_FLASH_MODEL:
+        # Hosted qualification showed that this model can exhaust its entire
+        # reasoning allowance without emitting an action under auto selection.
+        # Required selection succeeded with an 80k-token prompt and the normal
+        # multi-turn tool protocol on this exact pinned model.
         return "required"
     # Hosted OpenAI-compatible gateways may advertise required tool calls but
     # return an empty assistant message for large CAD prompts when
