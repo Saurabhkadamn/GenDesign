@@ -148,9 +148,14 @@ No mechanical recipes or pump-specific runtime logic.
   record but contributes only a short notice to active dialogue; signed tool
   messages remain intact. The focused agent/provider checks passed 141 tests,
   the complete API suite passed 453 tests, and touched files passed Ruff and
-  Git whitespace checks. This repair is local at this checkpoint; the active
-  isolated workflow remains on its earlier deployment. At 18:57 UTC the pump
-  was still running at 104 model calls and the 60-part run was queued at 30.
+  Git whitespace checks. Commit `af6956e` was pushed; guarded production
+  deployment `dpl_BrgcnCNaN4TozN49PhVCWfTjfXTf` was ready, passed target
+  health/main-page checks and was promoted to the public Forma domain. The
+  public API health and main page returned HTTP 200 after promotion. V4 is
+  still off as the public default. The active isolated workflow remains on
+  its earlier deployment, so this fix has not yet changed that run. At 19:03
+  UTC the pump was still running at 109 model calls and the 60-part run was
+  queued at 30; neither had engineering acceptance.
 
 Next: monitor the two saved evaluation runs through build, engineering and
 export without interrupting a live workflow. Refresh the isolated preview with
