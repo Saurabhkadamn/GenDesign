@@ -341,16 +341,24 @@ No mechanical recipes or pump-specific runtime logic.
   different model identity. That alias is not a pinned qualified replacement
   under the approved provider rules, so it was not activated or used for
   either saved project. No provider keys or tokens are in this report.
+- At 15:42 UTC on 2026-10-29, the saved runs were still paused with the same
+  candidate versions and call counts. TheGrid's published instrument description
+  says `code-max` may route to any qualifying model and use automatic fallbacks;
+  pinning the alias would therefore not pin the underlying model. Its terms also
+  restrict use of the Consumption API for benchmarking or competitive analysis
+  without prior written consent. Do not use this route for the planned model
+  comparison or treat its stable two-turn probe as an engineering qualification.
+  Sources: https://app.thegrid.ai/ and https://thegrid.ai/terms-of-use.
 
-Next: monitor the two saved evaluation runs through build, engineering and
-export without duplicating work. The pump is now on the corrected isolated
-preview; the 60-part workflow is still bound to an older one. At their next
-safe boundary, inspect model receipts and advance preserved work.
-Independently reopen STEP artifacts
-and inspect requirement evidence. Run numeric variants, conflicting briefs,
-the remaining evaluation corpus and interruption tests before any default-v4
-release. Production schema and guarded v4 code are live; the public v4 route
-and production model configuration remain disabled.
+Next: leave both saved runs paused until Gateway quota becomes available or a
+separately qualified provider with a pinned model and compatible data terms is
+available. Their absent workflow identities and leases make this a safe resume
+boundary; start each preserved run only once on the latest isolated preview.
+Then inspect receipts, complete the missing assembly work, independently reopen
+all STEP states and inspect requirement evidence. Run numeric variants,
+conflicting briefs, the remaining evaluation corpus and interruption tests
+before any default-v4 release. Production schema and guarded v4 code are live;
+the public v4 route and production model configuration remain disabled.
 
 ### Implemented locally, not yet release-qualified (updated 2026-10-25)
 
@@ -459,8 +467,9 @@ the hosted qualification section above supersedes its deployment status.
   point local qualification at the production database.
 - Run fresh agentic pump tasks, a 60-unique-part assembly, and the 120-run evaluation
   against a frozen legacy harness; report cost, time, interventions and false success.
-- Hosted qualification, review, push and release remain pending. No production settings,
-  provider credentials or deployed runtimes were changed by this implementation work.
+- Guarded production and isolated-preview deployments are live, as recorded above.
+  Engineering acceptance and the default-v4 release remain pending. No saved
+  provider credential was added to source control.
 
 ## Release gates
 
@@ -501,10 +510,11 @@ completion had qualified v4. The hosted qualification section above supersedes
 that deployment status. Production readiness remains unproven. Tracked files were restored to their original line-ending
 style for substantive review; unrelated work and baseline evidence remain preserved.
 
-Next session: finish the scheduler/restart and legacy-successor boundaries, add
-dependency-safe caching and standards provenance, then exercise the actual local
-application with an isolated database and provider before hosted qualification.
-Keep checks targeted and prioritize usable end-to-end behavior.
+Independent work while the provider is unavailable: finish the scheduler/restart
+and legacy-successor boundaries, dependency-safe caching and standards
+provenance. Exercise the local application with an isolated database and a
+qualified provider when available. Keep checks targeted and prioritize usable
+end-to-end behavior.
 
 Provider implementation references checked 2026-10-23:
 - https://docs.tokenfactory.nebius.com/ai-models-inference/rate-limits
