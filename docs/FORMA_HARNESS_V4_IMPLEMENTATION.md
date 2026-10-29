@@ -373,8 +373,13 @@ the hosted qualification section above supersedes its deployment status.
   into the event. A new acceptance plan cannot silently account for an uploaded
   brief document that was shortened in prompt context until its pages have been
   retrieved in full. Existing identical plan replays remain valid. The targeted
-  source/plan tests passed on 2026-10-29; this has not yet been deployed or
-  qualified against the saved hosted runs.
+  source/plan tests (4) and adjacent graph tests (94) passed on 2026-10-29;
+  Ruff and the live isolated PostgREST read query also passed. Commit `dd9a093`
+  was pushed and guarded production deployment `dpl_EgD2H3Tmaz9MvTmM4KxKoSo4w42k`
+  reached Ready; public health and main page returned HTTP 200. The Vercel CLI
+  lost its polling connection after creating the deployment, so the existing
+  deployment was inspected by ID rather than submitted again. The saved hosted
+  runs remain paused by provider quota and have not exercised this change.
 - Explicit task outcome and revision acceptance states. Availability of a draft does
   not satisfy engineering requirements. Completion requires current requirement
   evidence, real artifact receipts and an independent review of requirement coverage.
