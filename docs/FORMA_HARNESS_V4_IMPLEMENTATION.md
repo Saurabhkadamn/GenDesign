@@ -419,8 +419,15 @@ the hosted qualification section above supersedes its deployment status.
   or guidance change. Real provider-switch/resume qualification remains pending.
 - Continue now rejects a run that is already active before authorizing any retry of
   uncertain operations. The adjacent API checks passed on 2026-10-29. A concurrent
-  status transition between the read and authorization still needs an atomic
-  resume/authorization boundary; this guard alone does not claim to solve it.
+  status transition between the read and authorization still needed an atomic
+  resume/authorization boundary. The new migration places retry authorization,
+  preservation of the previous operation receipt, the follow-up message and
+  dispatch intent inside one locked transaction. The PGlite v4 migration suite
+  passed 14 tests and targeted API safety/dispatch checks passed 68. The migration
+  is applied to the isolated evaluation database; the production database URL
+  was unavailable to local migration tooling, so production schema and guarded
+  deployment still use the earlier resume path. Do not deploy this API change
+  to production before its schema migration is verified there.
 - The committed project acceptance plan persists across runs. Sourced amendments and
   a matching base version are required to change or retire requirements/deliverables.
   Focused delegation cannot replace the full inventory. V4 bypasses legacy keyword

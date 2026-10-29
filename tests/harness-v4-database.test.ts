@@ -102,6 +102,47 @@ describe.sequential('v4 ownership and truthful state', () => {
     await db.exec('reset role');
   });
 
+  it('resumes and authorizes an uncertain operation in one transaction', async () => {
+    const id = await run(project);
+    const token = (await db.query<{token:number}>(
+      "select public.claim_research_run($1,'worker','test',64) token",[id]
+    )).rows[0].token;
+    await db.query(
+      "select public.record_research_operation($1,'worker',$2,'model-step','model','input','started',null)",
+      [id,token]
+    );
+    await db.query("select public.finish_research_run($1,'worker',$2,'paused','Waiting')",[id,token]);
+    const reply = JSON.stringify({kind:'continue',message:'Keep the original tolerance'});
+    await expect(db.query(
+      "select public.resume_research_run($1,$2,'test',$3)",[id,randomUUID(),reply]
+    )).rejects.toThrow('RUN_NOT_RESUMABLE');
+    expect((await db.query<{status:string}>(
+      "select status from public.run_operations where run_id=$1 and operation_key='model-step'",[id]
+    )).rows[0].status).toBe('started');
+
+    await db.query("select public.resume_research_run($1,$2,'test',$3)",[id,owner,reply]);
+    const operation = (await db.query<{status:string,result:{category:string}}>(
+      "select status,result from public.run_operations where run_id=$1 and operation_key='model-step'",[id]
+    )).rows[0];
+    expect(operation.status).toBe('failed');
+    expect(operation.result.category).toBe('user_retry_authorized');
+    const events = await db.query<{body:{previousStatus:string}}>(
+      "select body from public.project_records where run_id=$1 and body->>'type'='operation_retry_authorization'",[id]
+    );
+    expect(events.rows).toHaveLength(1);
+    expect(events.rows[0].body.previousStatus).toBe('started');
+    const messages = await db.query<{content:string}>(
+      "select content from public.messages where run_id=$1 and role='user' and content='Keep the original tolerance'",[id]
+    );
+    expect(messages.rows).toHaveLength(1);
+    await expect(db.query(
+      "select public.resume_research_run($1,$2,'test',$3)",[id,owner,reply]
+    )).rejects.toThrow('RUN_NOT_RESUMABLE');
+    expect((await db.query(
+      "select id from public.project_records where run_id=$1 and body->>'type'='operation_retry_authorization'",[id]
+    )).rows).toHaveLength(1);
+  });
+
   it('fences expired workers and permits unrelated projects', async () => {
     const first = await run(project), second = await run(otherProject);
     const claim = (id:string,worker:string) => db.query<{token:number}>(

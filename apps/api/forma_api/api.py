@@ -302,8 +302,9 @@ async def dispatch(path: str, request: Request, response: Response):
                     raise HTTPException(409, "This run is not waiting for input.")
                 from .services.runs import resume
                 from .graphs.runner import dispatch_run
-                from .engine import authorize_ambiguous_retry
-                await authorize_ambiguous_retry(run["id"])
+                if run.get("harness_version", 3) < 4:
+                    from .engine import authorize_ambiguous_retry
+                    await authorize_ambiguous_retry(run["id"])
                 await resume(run["id"], owner, {'kind':'continue'})
                 await dispatch_run(run["id"], {"kind": "continue"})
                 return {"runId": run["id"]}
@@ -314,12 +315,13 @@ async def dispatch(path: str, request: Request, response: Response):
                 from .services.runs import resume
                 from .graphs.runner import dispatch_run
                 value = payload.model_dump()
-                if payload.kind == "continue":
+                if payload.kind == "continue" and run.get("harness_version", 3) < 4:
                     from .engine import authorize_ambiguous_retry
                     await authorize_ambiguous_retry(run["id"])
                 message = payload.message or ({"approval": "Approved engineering proposal.",
                     "rejection": "Rejected engineering proposal.", "continue": "Continue."}.get(payload.kind))
-                if message:
+                value["message"] = message
+                if message and run.get("harness_version", 3) < 4:
                     # Keep the original request and each clarification as
                     # separate chat turns. The deterministic ID makes a
                     # repeated HTTP submission for this paused state safe.

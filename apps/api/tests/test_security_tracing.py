@@ -144,6 +144,55 @@ def test_continue_does_not_change_operations_for_an_active_run(monkeypatch):
     assert "not waiting" in response.json()["error"]
 
 
+def test_v4_continue_uses_atomic_resume_authorization(monkeypatch):
+    from fastapi.testclient import TestClient
+    from forma_api import api, engine
+    from forma_api.graphs import runner
+    from forma_api.main import app
+    from forma_api.services import runs
+
+    calls = []
+
+    async def profile(*args, **kwargs):
+        return {"id": "owner", "role": "engineer", "is_public_demo": False}
+
+    async def owned_run(*args, **kwargs):
+        return {
+            "id": "run",
+            "backend_version": 3,
+            "execution_environment": settings().environment,
+            "status": "paused",
+            "harness_version": 4,
+        }
+
+    async def resume(run_id, owner_id, value):
+        calls.append(("resume", run_id, owner_id, value))
+
+    async def dispatch(run_id, value):
+        calls.append(("dispatch", run_id, value))
+
+    async def unexpected(*args, **kwargs):
+        raise AssertionError("V4 retry authorization belongs to the resume transaction")
+
+    monkeypatch.setattr(api, "require_profile", profile)
+    monkeypatch.setattr(api.repo, "owned_run", owned_run)
+    monkeypatch.setattr(runs, "resume", resume)
+    monkeypatch.setattr(runner, "dispatch_run", dispatch)
+    monkeypatch.setattr(engine, "authorize_ambiguous_retry", unexpected)
+    monkeypatch.setattr(api.db, "insert", unexpected)
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/runs/run/resume",
+            headers={"Origin": "http://localhost:3000"},
+            json={"kind": "continue", "message": "Preserve every clearance"},
+        )
+    assert response.status_code == 200
+    assert calls == [
+        ("resume", "run", "owner", {"kind": "continue", "message": "Preserve every clearance"}),
+        ("dispatch", "run", {"kind": "continue", "message": "Preserve every clearance"}),
+    ]
+
+
 def test_admin_can_save_encrypted_ordered_gemini_keys(monkeypatch):
     from fastapi.testclient import TestClient
     from forma_api import api
