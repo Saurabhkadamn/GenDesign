@@ -191,6 +191,11 @@ No mechanical recipes or pump-specific runtime logic.
   overdue scheduler wait was safely re-enqueued through its existing
   workflow ID; no new run or model call was created by that wake. It remains
   pinned to its older deployment and queued behind the pump.
+  The resumed run completed sandbox preparation with a real engineering
+  sandbox identity, then returned a normal failed calculation receipt for an
+  unsaved `calculations/env_probe.py` path. It continued editing and saved
+  candidate version 3 with `calculations/seed.py`; at 06:06 UTC it was running
+  at 870 model calls. No geometry build or engineering acceptance is claimed.
 - Guarded production deployment `dpl_B6qaZauFNa92EsB9xm2cBSKfxa65`
   passed target health and main-page checks and was promoted to the public
   Forma domain. Both public checks returned HTTP 200 and the inspected domain
