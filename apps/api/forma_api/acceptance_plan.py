@@ -6,6 +6,7 @@ from copy import deepcopy
 from pydantic import Field, model_validator
 
 from .contracts import Contract, Requirement, SafeId
+from .agent_context import omitted_source_ids
 from .execution import digest
 from .project_record import all_user_messages, brief_documents, append_record
 from . import db
@@ -160,6 +161,7 @@ async def record_plan(run, value: AcceptancePlan, state):
         raise ValueError(
             "Acceptance plan omits historical user sources; retrieve and account for all corrections"
         )
+    sources = {}
     for source_id in value.sourceIds:
         source = await db.one(
             "project_records",
@@ -171,6 +173,7 @@ async def record_plan(run, value: AcceptancePlan, state):
         )
         if source["body"].get("role") == "assistant":
             raise ValueError("Assistant claims cannot be authoritative requirement sources")
+        sources[source_id] = source
     plan = value.model_dump()
     version = digest(plan)
     previous = await current_plan(run["project_id"])
@@ -179,13 +182,17 @@ async def record_plan(run, value: AcceptancePlan, state):
             "ok": True,
             "acceptancePlan": previous,
         }  # crash after pointer commit, before graph checkpoint
-    for document in documents:
-        content = str(document["body"].get("content", ""))
-        missing = await unread_source_offset(run["project_id"], document["id"], len(content))
+    full_read_ids = {document["id"] for document in documents}
+    full_read_ids.update(omitted_source_ids(state.get("project_context") or {}))
+    for source_id in sorted(full_read_ids):
+        if source_id not in sources:
+            raise ValueError("Acceptance plan omits a shortened authoritative source")
+        content = str(sources[source_id]["body"].get("content", ""))
+        missing = await unread_source_offset(run["project_id"], source_id, len(content))
         if missing < len(content):
             raise ValueError(
-                "A stored brief document was shortened in the prompt. Read its complete "
-                f"source with read_project_source, starting at offset {missing}, before "
+                "An authoritative source was shortened in the prompt. Read its complete "
+                f"text with read_project_source sourceId={source_id} offset={missing} before "
                 "recording an acceptance plan."
             )
     validate_amendments(previous, plan)

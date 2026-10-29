@@ -153,3 +153,14 @@ def prompt_context(context: dict) -> dict:
             for m in project.get("previousMessages", [])
         ]
     return result
+
+
+def omitted_source_ids(project_context: dict) -> set[str]:
+    """Identify authoritative sources reduced to references in the model prompt."""
+    prepared = prompt_context({"projectContext": project_context})
+    inputs = prepared.get("projectContext", {}).get("authoritativeInputs") or {}
+    return {
+        source["id"]
+        for source in inputs.get("sourceMessages") or []
+        if source.get("id") and source.get("requiresRetrieval")
+    }

@@ -4,6 +4,7 @@ from uuid import uuid4
 import pytest
 
 from forma_api import acceptance_plan as plans
+from forma_api.agent_context import omitted_source_ids
 from forma_api import research_tools
 from forma_api.services.runs import lease_context
 
@@ -167,7 +168,7 @@ async def test_stored_brief_must_be_read_before_new_plan(record_store, monkeypat
     value = definition(source)
     value["sourceIds"].append(document_id)
     run = {"id": "first", "project_id": project}
-    with pytest.raises(ValueError, match="offset 24000"):
+    with pytest.raises(ValueError, match="offset=24000"):
         await plans.record_plan(run, plans.AcceptancePlan.model_validate(value), {})
 
     async def complete_pages(_table, params):
@@ -214,3 +215,35 @@ async def test_source_read_records_exact_page_without_copying_content(monkeypatc
     assert captured["key"] == f"source-read:{source_id}:12000:24000"
     assert captured["body"]["end"] == 24000
     assert "content" not in captured["body"]
+
+
+@pytest.mark.asyncio
+async def test_long_authoritative_message_requires_full_read(record_store, monkeypatch):
+    source, project, _, _ = record_store
+    long_brief = "CAD requirement " * 3000
+    context = {
+        "authoritativeInputs": {
+            "originalBrief": long_brief,
+            "humanCorrections": [],
+            "sourceMessages": [{"id": source, "content": long_brief}],
+        }
+    }
+    assert omitted_source_ids(context) == {source}
+    assert (
+        omitted_source_ids(
+            {"authoritativeInputs": {"sourceMessages": [{"id": source, "content": "short"}]}}
+        )
+        == set()
+    )
+
+    async def no_reads(_table, params):
+        assert params["body->>sourceId"] == f"eq.{source}"
+        return []
+
+    monkeypatch.setattr(plans.db, "rest", no_reads)
+    with pytest.raises(ValueError, match="sourceId=.*offset=0"):
+        await plans.record_plan(
+            {"id": "first", "project_id": project},
+            plans.AcceptancePlan.model_validate(definition(source)),
+            {"project_context": context},
+        )

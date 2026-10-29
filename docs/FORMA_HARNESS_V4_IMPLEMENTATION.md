@@ -380,6 +380,11 @@ the hosted qualification section above supersedes its deployment status.
   lost its polling connection after creating the deployment, so the existing
   deployment was inspected by ID rather than submitted again. The saved hosted
   runs remain paused by provider quota and have not exercised this change.
+- The same full-read gate now covers long user messages when the common context
+  builder replaces their text with retrieval references. It uses the context
+  builder's own omission decision, so ordinary short messages do not cause
+  extra reads. Existing identical plan replays stay valid. Five targeted
+  source/plan tests pass; hosted qualification is still pending.
 - Explicit task outcome and revision acceptance states. Availability of a draft does
   not satisfy engineering requirements. Completion requires current requirement
   evidence, real artifact receipts and an independent review of requirement coverage.
