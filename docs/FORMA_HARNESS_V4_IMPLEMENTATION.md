@@ -246,7 +246,24 @@ No mechanical recipes or pump-specific runtime logic.
   candidate and immutable generation records remain available. The recovery
   prompt explicitly directs retrieval of omitted evidence. The focused graph
   checks passed 92 tests, Ruff and whitespace checks passed. This change
-  still needs hosted qualification at a safe workflow boundary.
+  still needs hosted qualification at a safe workflow boundary. Commit
+  `ae5cacd` was pushed and guarded production deployment
+  `dpl_DFoRVp4fQt2LpQKtERRWLyhfMwVu` became ready. Its protected target
+  health and main-page checks returned HTTP 200 through Vercel's authenticated
+  curl; it was promoted and the public Forma health and main page returned
+  HTTP 200. The public domain resolves to that deployment. V4 remains off
+  as the public default and the active eval workflows remain on their older
+  pinned deployments.
+- The matching isolated evaluation preview is
+  `https://forma-lpfxotj4w-negens-projects.vercel.app`
+  (`dpl_58425TF7T7UJrmBsZpAMdZiFsvm4`). It uses the isolated database,
+  `preview-eval` runtime identity and v4 research settings; its protected
+  health endpoint and an authenticated GET for the saved pump run returned
+  HTTP 200. At 07:50 UTC the old pinned pump workflow was still running at
+  949 model calls, and the 60-part workflow was still queued at 30. Neither
+  workflow was replaced or interrupted by the new preview. The focused
+  recovery behavior remains unproven on these saved runs until a safe
+  continuation boundary is reached.
 
 Next: monitor the two saved evaluation runs through build, engineering and
 export without duplicating work. The pump is now on the corrected isolated
