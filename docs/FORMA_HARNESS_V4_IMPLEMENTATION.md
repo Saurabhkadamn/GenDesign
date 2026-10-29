@@ -384,7 +384,11 @@ the hosted qualification section above supersedes its deployment status.
   builder replaces their text with retrieval references. It uses the context
   builder's own omission decision, so ordinary short messages do not cause
   extra reads. Existing identical plan replays stay valid. Five targeted
-  source/plan tests pass; hosted qualification is still pending.
+  source/plan tests and 94 adjacent graph tests passed. Commit `0742f06` was
+  pushed and guarded production deployment `dpl_EekZMBRJpxuqtfeA3TaN44GxKs7D`
+  reached Ready; public health and main page returned HTTP 200. The Vercel CLI
+  lost its polling connection after creation, so the existing deployment was
+  inspected by ID. Hosted engineering qualification is still pending.
 - Explicit task outcome and revision acceptance states. Availability of a draft does
   not satisfy engineering requirements. Completion requires current requirement
   evidence, real artifact receipts and an independent review of requirement coverage.
