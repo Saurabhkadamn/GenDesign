@@ -157,9 +157,30 @@ No mechanical recipes or pump-specific runtime logic.
   UTC the pump was still running at 109 model calls and the 60-part run was
   queued at 30; neither had engineering acceptance.
 
+- By 02:58 UTC on 2026-10-29, the old isolated pump workflow paused at 860
+  model calls with `TypeError: quote_from_bytes() expected bytes`. Its graph
+  checkpoint is still in `engineering_analysis`; the candidate remains at
+  version 2, with no accepted revision. The engineering session had requested
+  `calculate` before a CAD build. Its checkpoint supplied `sandbox=None`, so
+  sandbox preparation recorded `sandbox:None` and failed before the calculation
+  executed. The calculation operation is marked started/uncertain and requires
+  the existing explicit Continue reconciliation before replay. This is an
+  application integration defect, not an engineering result or a model outage.
+  The same run had 145 actionless generations and 558 `read_file` requests
+  across 859 saved generations; the earlier context/action fix was not on its
+  pinned runtime. Eleven rejected `apply_changes` requests left started
+  receipts because validation exceptions escaped the receipt callback.
+  Engineering now assigns a stable per-run sandbox identity before calculating
+  and commits deterministic tool-validation feedback as a completed receipt.
+  The engineering regressions passed 7 checks, the full API suite passed 455,
+  and touched Python files passed Ruff. The 60-part run was still queued at
+  the inspection checkpoint.
+
 Next: monitor the two saved evaluation runs through build, engineering and
-export without interrupting a live workflow. Refresh the isolated preview with
-the context and actionless-response fixes at a safe boundary, then independently reopen STEP artifacts
+export without duplicating work. Refresh the isolated preview with the
+context, actionless-response and engineering-sandbox fixes, then explicitly
+continue the paused pump after reconciling its uncertain calculation receipt.
+Independently reopen STEP artifacts
 and inspect requirement evidence. Run numeric variants, conflicting briefs,
 the remaining evaluation corpus and interruption tests before any default-v4
 release. Production schema and guarded v4 code are live; the public v4 route

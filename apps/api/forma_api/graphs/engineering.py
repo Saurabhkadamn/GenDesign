@@ -1,5 +1,7 @@
 """An iterative engineering session using the same candidate and evidence as CAD."""
 
+from uuid import UUID
+
 from pydantic import ValidationError
 
 from ..agent_context import engineering_context
@@ -120,16 +122,32 @@ async def step(state):
         else:
             cp = graph.checkpoint_view(state, snapshot)
             cp["role"] = "engineering"
+            if name == "calculate" and not cp.get("sandbox"):
+                # Engineering may run before any CAD build. Use a stable
+                # per-run identity so interrupted preparation can be retried
+                # without inventing a different external environment.
+                cp["sandbox"] = f"forma-{UUID(str(run['id'])).hex}-engineering"
             key = f"engineering:{name}:{digest({'input': value, 'candidate': digest(snapshot)})}"
 
             async def execute():
-                result = await graph.execute_tool(
-                    run,
-                    cp,
-                    {"id": call["id"], "name": name, "input": value},
-                    await graph.app_settings(),
-                    graph.worker(),
-                )
+                try:
+                    result = await graph.execute_tool(
+                        run,
+                        cp,
+                        {"id": call["id"], "name": name, "input": value},
+                        await graph.app_settings(),
+                        graph.worker(),
+                    )
+                except (ValueError, ValidationError) as exc:
+                    # A rejected edit or invalid calculation path has no
+                    # external effect. Commit its feedback as a completed
+                    # receipt instead of stranding a started operation.
+                    result = {
+                        "ok": False,
+                        "category": "engineering_tool",
+                        "message": str(exc),
+                        "instruction": "Correct the source or tool input, then retry.",
+                    }
                 return {"result": result, "checkpoint": cp}
 
             receipt = await graph.operation(

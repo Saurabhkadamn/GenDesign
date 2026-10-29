@@ -682,6 +682,60 @@ async def test_engineering_bad_tool_stays_repairable(monkeypatch, graph_mocks):
 
 
 @pytest.mark.asyncio
+async def test_engineering_calculation_prepares_stable_sandbox_before_execution(monkeypatch, graph_mocks):
+    observed = []
+
+    async def turn(*_args, **_kwargs):
+        call = {"id": "calculation", "name": "calculate", "input": {"path": "calculations/analysis.py"}}
+        assistant = {"role": "assistant", "tool_calls": [{"id": call["id"], "type": "function",
+                     "function": {"name": call["name"], "arguments": json.dumps(call["input"])}}]}
+        return call, [{"role": "user", "content": "Calculate."}, assistant], {"model_calls": 1}
+
+    async def execute(_run, cp, _call, _settings, _worker):
+        observed.append(cp["sandbox"])
+        return {"ok": False, "error": {"category": "calculation_error"}}
+
+    monkeypatch.setattr(design, "agent_tool_turn", turn)
+    monkeypatch.setattr(design, "execute_tool", execute)
+    first = await design.engineering_analysis(state(harness_version=4, research_mode=True))
+    second = await design.engineering_analysis(state(harness_version=4, research_mode=True))
+
+    assert observed == ["forma-00000000000000000000000000000001-engineering"] * 2
+    assert first["sandbox"] == observed[0]
+    assert second["phase"] == "engineering_analysis"
+
+
+@pytest.mark.asyncio
+async def test_engineering_rejected_edit_commits_failure_receipt(monkeypatch, graph_mocks):
+    recorded = []
+
+    async def turn(*_args, **_kwargs):
+        call = {"id": "invalid-edit", "name": "apply_changes",
+                "input": {"files": {"calculations/analysis.py": "def calculate(): return {}"},
+                          "manifest": None, "deletePaths": []}}
+        assistant = {"role": "assistant", "tool_calls": [{"id": call["id"], "type": "function",
+                     "function": {"name": call["name"], "arguments": json.dumps(call["input"])}}]}
+        return call, [{"role": "user", "content": "Edit the calculation."}, assistant], {"model_calls": 1}
+
+    async def reject(*_args, **_kwargs):
+        raise ValueError("Engineering can edit only calculations/ files.")
+
+    async def operation(_run, _key, _kind, callback, **_kwargs):
+        receipt = await callback()
+        recorded.append(receipt)
+        return receipt
+
+    monkeypatch.setattr(design, "agent_tool_turn", turn)
+    monkeypatch.setattr(design, "execute_tool", reject)
+    monkeypatch.setattr(design, "operation", operation)
+    result = await design.engineering_analysis(state(harness_version=4, research_mode=True))
+
+    assert len(recorded) == 1
+    assert recorded[0]["result"]["category"] == "engineering_tool"
+    assert json.loads(result["engineering_history"][-1]["content"])["ok"] is False
+
+
+@pytest.mark.asyncio
 async def test_engineering_finish_returns_to_cad_with_current_evidence(monkeypatch, graph_mocks):
     async def turn(*args, **kwargs):
         return {"id":"finish", "name":"finish", "input":{"message":"Calculation remains unverified."}}, [], {"model_calls":3}
