@@ -296,8 +296,17 @@ No mechanical recipes or pump-specific runtime logic.
   different focused calculation. A changed candidate, evidence, user request
   or model configuration permits a new attempt. This is idempotent recovery,
   not a spending, call-count or repair cap. The focused graph suite passed
-  94 tests; Ruff and whitespace checks passed. The active pinned runs still
-  cannot exercise this change until a safe continuation boundary.
+  94 tests; the full API suite passed 459; Ruff and whitespace checks passed.
+  Commit `7e53020` was pushed. Guarded production deployment
+  `dpl_36rfT9UzdCoUjStyA2GVuNKoYinp` passed protected health and main-page
+  checks, was promoted, and public health and main page returned HTTP 200.
+  V4 remains off as the public default. The matching isolated eval preview
+  `https://forma-chzerbclt-negens-projects.vercel.app`
+  (`dpl_4XEMoK3LGT96T9pkN2MJMWBKusjj`) passed protected health and an
+  authenticated saved-run read under `preview-eval`. At 09:44 UTC the active
+  pump was still pinned to an older preview at 1,029 calls; the 60-part run
+  remained queued at 30. Neither workflow was replaced or interrupted. The
+  new recovery still needs hosted qualification after a safe boundary.
 
 Next: monitor the two saved evaluation runs through build, engineering and
 export without duplicating work. The pump is now on the corrected isolated
