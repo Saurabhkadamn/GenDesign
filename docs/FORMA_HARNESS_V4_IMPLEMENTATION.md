@@ -275,7 +275,17 @@ No mechanical recipes or pump-specific runtime logic.
   satisfied, and it does not impose a research call/compute cap. The 93
   focused graph checks, full 458-test API suite, Ruff and whitespace checks
   passed. The change has not yet affected the active pinned evaluations;
-  hosted behavior and engineering completion remain unverified.
+  hosted behavior and engineering completion remain unverified. Commit
+  `0abe60f` was pushed. Guarded production deployment
+  `dpl_9cKqnaMMV3kDCJJbgc6vTrpxnfUu` passed protected health and main-page
+  checks, was promoted, and passed public health and main-page checks. V4
+  remains off as the public default. Matching isolated eval preview
+  `https://forma-9tcl99swx-negens-projects.vercel.app`
+  (`dpl_2QdUtx214wdPBg6s3fSY3t4jUQnB`) passed protected health and an
+  authenticated saved-run read with the `preview-eval` runtime identity.
+  The active pump remained pinned to the previous preview and was running at
+  989 calls at 08:47 UTC; the 60-part run was still queued at 30. No live
+  workflow was replaced or interrupted.
 
 Next: monitor the two saved evaluation runs through build, engineering and
 export without duplicating work. The pump is now on the corrected isolated
