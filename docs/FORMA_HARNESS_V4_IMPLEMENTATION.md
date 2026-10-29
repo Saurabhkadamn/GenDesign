@@ -323,6 +323,24 @@ No mechanical recipes or pump-specific runtime logic.
   calls on the old pinned runtime. The 60-part run remained queued at 30
   calls. Preserve these candidate and evidence records; do not claim the
   original design task is satisfied or refresh either live workflow unsafely.
+- At 12:15 UTC both isolated evaluation runs reached a safe pause with their
+  workflow identities and worker leases cleared. The pump is paused/blocked
+  at 1,142 calls with candidate version 8, 14 component definitions and no
+  assembly instances or STEP. The 60-unique-part run is paused/blocked at
+  30 calls with candidate version 6, two component definitions and one
+  instance. Each run recorded an HTTP 402 provider-payment blocker; neither
+  was marked satisfied or accepted. A minimal read-only probe against the
+  saved Vercel AI Gateway key confirmed HTTP 402
+  `quota_for_entity_exceeded` for **both** selected models, MiniMax M3.1 Flash
+  and MiMo V2.6 Flash. Do not retry these saved runs until the gateway quota
+  changes or a separately qualified connection is activated. Their
+  checkpoints, candidate versions, calculation records and receipts remain.
+  A read-only alternative-provider probe found the saved TheGrid `code-max`
+  connection responds and can complete a two-turn tool exchange with
+  `tool_choice=auto`, but rejects `required` and resolves the alias to a
+  different model identity. That alias is not a pinned qualified replacement
+  under the approved provider rules, so it was not activated or used for
+  either saved project. No provider keys or tokens are in this report.
 
 Next: monitor the two saved evaluation runs through build, engineering and
 export without duplicating work. The pump is now on the corrected isolated
