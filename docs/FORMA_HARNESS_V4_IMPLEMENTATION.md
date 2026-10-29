@@ -236,6 +236,17 @@ No mechanical recipes or pump-specific runtime logic.
   identity but does not replace the running workflow. At 07:03 UTC the pump
   was still running on the earlier preview at 916 model calls; the 60-part
   run remained queued on its earlier workflow.
+- At 07:38 UTC the saved pump had reached 942 calls and remained in
+  engineering without a geometry build. Generations 927–942 were sixteen
+  consecutive 16,384-token responses without a tool call. This is a live
+  failure pattern, not proof that the new guard has helped: the active
+  workflow is still pinned to its earlier deployment. For future v4 turns,
+  an actionless response now narrows the next dialogue to the original task
+  and recent complete tool pairs; the authoritative project context,
+  candidate and immutable generation records remain available. The recovery
+  prompt explicitly directs retrieval of omitted evidence. The focused graph
+  checks passed 92 tests, Ruff and whitespace checks passed. This change
+  still needs hosted qualification at a safe workflow boundary.
 
 Next: monitor the two saved evaluation runs through build, engineering and
 export without duplicating work. The pump is now on the corrected isolated

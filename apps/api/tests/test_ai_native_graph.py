@@ -172,6 +172,45 @@ async def test_repeated_actionless_turns_keep_one_reminder_and_signed_tool_pair(
 
 
 @pytest.mark.asyncio
+async def test_actionless_recovery_focuses_dialogue_without_losing_current_tool_pair(monkeypatch, graph_mocks):
+    history = [{"role": "user", "content": "Original request remains authoritative."}]
+    for index in range(20):
+        history.extend([
+            {"role": "assistant", "content": "", "tool_calls": [{
+                "id": f"read-{index}", "type": "function", "function": {
+                    "name": "read_file", "arguments": json.dumps({"path": f"parts/{index}.py"})}}]},
+            {"role": "tool", "tool_call_id": f"read-{index}",
+             "content": json.dumps({"ok": True, "content": "source" * 100})},
+        ])
+    seen = {}
+
+    async def turn(_config, messages, _tools, **_kwargs):
+        seen["messages"] = messages
+        return {"message": {"role": "assistant", "content": ""}, "calls": [],
+                "inputTokens": 10, "outputTokens": 10, "webSearchRequests": 0}
+
+    async def save_generation(*_args):
+        return None
+
+    monkeypatch.setattr(design.models, "turn", turn)
+    monkeypatch.setattr(design, "save_generation", save_generation)
+    await design.agent_tool_turn(
+        state(harness_version=4, research_mode=True, no_action_streak=4),
+        model_role="engineering", prompt_role="engineering", node="engineering-session",
+        context={}, history=history, tools=[])
+
+    dialogue = seen["messages"][2:]
+    assert dialogue[0]["content"] == "Original request remains authoritative."
+    assert len(dialogue) < 20
+    assert not any(item.get("tool_call_id") == "read-0" for item in dialogue)
+    assert any(item.get("tool_call_id") == "read-19" for item in dialogue)
+    for item in dialogue:
+        if item.get("role") == "tool":
+            assert any(call.get("id") == item["tool_call_id"]
+                       for earlier in dialogue for call in earlier.get("tool_calls", []))
+
+
+@pytest.mark.asyncio
 async def test_research_structured_correction_has_no_repair_counter_stop(monkeypatch, graph_mocks):
     from forma_api.graphs import structured
     from forma_api.contracts import Contract

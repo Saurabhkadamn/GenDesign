@@ -515,6 +515,12 @@ async def agent_tool_turn(state: AgentState, *, model_role: str, prompt_role: st
     research = state.get('harness_version', 3) >= 4
     if research:
         history = prune_actionless_history(history)
+        if state.get("no_action_streak", 0) and len(history) > 13:
+            # A model that spent its whole output allowance without acting
+            # needs a smaller decision surface on the next turn. The original
+            # request, project record and candidate remain in shared_context;
+            # older tool dialogue is retrievable from durable generations.
+            history = protocol_safe_history([*history[:1], *history[-12:]])
     run = await run_row(state)
     config = await models.configuration(model_role)
     tools = provider_tools(config, tools)
@@ -530,6 +536,7 @@ async def agent_tool_turn(state: AgentState, *, model_role: str, prompt_role: st
             "consecutiveActionlessResponses": state["no_action_streak"],
             "instruction": (
                 "The previous response did not request an action. Choose one small executable tool step now. "
+                "Older dialogue may be omitted; retrieve source or evidence when needed. "
                 "If required evidence is unavailable, use finish to report the limitation and return control."
             ),
         }
