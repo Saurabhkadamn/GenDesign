@@ -298,6 +298,8 @@ async def dispatch(path: str, request: Request, response: Response):
                 from .workflow_recovery import wake_queued_run
                 return await wake_queued_run(run)
             if parts[2] == "continue":
+                if run["status"] not in ("waiting_input", "paused"):
+                    raise HTTPException(409, "This run is not waiting for input.")
                 from .services.runs import resume
                 from .graphs.runner import dispatch_run
                 from .engine import authorize_ambiguous_retry

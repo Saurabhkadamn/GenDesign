@@ -417,6 +417,10 @@ the hosted qualification section above supersedes its deployment status.
   active after their scheduler stopped. Explicit human continuation selects a fresh
   model ordinal after every earlier attempt, retaining original receipts when settings
   or guidance change. Real provider-switch/resume qualification remains pending.
+- Continue now rejects a run that is already active before authorizing any retry of
+  uncertain operations. The adjacent API checks passed on 2026-10-29. A concurrent
+  status transition between the read and authorization still needs an atomic
+  resume/authorization boundary; this guard alone does not claim to solve it.
 - The committed project acceptance plan persists across runs. Sourced amendments and
   a matching base version are required to change or retire requirements/deliverables.
   Focused delegation cannot replace the full inventory. V4 bypasses legacy keyword
