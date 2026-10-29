@@ -52,6 +52,20 @@ def worker() -> str:
     return _worker.get()
 
 
+async def engineering_request_fingerprint(state: AgentState, snapshot: dict, task: str) -> str:
+    """Identify an unchanged specialist request, including its model and evidence."""
+    config = await models.configuration("engineering")
+    return digest({
+        "candidate": digest(snapshot),
+        "task": task.strip(),
+        "request": state.get("clarified_request") or state["original_request"],
+        "build": digest(state.get("build_result") or {}),
+        "validation": digest(state.get("validation") or {}),
+        "model": config.get("model_id"),
+        "configVersion": config.get("version"),
+    })
+
+
 class TriageRequirement(Contract):
     """Model-facing requirement shape.
 
@@ -874,8 +888,17 @@ async def coordinator_session(state: AgentState) -> dict:
         requirements = state.get('requirements',[]) if state.get('harness_version',3)>=4 or state.get('acceptance_plan') else merge_requirements(
             state.get("clarified_request") or state["original_request"], value.get("requirements") or [])
         if value["role"] == "engineering":
+            fingerprint = (await engineering_request_fingerprint(state, snapshot, value["task"])
+                           if state.get("harness_version", 3) >= 4 else "")
+            if fingerprint and fingerprint == state.get("engineering_no_action_fingerprint"):
+                feedback = {"ok": False, "category": "unchanged_engineering_request",
+                            "message": "The identical task produced no engineering action on this candidate and model.",
+                            "instruction": "Advance CAD, gather new evidence, or choose a different focused calculation task."}
+                return {**update, "coordinator_history": bounded_history(
+                    [*history, tool_message(call, feedback)])}
             await repo.event(state["run_id"], "Coordinator requested engineering analysis.", stage="engineering")
             return {**update, "phase": "engineering_analysis", "engineering_request": value["task"],
+                "engineering_request_fingerprint": fingerprint,
                 "coordinator_actions": 0,
                 "engineering_from_coordinator": True, "coordinator_pending_call": call,
                 "requirements": requirements}
@@ -2041,10 +2064,19 @@ async def cad_session_turn(state: AgentState) -> dict:
             "cad_history": bounded_history([*history, tool_message(call, result)]),
             "validation": {}, "build_result": {}}
     if name == "request_engineering":
+        fingerprint = (await engineering_request_fingerprint(state, snapshot, value["task"])
+                       if state.get("harness_version", 3) >= 4 else "")
+        if fingerprint and fingerprint == state.get("engineering_no_action_fingerprint"):
+            feedback = {"ok": False, "category": "unchanged_engineering_request",
+                        "message": "The identical task produced no engineering action on this candidate and model.",
+                        "instruction": "Advance CAD, gather new evidence, or choose a different focused calculation task."}
+            return {**usage, "phase": "cad_session", "cad_history": bounded_history(
+                [*history, tool_message(call, feedback)])}
         candidate_digest = digest(snapshot)
         request_count = state.get("engineering_request_count", 0) + 1
         await repo.event(state["run_id"], "CAD requested an engineering calculation or parameter study.", stage="engineering")
         return {**usage, "phase": "engineering_analysis", "engineering_request": value["task"],
+            "engineering_request_fingerprint": fingerprint,
             "engineering_request_count": request_count, "last_engineering_request_hash": candidate_digest,
             "pending_cad_call": call, "last_read_path": None, "cad_history": history}
     if name == "ask_user":

@@ -39,6 +39,8 @@ def return_to_design(state, snapshot, usage, summary: str, *, completed: bool) -
         "engineering_history": [],
         "engineering_summary": summary,
         "engineering_candidate_hash": digest(snapshot),
+        **({"engineering_no_action_fingerprint": state["engineering_request_fingerprint"]}
+           if not completed and state.get("engineering_request_fingerprint") else {}),
         "pending_cad_call": {},
         "engineering_from_coordinator": False,
         **(

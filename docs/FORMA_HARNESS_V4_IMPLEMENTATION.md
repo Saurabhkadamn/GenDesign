@@ -286,6 +286,18 @@ No mechanical recipes or pump-specific runtime logic.
   The active pump remained pinned to the previous preview and was running at
   989 calls at 08:47 UTC; the 60-part run was still queued at 30. No live
   workflow was replaced or interrupted.
+- At 09:35 UTC the pump was still running at 1,023 model calls on its older
+  pinned workflow without a geometry build; the 60-part run remained queued.
+  To prevent an immediate coordinator/CAD bounce from reentering the same
+  actionless engineering task, v4 now records a request fingerprint covering
+  task text, candidate, authoritative request, current evidence and pinned
+  engineering model configuration. An identical retry receives the existing
+  no-action feedback and must advance CAD, gather evidence or choose a
+  different focused calculation. A changed candidate, evidence, user request
+  or model configuration permits a new attempt. This is idempotent recovery,
+  not a spending, call-count or repair cap. The focused graph suite passed
+  94 tests; Ruff and whitespace checks passed. The active pinned runs still
+  cannot exercise this change until a safe continuation boundary.
 
 Next: monitor the two saved evaluation runs through build, engineering and
 export without duplicating work. The pump is now on the corrected isolated

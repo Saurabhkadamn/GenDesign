@@ -744,6 +744,32 @@ async def test_cad_can_revisit_engineering_for_unchanged_workspace(monkeypatch, 
 
 
 @pytest.mark.asyncio
+async def test_research_cad_reuses_unchanged_no_action_receipt(monkeypatch, graph_mocks):
+    arguments = {"task": "Calculate the current dimensions."}
+
+    async def turn(*_args, **_kwargs):
+        return {"message": {"role": "assistant", "content": "", "tool_calls": [{
+            "id": "same-engineering", "type": "function", "function": {
+                "name": "request_engineering", "arguments": json.dumps(arguments)}}]},
+            "calls": [{"id": "same-engineering", "name": "request_engineering", "input": arguments}],
+            "inputTokens": 10, "outputTokens": 20, "webSearchRequests": 0}
+
+    monkeypatch.setattr(design.models, "turn", turn)
+    snapshot = await design.run_service.load_candidate(state()["run_id"])
+    current = state(harness_version=4, research_mode=True)
+    fingerprint = await design.engineering_request_fingerprint(current, snapshot, arguments["task"])
+    current["engineering_no_action_fingerprint"] = fingerprint
+    result = await design.cad_session(current)
+
+    assert result["phase"] == "cad_session"
+    assert result.get("pending_cad_call") is None
+    assert json.loads(result["cad_history"][-1]["content"])["category"] == "unchanged_engineering_request"
+    assert await design.engineering_request_fingerprint(
+        {**current, "validation": {"newMeasurement": 1}}, snapshot, arguments["task"]
+    ) != fingerprint
+
+
+@pytest.mark.asyncio
 async def test_engineering_bad_tool_stays_repairable(monkeypatch, graph_mocks):
     async def turn(*args, **kwargs):
         call = {"id":"bad", "name":"calculate", "input":{"path":"not-a-file"}}
@@ -839,6 +865,7 @@ async def test_research_engineering_no_action_returns_to_owner_without_success(m
     monkeypatch.setattr(design, "agent_tool_turn", turn)
     current = state(harness_version=4, research_mode=True,
                     engineering_from_coordinator=True,
+                    engineering_request_fingerprint="saved-request",
                     coordinator_pending_call=pending,
                     coordinator_history=[{"role": "user", "content": "Build the assembly."}, assistant])
     result = await design.engineering_analysis(current)
@@ -847,6 +874,7 @@ async def test_research_engineering_no_action_returns_to_owner_without_success(m
     assert result["model_calls"] == 18
     assert result["engineering_history"] == []
     assert result["engineering_candidate_hash"]
+    assert result["engineering_no_action_fingerprint"] == "saved-request"
     feedback = json.loads(result["coordinator_history"][-1]["content"])
     assert feedback["ok"] is False
     assert feedback["category"] == "engineering_no_action"
