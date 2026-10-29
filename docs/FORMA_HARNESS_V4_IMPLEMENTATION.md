@@ -307,6 +307,22 @@ No mechanical recipes or pump-specific runtime logic.
   pump was still pinned to an older preview at 1,029 calls; the 60-part run
   remained queued at 30. Neither workflow was replaced or interrupted. The
   new recovery still needs hosted qualification after a safe boundary.
+- At 10:42 UTC the pinned pump run remained active at 1,060 model calls, but
+  it had moved from engineering through CAD back to coordinator. Candidate
+  version 8 contains 14 distinct component definitions and 16 source files,
+  including a gear-pump calculation module. It has **no assembly instances,
+  root component, native assembly, or configuration**, and no completed
+  geometry build or STEP evidence. The current candidate has a reproducible
+  calculation execution record and three current interval records: radial
+  tip clearance 0.065–0.0875 mm passed its 0.04–0.12 range; axial clearance
+  0.060–0.090 mm **failed** the 0.04–0.08 range; and journal-to-bushing
+  clearance 0.016–0.052 mm passed 0.015–0.060. The radial record also shows
+  the 0.05 mm basic-dimension nominal separately from the tolerance range.
+  These are calculation evidence, not measurements from a built pump. Latest
+  coordinator generations again exhausted 8,192 output tokens without tool
+  calls on the old pinned runtime. The 60-part run remained queued at 30
+  calls. Preserve these candidate and evidence records; do not claim the
+  original design task is satisfied or refresh either live workflow unsafely.
 
 Next: monitor the two saved evaluation runs through build, engineering and
 export without duplicating work. The pump is now on the corrected isolated
