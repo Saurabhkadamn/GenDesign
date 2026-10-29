@@ -226,6 +226,16 @@ No mechanical recipes or pump-specific runtime logic.
   passed 109 checks, the full API suite passed 456, and touched files passed
   Ruff and whitespace checks. This adjustment is not yet on the active
   isolated workflow; qualify it at a safe boundary before claiming improvement.
+  Commit `3f29946` was pushed. Guarded production deployment
+  `dpl_4mvYdmX1Mx6cFwfj4Z7hw1aMsSCA` passed target health/main checks,
+  was promoted, and passed the same checks on the public Forma domain; v4
+  remains off as the public default. A matching isolated preview
+  `https://forma-ixu5mc4bg-negens-projects.vercel.app`
+  (`dpl_7PytGm7duZLj6um3ALxeC6MiGAgK`) passed health and an authenticated
+  request for the saved pump run. It has the correct `preview-eval` runtime
+  identity but does not replace the running workflow. At 07:03 UTC the pump
+  was still running on the earlier preview at 916 model calls; the 60-part
+  run remained queued on its earlier workflow.
 
 Next: monitor the two saved evaluation runs through build, engineering and
 export without duplicating work. The pump is now on the corrected isolated
