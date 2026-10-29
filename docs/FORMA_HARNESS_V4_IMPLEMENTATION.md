@@ -369,6 +369,12 @@ the hosted qualification section above supersedes its deployment status.
 - General exact interval arithmetic replaces the v4 fixture tolerance answer. Original
   user messages are backfilled into immutable source records; pageable source/history
   tools and sourced acceptance-plan versions are available.
+- Source-page reads now leave immutable span receipts without copying document text
+  into the event. A new acceptance plan cannot silently account for an uploaded
+  brief document that was shortened in prompt context until its pages have been
+  retrieved in full. Existing identical plan replays remain valid. The targeted
+  source/plan tests passed on 2026-10-29; this has not yet been deployed or
+  qualified against the saved hosted runs.
 - Explicit task outcome and revision acceptance states. Availability of a draft does
   not satisfy engineering requirements. Completion requires current requirement
   evidence, real artifact receipts and an independent review of requirement coverage.

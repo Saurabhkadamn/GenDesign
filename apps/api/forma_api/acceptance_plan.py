@@ -82,6 +82,43 @@ async def current_plan(project_id):
     return row["body"]
 
 
+async def unread_source_offset(project_id: str, source_id: str, characters: int) -> int:
+    """Find the first source character omitted from durable read receipts."""
+    spans, offset = [], 0
+    while True:
+        rows = await db.rest(
+            "project_records",
+            params={
+                "project_id": f"eq.{project_id}",
+                "kind": "eq.event",
+                "body->>type": "eq.source_read",
+                "body->>sourceId": f"eq.{source_id}",
+                "select": "body",
+                "order": "created_at.asc,id.asc",
+                "offset": offset,
+                "limit": 200,
+            },
+        )
+        spans.extend(
+            (body["offset"], body["end"])
+            for row in rows
+            if (body := row.get("body"))
+            and body.get("characters") == characters
+            and isinstance(body.get("offset"), int)
+            and isinstance(body.get("end"), int)
+        )
+        if len(rows) < 200:
+            break
+        offset += len(rows)
+    covered = 0
+    for start, end in sorted(spans):
+        if start > covered:
+            break
+        if end > covered:
+            covered = min(end, characters)
+    return covered
+
+
 def validate_amendments(previous, plan):
     if plan["baseVersion"] != previous.get("version"):
         raise ValueError(
@@ -117,7 +154,8 @@ async def record_plan(run, value: AcceptancePlan, state):
     from .repositories.projects import identifier
 
     required_sources = {m["id"] for m in await all_user_messages(run["project_id"])}
-    required_sources.update(item["id"] for item in await brief_documents(run["project_id"]))
+    documents = await brief_documents(run["project_id"])
+    required_sources.update(item["id"] for item in documents)
     if not required_sources <= set(value.sourceIds):
         raise ValueError(
             "Acceptance plan omits historical user sources; retrieve and account for all corrections"
@@ -141,6 +179,15 @@ async def record_plan(run, value: AcceptancePlan, state):
             "ok": True,
             "acceptancePlan": previous,
         }  # crash after pointer commit, before graph checkpoint
+    for document in documents:
+        content = str(document["body"].get("content", ""))
+        missing = await unread_source_offset(run["project_id"], document["id"], len(content))
+        if missing < len(content):
+            raise ValueError(
+                "A stored brief document was shortened in the prompt. Read its complete "
+                f"source with read_project_source, starting at offset {missing}, before "
+                "recording an acceptance plan."
+            )
     validate_amendments(previous, plan)
     previous_bindings = {r["requirement"]["id"]: r for r in previous.get("requirements", [])}
     record_ids = {}

@@ -31,7 +31,7 @@ SPECS = {
     ),
     "record_acceptance_plan": (
         AcceptancePlan,
-        "Map every original source and correction to requirements and named deliverables. Use the current acceptancePlan version as baseVersion (null for the first plan). Every revision or retirement of an existing item requires an explicit sourced amendment. Include unsupported checks as unverified. Recording an interpretation never passes a check.",
+        "Map every original source and correction to requirements and named deliverables. Read every page of stored brief documents before recording a new plan. Use the current acceptancePlan version as baseVersion (null for the first plan). Every revision or retirement of an existing item requires an explicit sourced amendment. Include unsupported checks as unverified. Recording an interpretation never passes a check.",
     ),
     "read_project_source": (
         ReadProjectSource,
@@ -67,7 +67,23 @@ async def execute(run, snapshot, name, value, state=None):
     if name == "record_acceptance_plan":
         return await record_plan(run, parsed, state or {})
     if name == "read_project_source":
-        return {"ok": True, **await read_source(run["project_id"], parsed)}
+        page = await read_source(run["project_id"], parsed)
+        end = page["nextOffset"] if page["nextOffset"] is not None else page["characters"]
+        receipt = await append_record(
+            run,
+            "event",
+            f"source-read:{page['sourceId']}:{page['offset']}:{end}",
+            {
+                "type": "source_read",
+                "sourceId": page["sourceId"],
+                "offset": page["offset"],
+                "end": end,
+                "characters": page["characters"],
+                "pageHash": digest(page["content"]),
+            },
+            source_ids=[page["sourceId"]],
+        )
+        return {"ok": True, **page, "readReceiptId": receipt["id"]}
     if name == "measure_geometry":
         result = await measure_geometry(run, snapshot, state or {}, parsed)
         if result.get("ok"):

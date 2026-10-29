@@ -4,6 +4,7 @@ from uuid import uuid4
 import pytest
 
 from forma_api import acceptance_plan as plans
+from forma_api import research_tools
 from forma_api.services.runs import lease_context
 
 
@@ -62,7 +63,7 @@ def record_store(monkeypatch):
 
     async def append(run, kind, key, body, **kwargs):
         for row in stored.values():
-            if row["key"] == key:
+            if row.get("key") == key:
                 assert row["body"] == body
                 return deepcopy(row)
         record = {"id": str(uuid4()), "key": key, "kind": kind, "body": deepcopy(body), **kwargs}
@@ -139,3 +140,77 @@ async def test_explicit_sourced_amendment_appends_history_without_overwriting(re
     assert stored[old_record]["body"]["content"]["description"] == "Keep the specified clearance"
     with pytest.raises(ValueError, match="baseVersion is stale"):
         await plans.record_plan(run, plans.AcceptancePlan.model_validate(value), {})
+
+
+@pytest.mark.asyncio
+async def test_stored_brief_must_be_read_before_new_plan(record_store, monkeypatch):
+    source, project, stored, _ = record_store
+    document_id = str(uuid4())
+    document = {
+        "id": document_id,
+        "body": {"type": "brief_document", "content": "A" * 25000},
+    }
+    stored[document_id] = document
+
+    async def documents(_):
+        return [document]
+
+    async def pages(_table, params):
+        assert params["body->>sourceId"] == f"eq.{document_id}"
+        return [
+            {"body": {"offset": 0, "end": 12000, "characters": 25000}},
+            {"body": {"offset": 12000, "end": 24000, "characters": 25000}},
+        ]
+
+    monkeypatch.setattr(plans, "brief_documents", documents)
+    monkeypatch.setattr(plans.db, "rest", pages)
+    value = definition(source)
+    value["sourceIds"].append(document_id)
+    run = {"id": "first", "project_id": project}
+    with pytest.raises(ValueError, match="offset 24000"):
+        await plans.record_plan(run, plans.AcceptancePlan.model_validate(value), {})
+
+    async def complete_pages(_table, params):
+        assert params["body->>sourceId"] == f"eq.{document_id}"
+        return [
+            {"body": {"offset": 0, "end": 12000, "characters": 25000}},
+            {"body": {"offset": 12000, "end": 24000, "characters": 25000}},
+            {"body": {"offset": 24000, "end": 25000, "characters": 25000}},
+        ]
+
+    monkeypatch.setattr(plans.db, "rest", complete_pages)
+    result = await plans.record_plan(run, plans.AcceptancePlan.model_validate(value), {})
+    assert result["ok"]
+
+
+@pytest.mark.asyncio
+async def test_source_read_records_exact_page_without_copying_content(monkeypatch):
+    source_id = str(uuid4())
+    captured = {}
+
+    async def page(_project_id, value):
+        return {
+            "sourceId": source_id,
+            "content": "design specification page",
+            "offset": value.offset,
+            "characters": 25000,
+            "nextOffset": 24000,
+        }
+
+    async def append(_run, kind, key, body, **kwargs):
+        captured.update(kind=kind, key=key, body=body, kwargs=kwargs)
+        return {"id": str(uuid4())}
+
+    monkeypatch.setattr(research_tools, "read_source", page)
+    monkeypatch.setattr(research_tools, "append_record", append)
+    result = await research_tools.execute(
+        {"id": "run", "project_id": "project"},
+        {},
+        "read_project_source",
+        {"sourceId": source_id, "offset": 12000},
+    )
+    assert result["ok"] and result["readReceiptId"]
+    assert captured["kind"] == "event"
+    assert captured["key"] == f"source-read:{source_id}:12000:24000"
+    assert captured["body"]["end"] == 24000
+    assert "content" not in captured["body"]
