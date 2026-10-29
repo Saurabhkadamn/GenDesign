@@ -825,6 +825,34 @@ async def test_engineering_finish_returns_to_cad_with_current_evidence(monkeypat
 
 
 
+@pytest.mark.asyncio
+async def test_research_engineering_no_action_returns_to_owner_without_success(monkeypatch, graph_mocks):
+    pending = {"id": "engineering-request", "name": "delegate"}
+    assistant = {"role": "assistant", "content": "", "tool_calls": [{
+        "id": pending["id"], "type": "function", "function": {
+            "name": "delegate", "arguments": '{}'}}]}
+
+    async def turn(*_args, **_kwargs):
+        return None, [{"role": "user", "content": "Calculate the design."}], {
+            "model_calls": 18, "no_action_streak": 1}
+
+    monkeypatch.setattr(design, "agent_tool_turn", turn)
+    current = state(harness_version=4, research_mode=True,
+                    engineering_from_coordinator=True,
+                    coordinator_pending_call=pending,
+                    coordinator_history=[{"role": "user", "content": "Build the assembly."}, assistant])
+    result = await design.engineering_analysis(current)
+
+    assert result["phase"] == "coordinator_session"
+    assert result["model_calls"] == 18
+    assert result["engineering_history"] == []
+    assert result["engineering_candidate_hash"]
+    feedback = json.loads(result["coordinator_history"][-1]["content"])
+    assert feedback["ok"] is False
+    assert feedback["category"] == "engineering_no_action"
+    assert "unverified" in feedback["summary"]
+
+
 def test_engineering_analysis_accepts_component_specific_material_choices():
     value = design.Analysis.model_validate({
         "summary": "Assembly material choices.",

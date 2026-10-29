@@ -264,6 +264,18 @@ No mechanical recipes or pump-specific runtime logic.
   workflow was replaced or interrupted by the new preview. The focused
   recovery behavior remains unproven on these saved runs until a safe
   continuation boundary is reached.
+- At 08:35 UTC the pump was still running on its old pinned workflow at 982
+  calls, candidate version 3, without a geometry build; the 60-part task was
+  still queued at 30. Generations 976–981 again had no tool call and each
+  consumed the 16,384-token output allowance. A v4 engineering session that
+  produces no executable action now hands control back to its coordinator or
+  CAD caller with an explicit failed specialist result and unchanged candidate.
+  This prevents the engineering phase itself from cycling on a provider's
+  actionless response; it does not mark any calculation or design requirement
+  satisfied, and it does not impose a research call/compute cap. The 93
+  focused graph checks, full 458-test API suite, Ruff and whitespace checks
+  passed. The change has not yet affected the active pinned evaluations;
+  hosted behavior and engineering completion remain unverified.
 
 Next: monitor the two saved evaluation runs through build, engineering and
 export without duplicating work. The pump is now on the corrected isolated

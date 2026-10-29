@@ -11,6 +11,63 @@ from ..research_tools import SPECS, execute as execute_research_tool
 from ..acceptance_plan import state_update
 
 
+def return_to_design(state, snapshot, usage, summary: str, *, completed: bool) -> dict:
+    """Return a specialist result to its owner without implying engineering acceptance."""
+    from . import design as graph
+
+    result = {
+        "ok": completed,
+        "summary": summary,
+        "calculation": state.get("engineering_calculation"),
+        "candidateHash": digest(snapshot),
+        "requiresUserInput": False,
+    }
+    if not completed:
+        result.update(
+            category="engineering_no_action",
+            instruction="Continue useful CAD work and request a focused engineering task when evidence changes.",
+        )
+    pending = state.get("pending_cad_call")
+    coordinator = (
+        state.get("coordinator_pending_call")
+        if state.get("engineering_from_coordinator")
+        else None
+    )
+    return {
+        **usage,
+        "phase": "coordinator_session" if coordinator else "cad_session",
+        "engineering_history": [],
+        "engineering_summary": summary,
+        "engineering_candidate_hash": digest(snapshot),
+        "pending_cad_call": {},
+        "engineering_from_coordinator": False,
+        **(
+            {
+                "coordinator_pending_call": {},
+                "coordinator_task": state.get("clarified_request")
+                or state["original_request"],
+                "coordinator_history": graph.bounded_history(
+                    [
+                        *state.get("coordinator_history", []),
+                        graph.tool_message(coordinator, result),
+                    ]
+                ),
+            }
+            if coordinator
+            else {}
+        ),
+        **(
+            {
+                "cad_history": graph.bounded_history(
+                    [*state.get("cad_history", []), graph.tool_message(pending, result)]
+                )
+            }
+            if pending
+            else {}
+        ),
+    }
+
+
 async def step(state):
     # Deferred import avoids a second state machine or a circular module initialization.
     from . import design as graph
@@ -37,6 +94,13 @@ async def step(state):
     )
     common = {**usage, "phase": "engineering_analysis", "engineering_history": history}
     if not call:
+        if state.get("harness_version", 3) >= 4:
+            return return_to_design(
+                state, snapshot, usage,
+                "Engineering produced no executable action. Calculations and geometry checks remain unverified; "
+                "continue the design from the saved candidate and revisit engineering with a focused task.",
+                completed=False,
+            )
         return {
             **common,
             "engineering_history": graph.bounded_history(
@@ -54,53 +118,7 @@ async def step(state):
         value = parse_tool("engineering", name, call["input"]).model_dump()
         if name == "finish":
             # Finishing reports the session outcome; successful execution is never described as proof.
-            summary = value["message"]
-            result = {
-                "ok": True,
-                "summary": summary,
-                "calculation": state.get("engineering_calculation"),
-                "candidateHash": digest(snapshot),
-                "requiresUserInput": False,
-            }
-            pending = state.get("pending_cad_call")
-            coordinator = (
-                state.get("coordinator_pending_call")
-                if state.get("engineering_from_coordinator")
-                else None
-            )
-            return {
-                **usage,
-                "phase": "coordinator_session" if coordinator else "cad_session",
-                "engineering_history": [],
-                "engineering_summary": summary,
-                "engineering_candidate_hash": digest(snapshot),
-                "pending_cad_call": {},
-                "engineering_from_coordinator": False,
-                **(
-                    {
-                        "coordinator_pending_call": {},
-                        "coordinator_task": state.get("clarified_request")
-                        or state["original_request"],
-                        "coordinator_history": graph.bounded_history(
-                            [
-                                *state.get("coordinator_history", []),
-                                graph.tool_message(coordinator, result),
-                            ]
-                        ),
-                    }
-                    if coordinator
-                    else {}
-                ),
-                **(
-                    {
-                        "cad_history": graph.bounded_history(
-                            [*state.get("cad_history", []), graph.tool_message(pending, result)]
-                        )
-                    }
-                    if pending
-                    else {}
-                ),
-            }
+            return return_to_design(state, snapshot, usage, value["message"], completed=True)
         if name == "ask_user":
             return {
                 **common,
