@@ -2,6 +2,33 @@
 import json
 from copy import deepcopy
 
+ACTIONLESS_NOTICE = (
+    "The previous response made no executable tool call. Its full output is retained in the generation record."
+)
+ACTIONLESS_REMINDERS = frozenset({
+    "Choose one available tool action. Do not leave this turn without a tool call.",
+    "Your response contained no valid tool call. Call exactly one available tool with valid arguments; do not put a tool-call list in plain text.",
+    "Choose a tool to inspect, calculate, repair or finish with the recorded limitations.",
+    "Use read_file or inspect_geometry, then call submit_review.",
+})
+
+
+def prune_actionless_history(history: list[dict]) -> list[dict]:
+    """Keep one recovery reminder; full actionless responses remain in generation receipts."""
+    reminder = max(
+        (index for index, item in enumerate(history)
+         if item.get("role") == "user" and item.get("content") in ACTIONLESS_REMINDERS),
+        default=-1,
+    )
+    return [
+        item for index, item in enumerate(history)
+        if not (item.get("role") == "assistant" and not item.get("tool_calls")
+                and not item.get("content"))
+        and not (item.get("role") == "assistant" and item.get("content") == ACTIONLESS_NOTICE)
+        and not (item.get("role") == "user" and item.get("content") in ACTIONLESS_REMINDERS
+                 and index != reminder)
+    ]
+
 
 def user_update(state: dict, message: str, kind: str = "continuation") -> dict:
     message = str(message or "").strip()

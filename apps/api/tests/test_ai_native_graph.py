@@ -134,6 +134,44 @@ async def test_research_actionless_reasoning_is_saved_without_eviction(monkeypat
 
 
 @pytest.mark.asyncio
+async def test_repeated_actionless_turns_keep_one_reminder_and_signed_tool_pair(monkeypatch, graph_mocks):
+    reminders = "Choose a tool to inspect, calculate, repair or finish with the recorded limitations."
+    history = [
+        {"role": "user", "content": "Inspect the candidate."},
+        {"role": "assistant", "content": "", "reasoning_details": [{"data": "signed"}],
+         "tool_calls": [{"id": "read-1", "type": "function",
+                         "function": {"name": "read_file", "arguments": '{"path":"parts/a.py"}'}}]},
+        {"role": "tool", "tool_call_id": "read-1", "content": '{"ok":true}'},
+    ]
+    for _ in range(10):
+        history.extend([{"role": "assistant", "content": design.ACTIONLESS_NOTICE},
+                        {"role": "user", "content": reminders}])
+    seen = {}
+
+    async def turn(_config, messages, _tools, **_kwargs):
+        seen["messages"] = messages
+        return {"message": {"role": "assistant", "content": "", "reasoning_details": []},
+                "calls": [], "inputTokens": 10, "outputTokens": 40, "webSearchRequests": 0}
+
+    async def save_generation(*_args):
+        return None
+
+    monkeypatch.setattr(design.models, "turn", turn)
+    monkeypatch.setattr(design, "save_generation", save_generation)
+    _call, _history, usage = await design.agent_tool_turn(
+        state(harness_version=4, research_mode=True, no_action_streak=10),
+        model_role="engineering", prompt_role="engineering", node="engineering-session",
+        context={}, history=history, tools=[])
+
+    dialogue = seen["messages"][2:]
+    assert [m.get("content") for m in dialogue if m["role"] == "user"].count(reminders) == 1
+    assert not any(m.get("content") == design.ACTIONLESS_NOTICE for m in dialogue)
+    assert any(m.get("tool_call_id") == "read-1" for m in dialogue)
+    assert any(m.get("tool_calls") and m["tool_calls"][0]["id"] == "read-1" for m in dialogue)
+    assert usage["no_action_streak"] == 11
+
+
+@pytest.mark.asyncio
 async def test_research_structured_correction_has_no_repair_counter_stop(monkeypatch, graph_mocks):
     from forma_api.graphs import structured
     from forma_api.contracts import Contract

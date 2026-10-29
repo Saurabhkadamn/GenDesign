@@ -31,7 +31,8 @@ from ..harness import (acceptance_context, component_snapshot, probe_context, re
                       observation_context, record_observation_action, recovery_source_context,
                       focused_recovery_paths, record_observation_decision)
 from ..agent_memory import (user_update, memory_context, capture_history, record_observation,
-                            compact_narrative, update_notes, estimate_tokens, read_memory, notes_just_saved, older_outcomes_available)
+                            compact_narrative, update_notes, estimate_tokens, read_memory, notes_just_saved, older_outcomes_available,
+                            ACTIONLESS_NOTICE, prune_actionless_history)
 from .state import AgentState
 from ..research_tools import SPECS as RESEARCH_SPECS, execute as execute_research_tool
 from ..acceptance_plan import state_update as research_state_update
@@ -511,6 +512,9 @@ def bounded_history(history: list[dict], *, messages: int = 80, characters: int 
 async def agent_tool_turn(state: AgentState, *, model_role: str, prompt_role: str,
                           node: str, context: dict, history: list[dict], tools: list[dict]):
     """Run one open-ended model/tool turn while retaining only bounded dialogue state."""
+    research = state.get('harness_version', 3) >= 4
+    if research:
+        history = prune_actionless_history(history)
     run = await run_row(state)
     config = await models.configuration(model_role)
     tools = provider_tools(config, tools)
@@ -521,6 +525,14 @@ async def agent_tool_turn(state: AgentState, *, model_role: str, prompt_role: st
     memory = capture_history(state, history)
     from ..agent_context import shared_context
     context = shared_context(state,context,memory)
+    if research and state.get("no_action_streak", 0):
+        context["actionRecovery"] = {
+            "consecutiveActionlessResponses": state["no_action_streak"],
+            "instruction": (
+                "The previous response did not request an action. Choose one small executable tool step now. "
+                "If required evidence is unavailable, use finish to report the limitation and return control."
+            ),
+        }
     history = bounded_history(history)
     from ..agent_context import prompt_context
     context = prompt_context(context)
@@ -551,7 +563,6 @@ async def agent_tool_turn(state: AgentState, *, model_role: str, prompt_role: st
         input_identity={"messages":messages,"tools":tools,"model":config["model_id"],"configVersion":config["version"]})
     call_value = deepcopy(result["calls"][0]) if result.get("calls") else None
     pending_actions = []
-    research = state.get('harness_version',3)>=4
     if not research and call_value and node == "cad-session" and len(result["calls"]) > 1:
         # Keep provider-returned actions durable. One graph transition executes
         # one action; subsequent actions do not need another model generation.
@@ -583,8 +594,7 @@ async def agent_tool_turn(state: AgentState, *, model_role: str, prompt_role: st
         # Full reasoning remains in the immutable generation record below.
         # An actionless response has no tool relationship to replay, and a
         # large opaque reasoning field would evict useful source observations.
-        active_assistant = {"role": "assistant", "content":
-            "The previous response made no executable tool call. Its full output is retained in the generation record."}
+        active_assistant = {"role": "assistant", "content": ACTIONLESS_NOTICE}
     else:
         active_assistant = compact_narrative(assistant)
     next_history = bounded_history([*messages[2:], active_assistant,*deferred_results], allow_pending=True)
@@ -602,6 +612,8 @@ async def agent_tool_turn(state: AgentState, *, model_role: str, prompt_role: st
         "context_estimated_tokens": estimate_tokens([messages, tools]),
         "model_calls": ordinal + 1,
         "model_calls_this_cycle": cycle_calls + 1,
+        "no_action_streak": (state.get("no_action_streak", 0) + 1)
+            if research and not result.get("calls") else 0,
         "search_count": state.get("search_count", 0) + result.get("webSearchRequests", 0),
     }
 

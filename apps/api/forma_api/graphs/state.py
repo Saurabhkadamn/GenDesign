@@ -94,6 +94,7 @@ class AgentState(TypedDict, total=False):
     sandbox_ready: bool
     model_calls: int
     model_calls_this_cycle: int
+    no_action_streak: int
     search_count: int
     started_ns: int
     resume: dict[str, Any]

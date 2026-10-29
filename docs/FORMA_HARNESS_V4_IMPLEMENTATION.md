@@ -202,6 +202,31 @@ No mechanical recipes or pump-specific runtime logic.
   resolved to that deployment. The v4 route remains off by default; neither
   the pump nor 60-part task has passed engineering acceptance.
 
+- At 06:48 UTC on 2026-10-29 the pump was still in engineering at 905 model
+  calls, candidate version 3, without a geometry build. Fourteen of its 38
+  generations since ordinal 860 were actionless; ordinals 883–905 included a
+  sustained sequence of full 16,384-token reasoning outputs without a tool.
+  A separate read-only qualification request reconstructed the saved
+  engineering context (about 105,000 characters, 16 tools). MiniMax and MiMo
+  each exhausted an 8,192-token response even with low reasoning and required
+  tool selection, returning no tool call. These observations implicate the
+  broad task handoff and retained dialogue as well as model behavior; they do
+  not establish that either model can complete the original pump task.
+  Vercel documents that reasoning tokens count toward the output limit:
+  https://vercel.com/docs/ai-gateway/models-and-providers/reasoning.
+- Locally, repeated actionless assistant turns and duplicate generated
+  reminders are now pruned from active v4 dialogue. The last reminder, signed
+  tool-call pairs and tool results remain; full provider responses remain in
+  immutable generation receipts. The state records a consecutive actionless
+  count and instructs the agent to choose one small tool step or report an
+  evidence limitation. The engineering role now explicitly returns control
+  to CAD after useful independent calculations when geometry has not yet been
+  built, instead of repeatedly requesting measurements. No model-call,
+  runtime, spending or repair-count stop was added. The focused history tests
+  passed 109 checks, the full API suite passed 456, and touched files passed
+  Ruff and whitespace checks. This adjustment is not yet on the active
+  isolated workflow; qualify it at a safe boundary before claiming improvement.
+
 Next: monitor the two saved evaluation runs through build, engineering and
 export without duplicating work. The pump is now on the corrected isolated
 preview; the 60-part workflow is still bound to an older one. At their next
