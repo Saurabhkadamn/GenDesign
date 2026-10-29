@@ -176,10 +176,31 @@ No mechanical recipes or pump-specific runtime logic.
   and touched Python files passed Ruff. The 60-part run was still queued at
   the inspection checkpoint.
 
+- Commit `ffb53d5` was pushed. The corrected isolated preview is
+  `https://forma-nl0wped1k-negens-projects.vercel.app`
+  (`dpl_GH1UF9NGpxgZJPJen3uuNMJbuvNq`), configured with the saved
+  `preview-eval` runtime identity and isolated database. Its health and
+  authenticated saved-run request returned HTTP 200. A first preview was
+  healthy but used the generic `preview` runtime identity; Forma correctly
+  rejected Continue with 409, and no work was dispatched from it. The saved
+  pump was then continued exactly once on the corrected preview; the existing
+  uncertain calculation receipt was explicitly reconciled by the Continue
+  endpoint. At 06:04 UTC it was running at 867 model calls. A newly rejected
+  engineering edit produced a complete failure receipt, confirming the
+  validation-receipt repair in the hosted run. The queued 60-part workflow's
+  overdue scheduler wait was safely re-enqueued through its existing
+  workflow ID; no new run or model call was created by that wake. It remains
+  pinned to its older deployment and queued behind the pump.
+- Guarded production deployment `dpl_B6qaZauFNa92EsB9xm2cBSKfxa65`
+  passed target health and main-page checks and was promoted to the public
+  Forma domain. Both public checks returned HTTP 200 and the inspected domain
+  resolved to that deployment. The v4 route remains off by default; neither
+  the pump nor 60-part task has passed engineering acceptance.
+
 Next: monitor the two saved evaluation runs through build, engineering and
-export without duplicating work. Refresh the isolated preview with the
-context, actionless-response and engineering-sandbox fixes, then explicitly
-continue the paused pump after reconciling its uncertain calculation receipt.
+export without duplicating work. The pump is now on the corrected isolated
+preview; the 60-part workflow is still bound to an older one. At their next
+safe boundary, inspect model receipts and advance preserved work.
 Independently reopen STEP artifacts
 and inspect requirement evidence. Run numeric variants, conflicting briefs,
 the remaining evaluation corpus and interruption tests before any default-v4
