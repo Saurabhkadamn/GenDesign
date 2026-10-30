@@ -73,6 +73,66 @@ def test_daily_free_quota_waits_for_reset_unless_provider_sets_deadline():
     assert with_cooldown(error, {"retry_after": "120"}, now=now).retry_after_seconds == 120
 
 
+@pytest.mark.parametrize("failure", [openai_compatible._failure, openrouter.failure])
+def test_provider_diagnostic_redacts_exact_connection_key(failure):
+    key = "offline-connection-secret-without-a-known-prefix"
+    error = failure(500, f'{{"message":"upstream echoed {key}"}}', secret=key)
+    assert key not in error.diagnostic
+    assert "[REDACTED]" in error.diagnostic
+    assert error.category == "provider"
+
+
+@pytest.mark.asyncio
+async def test_compatible_transport_does_not_return_echoed_key_in_diagnostic(monkeypatch):
+    key = "offline-transport-secret-without-a-known-prefix"
+
+    async def handle(_request):
+        return httpx.Response(500, json={"error": {"message": f"echoed {key}"}})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handle))
+    monkeypatch.setattr(openai_compatible.db, "client", lambda: client)
+    try:
+        with pytest.raises(openrouter.ModelFailure) as caught:
+            await openai_compatible.turn(
+                {"provider": "openai_compatible", "base_url": "https://api.example.com/v1",
+                 "model_id": "test/model", "api_key": key},
+                [{"role": "user", "content": "test"}], [], max_tokens=100,
+            )
+        assert key not in caught.value.diagnostic
+        assert "[REDACTED]" in caught.value.diagnostic
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_provider_transport_redacts_error_before_trace_output(monkeypatch):
+    key = "offline-trace-secret-without-a-known-prefix"
+
+    async def handle(_request):
+        return httpx.Response(500, json={"error": {"message": f"echoed {key}"}})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handle))
+    monkeypatch.setattr(openai_compatible.db, "client", lambda: client)
+    try:
+        compatible = await openai_compatible._chat(
+            api_key=key, url="https://api.example.com/v1", model_id="test/model",
+            messages=[{"role": "user", "content": "test"}], tools=[], output_tokens=100,
+            extra_body={}, tool_choice="auto", stream=False, reasoning_effort=None,
+            temperature=0, top_p=None,
+        )
+        router = await openrouter._openrouter_chat(
+            api_key=key, model_id="test/model", messages=[{"role": "user", "content": "test"}],
+            tools=[], token_parameter="max_tokens", output_tokens=100, provider={},
+            web_search=False, max_searches=0,
+        )
+        for raw in (compatible, router):
+            assert raw["status"] == 500
+            assert key not in raw["body"]
+            assert "[REDACTED]" in raw["body"]
+    finally:
+        await client.aclose()
+
+
 @pytest.mark.asyncio
 async def test_compatible_throttle_keeps_provider_cooldown_without_fallback(monkeypatch):
     requests = []

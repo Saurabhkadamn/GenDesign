@@ -466,6 +466,14 @@ the hosted qualification section above supersedes its deployment status.
   It reached Ready, received the public Forma alias, and public `/api/health`
   and `/` each returned HTTP 200. The isolated evaluation runs are still
   paused by Gateway quota and have not exercised this change.
+- Provider HTTP error bodies can echo an arbitrary connection key that does not
+  match a known token prefix. Both OpenAI-compatible and OpenRouter transports
+  now redact the exact selected key before returning an error body to the
+  traced transport and before retaining its diagnostic payload. Classification
+  still reads the response content, so cooldown and context recovery decisions
+  are unchanged. Direct redaction and mocked HTTP transport tests passed;
+  targeted provider suites passed 57 tests, with Ruff and whitespace checks
+  clean. These checks do not establish model competence or a successful design.
 - The committed project acceptance plan persists across runs. Sourced amendments and
   a matching base version are required to change or retire requirements/deliverables.
   Focused delegation cannot replace the full inventory. V4 bypasses legacy keyword

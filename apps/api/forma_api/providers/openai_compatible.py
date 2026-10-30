@@ -99,13 +99,14 @@ def base_url(config: dict) -> str:
     return value
 
 
-def _failure(status: int, body: str) -> ModelFailure:
+def _failure(status: int, body: str, *, secret: str = "") -> ModelFailure:
     lower = body.lower()
+    diagnostic = sanitize(body[:8000], [secret] if secret else ())
     if status in (400, 413, 422) and _is_context_overflow({"status": status, "body": body}):
         return ModelFailure(
             "context_overflow",
             "The model rejected the prompt as larger than its context window. Forma can retry with less dialogue while preserving the authoritative request.",
-            body[:8000], status_code=status,
+            diagnostic, status_code=status,
         )
     if status in (401, 403):
         return ModelFailure("access", "The provider rejected access. Check the saved key and model access.", status_code=status)
@@ -113,21 +114,21 @@ def _failure(status: int, body: str) -> ModelFailure:
         return ModelFailure(
             "provider",
             "The provider requires payment for this request (HTTP 402). Check the provider account's credits, billing status, and model access, or select another funded connection.",
-            body[:8000],
+            diagnostic,
             status_code=status,
         )
     if status == 504:
         return ModelFailure(
             "timeout",
             "The selected model provider timed out while generating a response (HTTP 504). The design is unchanged; continue to retry the saved step.",
-            body[:8000],
+            diagnostic,
             status_code=status,
         )
     if status == 429:
-        return ModelFailure("rate_limit", "The provider is rate-limited. Wait before continuing.", body[:8000], status_code=status)
+        return ModelFailure("rate_limit", "The provider is rate-limited. Wait before continuing.", diagnostic, status_code=status)
     if status >= 500 and any(word in lower for word in ("overload", "capacity", "unavailable")):
-        return ModelFailure("overloaded", "The selected provider is temporarily overloaded. Wait, then Continue.", body[:8000], status_code=status)
-    return ModelFailure("provider", f"The provider rejected this request (HTTP {status}). Check model availability and tool support.", body[:8000], status_code=status)
+        return ModelFailure("overloaded", "The selected provider is temporarily overloaded. Wait, then Continue.", diagnostic, status_code=status)
+    return ModelFailure("provider", f"The provider rejected this request (HTTP {status}). Check model availability and tool support.", diagnostic, status_code=status)
 
 
 def _output_tokens(requested: int | None = None, configured: int | None = None) -> int:
@@ -375,14 +376,16 @@ async def _chat(*, api_key: str, url: str, model_id: str, messages: list[dict], 
             response = await db.client().post(f"{url}/chat/completions", headers=headers,
                                               json=payload, timeout=timeout,
                                               follow_redirects=follow_redirects)
-            return {"status": response.status_code, "body": response.text, 'retry_after':response.headers.get('retry-after')}
+            return {"status": response.status_code,
+                    "body": (response.text if response.is_success else sanitize(response.text, [api_key])),
+                    'retry_after':response.headers.get('retry-after')}
         events = []
         async with db.client().stream("POST", f"{url}/chat/completions", headers=headers,
                                       json=payload, timeout=timeout,
                                       follow_redirects=follow_redirects) as response:
             if not response.is_success:
                 return {"status": response.status_code,
-                        "body": (await response.aread()).decode("utf-8", errors="replace"),
+                        "body": sanitize((await response.aread()).decode("utf-8", errors="replace"), [api_key]),
                         'retry_after':response.headers.get('retry-after')}
             async for line in response.aiter_lines():
                 if not line.startswith("data:"):
@@ -504,13 +507,13 @@ async def _turn_once(config: dict, messages: list[dict], tools: list[dict], *, m
     except httpx.HTTPError:
         raise ModelFailure("connection", "The model connection was interrupted. Continue deliberately to retry.") from None
     if raw["status"] < 200 or raw["status"] >= 300:
-        raise with_cooldown(_failure(raw["status"], raw["body"]),raw)
+        raise with_cooldown(_failure(raw["status"], raw["body"], secret=config["api_key"]),raw)
     body = None
     try:
         body = json.loads(raw["body"])
         if body.get("error"):
             error = body["error"]
-            raise _failure(int(error.get("code", 500)), str(error.get("message", "")))
+            raise _failure(int(error.get("code", 500)), str(error.get("message", "")), secret=config["api_key"])
         message = body["choices"][0]["message"]
         safe_message = {"role": "assistant", "content": message.get("content") or ""}
         if message.get("reasoning_content"):

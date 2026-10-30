@@ -14,6 +14,7 @@ from langsmith import traceable
 from .. import db
 from ..config import settings
 from ..security import decrypt_secret_set
+from ..tracing import sanitize
 from .capabilities import validate_qualification
 from .cooldown import with_cooldown
 
@@ -182,16 +183,17 @@ def tool_choice_setting(model_id: str, tools: list[dict]) -> str:
     return "required"
 
 
-def failure(status: int, body: str) -> ModelFailure:
+def failure(status: int, body: str, *, secret: str = "") -> ModelFailure:
+    diagnostic = sanitize(body[:8000], [secret] if secret else ())
     if status in (400, 413, 422) and any(term in body.lower() for term in (
         "context length", "context_length", "context window", "prompt is too long",
         "too many input tokens", "input token limit", "prompt token limit",
     )):
         return ModelFailure("context_overflow",
             "The model rejected the prompt as larger than its context window. Forma can retry with less dialogue while preserving the authoritative request.",
-            body[:8000], status_code=status)
+            diagnostic, status_code=status)
     if status >= 500 and any(word in body.lower() for word in ("overload", "capacity", "unavailable")):
-        return ModelFailure("overloaded", "The selected model's provider is temporarily overloaded. Wait, then Continue, or select another connection in Settings.", body[:8000])
+        return ModelFailure("overloaded", "The selected model's provider is temporarily overloaded. Wait, then Continue, or select another connection in Settings.", diagnostic)
     if status in (401, 403):
         return ModelFailure("access", "The provider rejected access. Check the saved key and access to this model.")
     if status == 429:
@@ -199,7 +201,7 @@ def failure(status: int, body: str) -> ModelFailure:
         return ModelFailure("quota" if daily else "rate_limit", "The free-model daily quota is exhausted. Wait for reset before continuing." if daily else "The model is rate-limited. Wait before continuing.")
     if status == 404 and any(x in body.lower() for x in ("data policy", "data collection", "privacy")):
         return ModelFailure("privacy", "No endpoint meets the configured data-collection policy. Choose a compatible model.")
-    return ModelFailure("provider", f"The provider rejected this request (HTTP {status}). Check model availability and tool support.", body[:8000])
+    return ModelFailure("provider", f"The provider rejected this request (HTTP {status}). Check model availability and tool support.", diagnostic)
 
 
 def _trace_inputs(inputs: dict) -> dict:
@@ -229,7 +231,9 @@ async def _openrouter_chat(*, api_key: str, model_id: str, messages: list[dict],
     response = await db.client().post("https://openrouter.ai/api/v1/chat/completions",
         headers={"Authorization": f"Bearer {api_key}"},
         json=payload, timeout=240)
-    return {"status": response.status_code, "body": response.text, 'retry_after':response.headers.get('retry-after')}
+    return {"status": response.status_code,
+            "body": (response.text if response.is_success else sanitize(response.text, [api_key])),
+            'retry_after':response.headers.get('retry-after')}
 
 
 async def _turn_openrouter(config: dict, messages: list[dict], tools: list[dict], *, max_tokens: int | None = None,
@@ -292,14 +296,14 @@ async def _turn_openrouter(config: dict, messages: list[dict], tools: list[dict]
     except httpx.HTTPError:
         raise ModelFailure("connection", "The model connection was interrupted. Continue deliberately to retry.") from None
     if raw["status"] < 200 or raw["status"] >= 300:
-        raise with_cooldown(failure(raw["status"], raw["body"]),raw)
+        raise with_cooldown(failure(raw["status"], raw["body"], secret=config["api_key"]),raw)
     try:
         body = json.loads(raw["body"])
     except (TypeError, ValueError, json.JSONDecodeError):
         return _tool_protocol_retry_result(None)
     if body.get("error"):
         error = body["error"]
-        raise failure(int(error.get("code", 500)), str(error.get("message", "")))
+        raise failure(int(error.get("code", 500)), str(error.get("message", "")), secret=config["api_key"])
     try:
         message = body["choices"][0]["message"]
         # Preserve opaque protocol fields in private state; never expose them as engineering evidence.
