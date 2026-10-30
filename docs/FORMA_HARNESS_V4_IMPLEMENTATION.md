@@ -490,10 +490,17 @@ the hosted qualification section above supersedes its deployment status.
   `snap_PBqX4BX6mxnkMLYZ4B7Qu6vA6NNR` / `forma-f2edabf726acfe05`,
   derived from the previously qualified native engine, passed all 80 native
   tests with no skips or failures. The builder attested that the native engine
-  and package set were unchanged. This snapshot is not yet selected by
-  production or the isolated evaluation preview; activate it first in the
-  isolated preview at the saved runs' safe pause boundary and check a complete
-  application build before any production runtime change.
+  and package set were unchanged. Isolated evaluation preview
+  `https://forma-dr7bs088x-negens-projects.vercel.app`
+  (`dpl_EDxDY1i2Sod1sAUYHKih56HXzDou`) was deployed with that snapshot and
+  runtime identity at the saved runs' safe pause boundary. The CLI lost its
+  polling connection after creating the deployment; inspection of that same
+  deployment showed Ready. Protected health, administrator login, and
+  authenticated GET of both saved runs returned HTTP 200 with `preview-eval`
+  runtime identity and unchanged paused states/call counts. The model quota
+  still prevents those runs from exercising the new runtime. Production keeps
+  the previously qualified native runtime; complete an application build and
+  inspect artifact identity before any production runtime change.
 - The committed project acceptance plan persists across runs. Sourced amendments and
   a matching base version are required to change or retire requirements/deliverables.
   Focused delegation cannot replace the full inventory. V4 bypasses legacy keyword
