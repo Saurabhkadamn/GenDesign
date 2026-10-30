@@ -442,6 +442,17 @@ the hosted qualification section above supersedes its deployment status.
   variable is encrypted in Vercel, this does not establish whether the running
   production service has it. Obtain a verified production migration path before
   deploying the new API. Gateway HTTP 402 still prevents agentic acceptance.
+- The saved Supabase CLI session provided a production migration route without
+  retrieving a database password. `supabase db push --dry-run --linked` named
+  only `20261029221000_atomic_research_resume_authorization.sql`; the linked
+  production push applied it, and a second dry run reported no pending
+  migrations. This supersedes the production-migration blocker above. Current
+  branch commit `f57d51d` then deployed as guarded production
+  `dpl_DpsTwm2hcGWRkHT5zn1m9zP4bMEN`. Vercel reported Ready and the public
+  Forma alias pointed to that deployment; public `/api/health` and `/` each
+  returned HTTP 200. The v4 route remains off as public default pending
+  engineering acceptance. These smoke checks do not validate the paused pump
+  or 60-part designs, so neither run was resumed or marked complete.
 - The committed project acceptance plan persists across runs. Sourced amendments and
   a matching base version are required to change or retire requirements/deliverables.
   Focused delegation cannot replace the full inventory. V4 bypasses legacy keyword
