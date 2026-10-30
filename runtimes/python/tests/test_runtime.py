@@ -58,6 +58,25 @@ def test_step_roundtrip_and_real_glb(tmp_path):
     assert shape.BoundingBox().xlen == pytest.approx(60)
 
 
+def test_components_can_share_workspace_helper_and_reload_edited_source(tmp_path):
+    workspace, output, _manifest = fixture(
+        tmp_path,
+        source="from parts.shared import width\nimport cadquery as cq\n"
+               "def build(p,d): return cq.Workplane('XY').box(width(p),20,5)\n",
+    )
+    helper = workspace / "parts" / "shared.py"
+    helper.write_text("def width(p): return p['width'] + 1\n")
+    build(workspace, output)
+    first = cq.importers.importStep(str(output / "plate.step")).val()
+    assert first.BoundingBox().xlen == pytest.approx(41)
+
+    helper.write_text("def width(p): return p['width'] + 4\n")
+    build(workspace, output)
+    second = cq.importers.importStep(str(output / "plate.step")).val()
+    assert second.BoundingBox().xlen == pytest.approx(44)
+    assert "parts.shared" not in sys.modules
+
+
 def test_overlapping_circle_extrusion_rejected_before_export(tmp_path):
     source = "import cadquery as cq\ndef build(p,d):\n return cq.Workplane('XY').pushPoints([(0,0),(34,0)]).circle(19.05).extrude(26.06)\n"
     workspace, output, _ = fixture(tmp_path, source=source)

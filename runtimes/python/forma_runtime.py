@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
+import importlib
 import importlib.util
 import json
 import math
@@ -40,6 +42,42 @@ def module_at(root: Path, relative: str):
     return module
 
 
+@contextmanager
+def workspace_imports(root: Path):
+    """Allow generated modules to share helpers without retaining stale imports.
+
+    The trusted runtime runs each CAD operation in a fresh isolated process.
+    Cleaning the workspace modules also makes repeated local builds faithful to
+    that process boundary when a helper source changes.
+    """
+    resolved = root.resolve()
+    original_path = sys.path[:]
+    original_modules = set(sys.modules)
+    original_bytecode = sys.dont_write_bytecode
+    # Reused CAD workspaces can contain timestamp-valid bytecode for edited
+    # helpers of the same size. Source must win on every candidate build.
+    for cache in resolved.rglob("__pycache__"):
+        if cache.is_symlink() or not cache.is_dir() or not cache.resolve().is_relative_to(resolved):
+            continue
+        for bytecode in cache.glob("*.pyc"):
+            if bytecode.is_file() and not bytecode.is_symlink():
+                bytecode.unlink()
+    sys.dont_write_bytecode = True
+    sys.path.append(str(resolved))
+    importlib.invalidate_caches()
+    try:
+        yield
+    finally:
+        sys.path[:] = original_path
+        sys.dont_write_bytecode = original_bytecode
+        for name in set(sys.modules) - original_modules:
+            module = sys.modules.get(name)
+            locations = [getattr(module, "__file__", None)]
+            locations.extend(getattr(module, "__path__", ()) or ())
+            if any(path and Path(path).resolve().is_relative_to(resolved) for path in locations):
+                sys.modules.pop(name, None)
+
+
 def shape_of(value: Any) -> cq.Shape:
     import cadquery as cq
 
@@ -56,6 +94,11 @@ def shape_of(value: Any) -> cq.Shape:
 
 
 def build(root: Path, output: Path) -> None:
+    with workspace_imports(root):
+        build_workspace(root, output)
+
+
+def build_workspace(root: Path, output: Path) -> None:
     import cadquery as cq
 
     manifest = read_json(root / "manifest.json")
@@ -322,7 +365,8 @@ def validate(root: Path, output: Path) -> None:
 
 
 def calculate_once(root: Path, path: str, result: Path) -> None:
-    value = module_at(root, path).calculate()
+    with workspace_imports(root):
+        value = module_at(root, path).calculate()
     write_json(result, value)
 
 

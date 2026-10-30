@@ -479,6 +479,21 @@ the hosted qualification section above supersedes its deployment status.
   polling connection. It received the public Forma alias; public `/api/health`
   and `/` each returned HTTP 200. Guarded v4 remains off as the public default,
   and saved isolated evaluations remain paused on provider quota.
+- The isolated CAD runtime now allows generated component and calculation
+  modules to import shared Python helpers from their own staged workspace.
+  Workspace paths are scoped to the build/calculation operation, and imported
+  workspace modules and bytecode are cleared between operations so a same-size
+  helper edit cannot silently reuse old geometry. The validator still receives
+  only reopened STEP files. A local import/reload regression passed; local
+  CadQuery cannot execute on this Windows Python installation because its OCP
+  package is incompatible. A new Vercel Sandbox runtime-only snapshot,
+  `snap_PBqX4BX6mxnkMLYZ4B7Qu6vA6NNR` / `forma-f2edabf726acfe05`,
+  derived from the previously qualified native engine, passed all 80 native
+  tests with no skips or failures. The builder attested that the native engine
+  and package set were unchanged. This snapshot is not yet selected by
+  production or the isolated evaluation preview; activate it first in the
+  isolated preview at the saved runs' safe pause boundary and check a complete
+  application build before any production runtime change.
 - The committed project acceptance plan persists across runs. Sourced amendments and
   a matching base version are required to change or retire requirements/deliverables.
   Focused delegation cannot replace the full inventory. V4 bypasses legacy keyword
