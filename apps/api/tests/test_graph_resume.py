@@ -104,3 +104,51 @@ async def test_continue_resumes_actual_checkpoint_without_losing_evidence(monkey
     final = (await graph.aget_state(config)).values
     assert final["model_calls"] == 97
     assert final["model_calls_this_cycle"] == 1
+
+
+@pytest.mark.asyncio
+async def test_unexpected_transition_error_keeps_provider_text_out_of_run_status(monkeypatch):
+    secret = "provider-token-must-not-enter-run-status"
+    finished = []
+
+    class FailingGraph:
+        async def aget_state(self, _config):
+            return SimpleNamespace(values={}, tasks=[], next=[])
+
+        async def ainvoke(self, _input, _config):
+            raise RuntimeError(secret)
+
+    @asynccontextmanager
+    async def checkpoint():
+        yield object()
+
+    async def one(table, _params, **_kwargs):
+        if table == "runs":
+            return {"id": "retained-run", "project_id": "project", "owner_id": "owner",
+                    "harness_version": 4, "research_mode": True, "status": "queued",
+                    "base_revision_id": None, "message": "Design a part", "selected_ids": []}
+        if table == "run_candidates":
+            return {"candidate_version": 1}
+        raise AssertionError(table)
+
+    async def rpc(name, _params):
+        assert name == "claim_research_run"
+        return 2
+
+    async def finish(_run, _worker, status, message):
+        finished.append((status, message))
+
+    from forma_api.graphs import design
+
+    monkeypatch.setattr(runner, "settings", lambda: SimpleNamespace(environment="test"))
+    monkeypatch.setattr(runner, "checkpoint_saver", checkpoint)
+    monkeypatch.setattr(runner.db, "one", one)
+    monkeypatch.setattr(runner.db, "rpc", rpc)
+    monkeypatch.setattr(runner.run_service, "finish", finish)
+    monkeypatch.setattr(design, "build_graph", lambda _saver: FailingGraph())
+
+    assert await runner.advance_graph("retained-run", "worker") == "done"
+    assert finished[0][0] == "paused"
+    assert "RuntimeError" in finished[0][1]
+    assert "preserved" in finished[0][1]
+    assert secret not in finished[0][1]

@@ -453,6 +453,13 @@ the hosted qualification section above supersedes its deployment status.
   returned HTTP 200. The v4 route remains off as public default pending
   engineering acceptance. These smoke checks do not validate the paused pump
   or 60-part designs, so neither run was resumed or marked complete.
+- Unexpected graph transition exceptions now leave a paused, recoverable run
+  with the exception class in its visible status, while internal logs retain
+  source locations. The exception message itself is no longer copied into
+  the run status because a provider or runtime can include credentials or
+  private request data there. A regression test injected a token-like error
+  and confirmed it was absent from the saved status. Focused graph, durable-job
+  and dispatch checks passed 14 tests; Ruff and whitespace checks passed.
 - The committed project acceptance plan persists across runs. Sourced amendments and
   a matching base version are required to change or retire requirements/deliverables.
   Focused delegation cannot replace the full inventory. V4 bypasses legacy keyword
