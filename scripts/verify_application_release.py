@@ -20,7 +20,7 @@ from dotenv import dotenv_values
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "apps/api"))
-from assembly_release_acceptance import fixture
+from assembly_release_acceptance import fixture  # noqa: E402 - local script import path
 
 
 async def main(args):
@@ -49,7 +49,8 @@ async def main(args):
     async with httpx.AsyncClient(timeout=30) as platform:
         response = await platform.get("https://api.vercel.com/v9/projects/" + args.project_id,
             params={"teamId": args.team_id}, headers={"Authorization": "Bearer " + os.environ["VERCEL_TOKEN"]})
-        if response.status_code != 200: raise RuntimeError("Could not read existing project automation protection")
+        if response.status_code != 200:
+            raise RuntimeError("Could not read existing project automation protection")
         bypass = next((key for key, value in (response.json().get("protectionBypass") or {}).items()
                        if value.get("scope") == "automation-bypass"), None)
     web_headers = {"Origin": args.base_url, **({"x-vercel-protection-bypass": bypass} if bypass else {})}
@@ -59,11 +60,14 @@ async def main(args):
             for attempt in range(3 if method == "GET" else 1):
                 try:
                     response = await web.request(method, path, **kwargs)
-                    if response.status_code < 500 or attempt == 2: break
+                    if response.status_code < 500 or attempt == 2:
+                        break
                 except httpx.TransportError:
-                    if method != "GET" or attempt == 2: raise
+                    if method != "GET" or attempt == 2:
+                        raise
                 await asyncio.sleep(attempt + 1)
-            if not response.is_success: raise RuntimeError(f"Application {method} {path} returned HTTP {response.status_code}")
+            if not response.is_success:
+                raise RuntimeError(f"Application {method} {path} returned HTTP {response.status_code}")
             return response.json()
         async def download(url):
             # These are read-only object requests; no charged build/model is retried.
@@ -71,10 +75,12 @@ async def main(args):
                 try:
                     async with httpx.AsyncClient(timeout=120) as files:
                         response = await files.get(url)
-                    if response.status_code != 200: raise RuntimeError("Private artifact download failed")
+                    if response.status_code != 200:
+                        raise RuntimeError("Private artifact download failed")
                     return response
                 except httpx.TransportError:
-                    if attempt == 2: raise
+                    if attempt == 2:
+                        raise
                     await asyncio.sleep(attempt + 1)
         await call("POST", "/api/auth/login", json={"email": credentials["Email"].strip(), "password": credentials["Password"].strip()})
         session = await call("GET", "/api/session")
@@ -91,7 +97,8 @@ async def main(args):
                 raise ValueError("Select either an explicit recovery or a new fixture")
             for thickness in [args.resume_case or args.thickness_only] if (args.resume_case or args.thickness_only) else [2, 4]:
                 key = f"sixty-parts-{thickness}mm"
-                if state["cases"].get(key, {}).get("status") == "passed": continue
+                if state["cases"].get(key, {}).get("status") == "passed":
+                    continue
                 worker = "release-qualification-" + uuid4().hex
                 if args.resume_case:
                     from forma_api.execution import executor, SandboxExpired
@@ -125,7 +132,8 @@ async def main(args):
                     case.update(status="preparing", worker=worker)
                     save()
                 else:
-                    if key in state["cases"]: raise ValueError("Incomplete pipeline case exists; inspect its run/receipts before retrying")
+                    if key in state["cases"]:
+                        raise ValueError("Incomplete pipeline case exists; inspect its run/receipts before retrying")
                     case = state["cases"][key] = {"status": "preparing", "idempotencyKey": str(uuid4()), "worker": worker}
                     save()
                     run_id = await db.rpc("submit_run_v3", {"p_project": state["projectId"], "p_owner": state["ownerId"],
@@ -154,9 +162,11 @@ async def main(args):
                     try:
                         await engine.execute_tool(run, cp, publish, limits, "wrong-worker")
                     except Exception as error:
-                        if getattr(error, "status_code", None) != 409: raise
+                        if getattr(error, "status_code", None) != 409:
+                            raise
                         case["leaseFence"] = "passed"
-                    else: raise AssertionError("Wrong worker published a revision")
+                    else:
+                        raise AssertionError("Wrong worker published a revision")
                     result = await engine.execute_tool(run, cp, publish, limits, worker)
                     state["revisionId"] = case["revisionId"] = result["revisionId"]
                     save()
@@ -170,7 +180,8 @@ async def main(args):
                     assert revision["validation"]["nativeAssembly"]["degreesOfFreedom"] == 0
                     artifact_hashes = {}
                     for artifact in workspace["artifacts"]:
-                        if artifact["revision_id"] != state["revisionId"]: continue
+                        if artifact["revision_id"] != state["revisionId"]:
+                            continue
                         signed = await call("GET", "/api/artifacts/" + artifact["id"])
                         # Do not forward Vercel bypass credentials or application
                         # headers to Supabase's signed object URL.
@@ -195,7 +206,8 @@ async def main(args):
                     await engine.destroy_sandboxes(cp)
             state["pipeline"] = "passed"
         elif args.action == "chat":
-            if state.get("chatRunId"): raise ValueError("Chat already submitted; inspect status instead of duplicating")
+            if state.get("chatRunId"):
+                raise ValueError("Chat already submitted; inspect status instead of duplicating")
             key = state.setdefault("chatIdempotencyKey", str(uuid4()))
             save()
             message = ("Change only the reusable plate thickness from 4 mm to 3 mm. Preserve all 60 occurrences, the 59 fixed joints, grounding, reference frames and part identity. Build and independently validate, then publish the draft with regenerated STEP, preview, native assembly evidence and BOM. This is a geometric qualification fixture, no strength or manufacturing approval is requested.")
@@ -211,7 +223,8 @@ async def main(args):
             if state.get("resumeAttempted") and not (args.repeat_answer and state.get("resumeSubmitted")):
                 raise ValueError("Resume was already attempted; inspect the saved run before repeating")
             run = await call("GET", "/api/runs/" + state["chatRunId"])
-            if run["status"] != "waiting_input": raise ValueError("The qualification run is not waiting for its missing dimension")
+            if run["status"] != "waiting_input":
+                raise ValueError("The qualification run is not waiting for its missing dimension")
             workspace = await call("GET", "/api/projects/" + state["projectId"])
             assert workspace["project"]["current_revision_id"] == state["revisionId"]
             if state.get("resumeSubmitted"):
@@ -275,7 +288,8 @@ async def main(args):
                 state["chatMeasurementConsistency"] = "passed"
                 downloaded = {}
                 for artifact in workspace["artifacts"]:
-                    if artifact["revision_id"] != revision["id"]: continue
+                    if artifact["revision_id"] != revision["id"]:
+                        continue
                     signed = await call("GET", "/api/artifacts/" + artifact["id"])
                     response = await download(signed["url"])
                     assert len(response.content) == artifact["bytes"]
@@ -305,18 +319,26 @@ async def main(args):
         # The documented public reviewer is an existing separate account;
         # no test invitation or outbound email is needed.
         demo = re.search(r"Email: `([^`]+)`.*Password: `([^`]+)`", (ROOT / "README.md").read_text(encoding="utf-8"))
-        if not demo: raise RuntimeError("Documented second-account fixture is unavailable")
+        if not demo:
+            raise RuntimeError("Documented second-account fixture is unavailable")
         async with httpx.AsyncClient(base_url=args.base_url, timeout=60, headers=web_headers) as other:
             response = await other.post("/api/auth/login", json={"email": demo.group(1), "password": demo.group(2)})
-            if response.status_code != 200: raise RuntimeError("Second-account authentication failed")
-            profile = (await other.get("/api/session")).json()["profile"]
-            assert profile["id"] != state["ownerId"]
-            response = await other.get("/api/projects/" + state["projectId"])
-            assert response.status_code == 404
-            workspace = await call("GET", "/api/projects/" + state["projectId"])
-            response = await other.get("/api/artifacts/" + workspace["artifacts"][0]["id"])
-            assert response.status_code == 404
-        state["otherOwnerAccessRejected"] = True
+            if response.status_code != 200 and args.environment == "preview-eval":
+                # The isolated evaluation database does not contain the public
+                # demo account. Record the missing coverage rather than treating
+                # it as a production authorization failure or a passed check.
+                state["otherOwnerAccessCheck"] = "unavailable_in_isolated_eval"
+            else:
+                if response.status_code != 200:
+                    raise RuntimeError("Second-account authentication failed")
+                profile = (await other.get("/api/session")).json()["profile"]
+                assert profile["id"] != state["ownerId"]
+                response = await other.get("/api/projects/" + state["projectId"])
+                assert response.status_code == 404
+                workspace = await call("GET", "/api/projects/" + state["projectId"])
+                response = await other.get("/api/artifacts/" + workspace["artifacts"][0]["id"])
+                assert response.status_code == 404
+                state["otherOwnerAccessRejected"] = True
         save()
         print(json.dumps({"projectId": state["projectId"], "pipeline": state.get("pipeline"), "chatWorkflow": state.get("chatWorkflow"), "chatRunId": state.get("chatRunId")}))
     await db.close_client()
@@ -333,7 +355,7 @@ if __name__ == "__main__":
     for name in ["env-file", "runtime", "cli-auth-file", "credentials", "report-dir"]:
         parser.add_argument("--" + name, type=Path, required=True)
     parser.add_argument("--base-url", required=True)
-    parser.add_argument("--environment", choices=["preview", "production"], required=True)
+    parser.add_argument("--environment", choices=["preview", "preview-eval", "production"], required=True)
     parser.add_argument("--team-id", default="team_Nzdcjz2LikTu8cDMJVaMiX45")
     parser.add_argument("--project-id", default="prj_eHyoZK7vTY2f6bbySwO8StXYAqHs")
     try:

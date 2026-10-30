@@ -501,6 +501,25 @@ the hosted qualification section above supersedes its deployment status.
   still prevents those runs from exercising the new runtime. Production keeps
   the previously qualified native runtime; complete an application build and
   inspect artifact identity before any production runtime change.
+- The new runtime passed an isolated application-level smoke build on the
+  evaluation preview. In a new project, the existing deterministic 2 mm fixture
+  built 60 repeated plate instances, passed native placement and fresh STEP
+  validation, uploaded nine private artifacts, fenced publication to its worker,
+  and authenticated download of STEP, GLB, BOM and assembly evidence. The
+  downloaded `assembly.step` is 54,812 bytes. The draft revision is
+  `2309ef85-d9e1-5a96-aadb-8377aa1a361c`; evidence is in
+  `D:\v1\test-results\harness-v4-helper-app-smoke-20261030`. The first
+  verifier invocation completed the build but its final second-account login
+  failed because that public demo account does not exist in the isolated
+  evaluation database. The verifier now records that check as unavailable in
+  `preview-eval` and was resumed against the same passed case, without a
+  second build. Anonymous access was rejected. This is a deterministic legacy
+  adapter smoke test, **not** the 60-unique-part agentic acceptance test or a
+  pump result. Production stays on the older runtime while its active legacy
+  work is preserved. Next: obtain a qualified available model provider,
+  resume each saved v4 evaluation once, and inspect independently reopened
+  pump STEP states, calculation/tolerance reports and component inventory
+  before any default rollout or production runtime switch.
 - The committed project acceptance plan persists across runs. Sourced amendments and
   a matching base version are required to change or retire requirements/deliverables.
   Focused delegation cannot replace the full inventory. V4 bypasses legacy keyword
