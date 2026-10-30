@@ -460,6 +460,12 @@ the hosted qualification section above supersedes its deployment status.
   private request data there. A regression test injected a token-like error
   and confirmed it was absent from the saved status. Focused graph, durable-job
   and dispatch checks passed 14 tests; Ruff and whitespace checks passed.
+  Commit `a8f8d37` was pushed. The production-target CLI lost its polling
+  connection after creating deployment `dpl_BVfkLk1mzwhGR6RnrZNrVqac4H2P`;
+  the existing deployment was inspected by ID rather than submitted again.
+  It reached Ready, received the public Forma alias, and public `/api/health`
+  and `/` each returned HTTP 200. The isolated evaluation runs are still
+  paused by Gateway quota and have not exercised this change.
 - The committed project acceptance plan persists across runs. Sourced amendments and
   a matching base version are required to change or retire requirements/deliverables.
   Focused delegation cannot replace the full inventory. V4 bypasses legacy keyword
