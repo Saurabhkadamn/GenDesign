@@ -428,6 +428,20 @@ the hosted qualification section above supersedes its deployment status.
   was unavailable to local migration tooling, so production schema and guarded
   deployment still use the earlier resume path. Do not deploy this API change
   to production before its schema migration is verified there.
+- Commit `2bffe04` was pushed with the atomic resume migration and API change.
+  Migration `20261029221000` was applied and recorded in the isolated evaluation
+  database; its service-role EXECUTE grant and preserved authorization event
+  were checked. Isolated preview
+  `https://forma-ffaj7k4p6-negens-projects.vercel.app`
+  (`dpl_J2jJqFwkAztyFVqBDyRwztaAr3EZ`) reached Ready. Protected health
+  returned 200, and authenticated GET of both saved run IDs returned 200,
+  `paused`, and `preview-eval`. Neither run was resumed. Production remains on
+  `dpl_EekZMBRJpxuqtfeA3TaN44GxKs7D`: the new migration is not yet applied
+  there and this commit is not deployed there. A Vercel environment pull exposed
+  no usable production database URL to local migration tooling; because that
+  variable is encrypted in Vercel, this does not establish whether the running
+  production service has it. Obtain a verified production migration path before
+  deploying the new API. Gateway HTTP 402 still prevents agentic acceptance.
 - The committed project acceptance plan persists across runs. Sourced amendments and
   a matching base version are required to change or retire requirements/deliverables.
   Focused delegation cannot replace the full inventory. V4 bypasses legacy keyword
