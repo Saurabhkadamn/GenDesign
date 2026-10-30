@@ -474,6 +474,11 @@ the hosted qualification section above supersedes its deployment status.
   are unchanged. Direct redaction and mocked HTTP transport tests passed;
   targeted provider suites passed 57 tests, with Ruff and whitespace checks
   clean. These checks do not establish model competence or a successful design.
+  Commit `8230bab` was pushed and production-target deployment
+  `dpl_4Pig9JZqsB3Rg5fR8nLb9jFX66EB` reached Ready after the CLI lost its
+  polling connection. It received the public Forma alias; public `/api/health`
+  and `/` each returned HTTP 200. Guarded v4 remains off as the public default,
+  and saved isolated evaluations remain paused on provider quota.
 - The committed project acceptance plan persists across runs. Sourced amendments and
   a matching base version are required to change or retire requirements/deliverables.
   Focused delegation cannot replace the full inventory. V4 bypasses legacy keyword
