@@ -596,6 +596,16 @@ the hosted qualification section above supersedes its deployment status.
   This snapshot is not selected by production or the isolated evaluation
   preview yet. Next, connect these identities to separately checkpointed
   build/validate/upload graph phases before switching the isolated preview.
+- The first engine seam for that graph split now separates validation of an
+  already completed builder from the build invocation. A later graph node can
+  reopen STEP files from the named builder Sandbox and create fresh validator
+  evidence without storing STEP bytes in the LangGraph checkpoint. The existing
+  combined path passes its already-read bytes to the same seam, preserving its
+  behavior. The focused test verifies independent reads and validator inputs
+  (2/2 transfer tests passed, Ruff and whitespace clean). This is branch-only;
+  the graph still calls the combined path, so the 300-second hosted risk and
+  agentic acceptance remain open. Next wire keyed start/poll, completed-build
+  validation, and batched artifact publication into distinct durable nodes.
 - The committed project acceptance plan persists across runs. Sourced amendments and
   a matching base version are required to change or retire requirements/deliverables.
   Focused delegation cannot replace the full inventory. V4 bypasses legacy keyword

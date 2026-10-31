@@ -358,7 +358,37 @@ async def build_candidate(run, cp, limits, key):
         raise Pause("The CAD process timed out or could not be cleaned up. Its environment was discarded. Continue to create a fresh one.")
     if receipt["exitCode"]:
         return await reject_candidate(run, cp, expected, build_error(receipt, "build"), limits)
-    return await validate_step_candidate(run, cp, snapshot, metadata, step_files, limits, key)
+    return await validate_built_candidate(run, cp, limits, key,
+                                          snapshot=snapshot, metadata=metadata,
+                                          step_files=step_files)
+
+
+async def validate_built_candidate(run, cp, limits, key, *, snapshot=None,
+                                   metadata=None, step_files=None):
+    """Validate a completed builder from another durable graph transition.
+
+    STEP bytes stay in the builder sandbox until this transition and never
+    enter LangGraph state. The validator still receives reopened STEP only.
+    """
+    snapshot = snapshot or Snapshot.model_validate(cp["snapshot"]).model_dump()
+    if metadata is None:
+        expected = identity(snapshot, cp["requirements"])
+        metadata = {"manifest.json": json.dumps(snapshot["manifest"]).encode(),
+                    "requirements.json": json.dumps(cp["requirements"]).encode(),
+                    "identity.json": json.dumps(expected).encode()}
+    if step_files is None:
+        names = [component["id"] + ".step" for component in snapshot["manifest"]["components"]]
+
+        async def read_step(name):
+            return await executor().read(cp["sandbox"], name)
+
+        contents = await bounded_operations(names,
+            4 if run.get("harness_version", 3) >= 4 else 1, read_step)
+        if sum(map(len, contents)) > 120 * 1024 * 1024:
+            raise Pause("The generated STEP files exceed the transfer limit.")
+        step_files = dict(zip(names, contents))
+    return await validate_step_candidate(run, cp, snapshot, metadata,
+                                         step_files, limits, key)
 
 
 async def validate_step_candidate(run, cp, snapshot, metadata, step_files, limits, key):
