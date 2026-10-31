@@ -168,6 +168,79 @@ class VercelExecutor:
         async with self.sdk_session(read_timeout=read_timeout):
             return await self.command(await self.box(name), ["execute", "--operation", operation, "--timeout", str(timeout), "--path", path], timeout + 15)
 
+    async def start_execution(self, name, operation, timeout, path=""):
+        """Start one CAD command without holding the caller until it finishes.
+
+        The caller must persist the returned process ID before moving to another
+        scheduling step. If this request has an uncertain outcome, inspect the
+        sandbox's processes and receipt before deciding whether to start again.
+        """
+        if operation not in {"build", "validate", "calculate", "measure"}:
+            raise ExecutionFailure("Unsupported CAD operation")
+        if not isinstance(timeout, int) or not 1 <= timeout <= 300:
+            raise ExecutionFailure("CAD operation timeout is outside its isolated boundary")
+        from vercel import sandbox
+
+        async with self.sdk_session(read_timeout=120):
+            box = await self.box(name)
+            prior_receipt = await box.run_process(
+                "test", ["-e", "/job/receipt.json"], cwd="/", sudo=True,
+                check=False, capture_output=True,
+            )
+            if prior_receipt.returncode not in {0, 1}:
+                raise ExecutionFailure("Could not inspect the prior CAD receipt")
+            if prior_receipt.returncode == 0:
+                raise ExecutionFailure("A prior CAD receipt must be inspected before starting another command")
+            processes = await box.query_processes()
+            if any(
+                process.status == sandbox.ProcessStatus.RUNNING
+                and "/opt/forma/control.py" in process.args
+                and "execute" in process.args
+                for process in processes
+            ):
+                raise ExecutionFailure("A CAD command is already running; inspect its process identity")
+            process = await box.create_process(
+                "/opt/forma/.venv/bin/python",
+                ["-I", "/opt/forma/control.py", "execute", "--operation", operation,
+                 "--timeout", str(timeout), "--path", path],
+                cwd="/", sudo=True, kill_after=timeout + 15,
+            )
+            return {"sandbox": name, "processId": process.id,
+                    "status": "running" if process.status == sandbox.ProcessStatus.RUNNING else "exited"}
+
+    async def inspect_execution(self, name, process_id):
+        """Reconnect to an identified command and read its immutable receipt."""
+        from vercel import sandbox
+
+        async with self.sdk_session(read_timeout=120):
+            box = await self.box(name)
+            process = await box.get_process(process_id, wait=False)
+            await process.refresh()
+            # The SDK can report a completed detached command as running until
+            # its output stream is consumed. The supervisor writes the receipt
+            # after CAD cleanup; it is the completion authority.
+            receipt_file = await box.run_process(
+                "test", ["-f", "/job/receipt.json"], cwd="/", sudo=True,
+                check=False, capture_output=True,
+            )
+            if receipt_file.returncode not in {0, 1}:
+                raise ExecutionFailure("Could not inspect the CAD receipt")
+            if receipt_file.returncode == 0:
+                receipt = await self.command(box, ["inspect"])
+                return {"status": "complete", "processId": process_id, "receipt": receipt}
+            if process.status == sandbox.ProcessStatus.RUNNING:
+                return {"status": "running", "processId": process_id}
+            return {"status": "failed", "processId": process_id,
+                    "exitCode": process.returncode}
+
+    async def list_execution_processes(self, name):
+        """Read process identities after an uncertain start; never replay here."""
+        async with self.sdk_session(read_timeout=120):
+            box = await self.box(name)
+            processes = await box.query_processes()
+            return [{"processId": process.id, "status": str(process.status.value),
+                     "args": list(process.args)} for process in processes]
+
     async def inspect(self, name):
         async with self.sdk_session(read_timeout=120):
             return await self.command(await self.box(name), ["inspect"])

@@ -556,6 +556,22 @@ the hosted qualification section above supersedes its deployment status.
   before replay. Each artifact transfer needs a stable identity and receipt.
   Keep the existing valid draft and paused agentic runs intact while this is
   implemented and qualified on the isolated preview.
+- The first detached Sandbox execution adapter is implemented on the branch,
+  without changing the active graph route. It starts one identified CAD
+  process, can list process identities after an uncertain start, and reconnects
+  to inspect the supervisor receipt from a separate host process. A real
+  isolated probe produced a 15,500-byte STEP file after reconnection; evidence
+  is in `D:\v1\test-results\harness-v4-detached-process-20261031`.
+  The Sandbox SDK continued reporting this completed detached command as
+  `running` after the receipt and STEP existed and no Python process remained.
+  Inspection therefore uses the supervisor receipt as completion evidence,
+  while start refuses a prior receipt or another active CAD command. Targeted
+  adapter tests passed 3/3 with Ruff and whitespace checks clean. This is a
+  foundation for the phase split, **not** yet a hosted long-build fix: the
+  graph still calls the synchronous combined build path. Next integrate
+  stage/execute/validate/upload as separate durable graph operations, confirm
+  process/receipt identity and cancellation across a function boundary, and
+  then rerun the unique-part hosted acceptance.
 - The committed project acceptance plan persists across runs. Sourced amendments and
   a matching base version are required to change or retire requirements/deliverables.
   Focused delegation cannot replace the full inventory. V4 bypasses legacy keyword
