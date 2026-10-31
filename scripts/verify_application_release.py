@@ -20,7 +20,7 @@ from dotenv import dotenv_values
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "apps/api"))
-from assembly_release_acceptance import fixture  # noqa: E402 - local script import path
+from assembly_release_acceptance import fixture, unique_fixture  # noqa: E402 - local script import path
 
 
 async def main(args):
@@ -89,14 +89,15 @@ async def main(args):
         models = await call("GET", "/api/admin/models")
         state["modelConnections"] = [{k: row.get(k) for k in ["role", "provider", "model_id", "active", "tested_at"]} for row in models]
         if not state.get("projectId"):
-            project = await call("POST", "/api/projects", json={"name": "Native assembly release qualification"})
+            name = "Native 60-unique-part qualification" if args.unique_components else "Native assembly release qualification"
+            project = await call("POST", "/api/projects", json={"name": name})
             state["projectId"], state["ownerId"] = project["id"], project["owner_id"]
             save()
         if args.action == "pipeline":
             if args.resume_case and args.thickness_only:
                 raise ValueError("Select either an explicit recovery or a new fixture")
             for thickness in [args.resume_case or args.thickness_only] if (args.resume_case or args.thickness_only) else [2, 4]:
-                key = f"sixty-parts-{thickness}mm"
+                key = f"sixty-unique-parts-{thickness}mm" if args.unique_components else f"sixty-parts-{thickness}mm"
                 if state["cases"].get(key, {}).get("status") == "passed":
                     continue
                 worker = "release-qualification-" + uuid4().hex
@@ -111,7 +112,7 @@ async def main(args):
                     assert previous_run["status"] == "paused"
                     assert previous_run["owner_id"] == state["ownerId"]
                     assert previous_run["execution_environment"] == args.environment
-                    assert previous_run["base_revision_id"] == project["current_revision_id"] == state["revisionId"]
+                    assert previous_run["base_revision_id"] == project["current_revision_id"] == state.get("revisionId")
                     if await db.rest("runs", params={"status": "in.(queued,running)", "select": "id"}):
                         raise ValueError("Another run is active; do not duplicate running work")
                     for name in [case["sandbox"], case["validator"]]:
@@ -144,7 +145,8 @@ async def main(args):
                 if not await db.rpc("claim_run_v3", {"p_run": run_id, "p_worker": worker, "p_environment": args.environment}):
                     raise RuntimeError("Qualification run could not acquire the existing worker lease")
                 run = await db.one("runs", {"id": "eq." + run_id})
-                snapshot = Snapshot.model_validate(fixture(thickness)).model_dump()
+                source = unique_fixture(thickness) if args.unique_components else fixture(thickness)
+                snapshot = Snapshot.model_validate(source).model_dump()
                 cp = {"snapshot": snapshot, "requirements": [{"id": "inventory", "description": "60 physical parts", "kind": "solid_count", "count": 60}],
                     "attempts": 0, "repairs": 0, "sandbox": "forma-app-release-" + uuid4().hex,
                     "validator": "forma-app-validator-" + uuid4().hex, "startedNs": time.time_ns(), "role": "coordinator"}
@@ -154,9 +156,20 @@ async def main(args):
                 try:
                     report = await engine.build_candidate(run, cp, limits.limits, "release:" + key)
                     assert report["identity"] == identity(snapshot, cp["requirements"])
-                    assert report["bom"]["flat"][0]["quantity"] == 60
+                    assert sum(row["quantity"] for row in report["bom"]["flat"]) == 60
+                    if args.unique_components:
+                        assert len(report["bom"]["flat"]) == 60
                     assert report["assemblyPlacement"]["solidChecks"] == 60
                     case["identity"], case["artifactCount"] = report["identity"], len(cp["validated"]["artifacts"])
+                    save()
+                    # A many-component validation and upload can exceed the
+                    # legacy six-minute lease. Reclaim only this same worker's
+                    # run; a competing owner or active run makes this fail.
+                    if not await db.rpc("claim_run_v3", {
+                        "p_run": run_id, "p_worker": worker, "p_environment": args.environment,
+                    }):
+                        raise RuntimeError("Verification worker lost its lease before publication")
+                    case["leaseRenewedAfterBuild"] = True
                     save()
                     publish = {"id": "qualification-publish", "name": "publish_revision", "input": {"summary": f"Qualified deterministic 60-part fixture, {thickness} mm"}}
                     try:
@@ -176,7 +189,10 @@ async def main(args):
                     save()
                     workspace = await call("GET", "/api/projects/" + state["projectId"])
                     revision = next(r for r in workspace["revisions"] if r["id"] == state["revisionId"])
-                    assert revision["validation"]["bom"]["flat"][0]["quantity"] == 60
+                    flat_bom = revision["validation"]["bom"]["flat"]
+                    assert sum(row["quantity"] for row in flat_bom) == 60
+                    if args.unique_components:
+                        assert len(flat_bom) == 60
                     assert revision["validation"]["nativeAssembly"]["degreesOfFreedom"] == 0
                     artifact_hashes = {}
                     for artifact in workspace["artifacts"]:
@@ -195,8 +211,10 @@ async def main(args):
                     case.update(status="passed", authenticatedDownloads=artifact_hashes)
                     save()
                     print(key + " passed: native build, private upload, lease-fenced publication and authenticated downloads", flush=True)
-                except BaseException:
+                except BaseException as error:
                     case["status"] = "interrupted"
+                    case["failureType"] = type(error).__name__
+                    case["failureStatus"] = getattr(error, "status_code", None)
                     save()
                     if not case.get("runFinished"):
                         await db.rpc("finish_graph_run_v3", {"p_run": run_id, "p_worker": worker, "p_status": "paused",
@@ -348,6 +366,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("action", choices=["pipeline", "chat", "status", "resume", "continue"])
     parser.add_argument("--ask-thickness", action="store_true")
+    parser.add_argument("--unique-components", action="store_true",
+                        help="Build 60 geometrically distinct components using a shared Python helper")
     parser.add_argument("--thickness-only", type=int, choices=[2, 4])
     parser.add_argument("--resume-case", type=int, choices=[2, 4],
                         help="Deliberately recover the same paused fixture after confirming expired sandboxes and an unchanged base")

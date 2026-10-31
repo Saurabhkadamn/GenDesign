@@ -15,7 +15,8 @@ sys.path.insert(0, str(ROOT / "apps/api"))
 
 
 def fixture(thickness):
-    frame = lambda position: {"position": position, "rotation": [0, 0, 0]}
+    def frame(position):
+        return {"position": position, "rotation": [0, 0, 0]}
     positions = [[(i % 10) * 12, (i // 10) * 12, 0] for i in range(60)]
     instances = [{"id": f"plate_{i}", "definitionId": "plate", "name": f"Plate {i + 1}",
                   "frame": frame(p if i == 0 else [p[0] + 1, p[1] + 2, p[2] + 3])}
@@ -37,6 +38,99 @@ def fixture(thickness):
     return {"manifest": manifest, "files": files}
 
 
+def unique_fixture(thickness):
+    """Distinct geometry and source identity for each of 60 assembly parts."""
+    def frame(position):
+        return {"position": position, "rotation": [0, 0, 0]}
+    positions = [[(i % 10) * 12, (i // 10) * 12, 0] for i in range(60)]
+    part_ids = [f"part_{i}" for i in range(60)]
+    components = [
+        {
+            "id": part_id,
+            "name": f"Unique plate {i + 1}",
+            "source": f"parts/{part_id}.py",
+            "kind": "solid",
+            "parameters": {"width": 7.0 + i * 0.01, "thickness": thickness},
+            "partMetadata": {
+                "partNumber": f"QUAL-UNIQUE-{i + 1:03d}",
+                "revision": "TEST",
+                "description": "Distinct acceptance fixture part",
+            },
+        }
+        for i, part_id in enumerate(part_ids)
+    ]
+    components.append({
+        "id": "assembly",
+        "name": "60-unique-part acceptance fixture",
+        "source": "assemblies/grid.py",
+        "kind": "assembly",
+        "dependencies": part_ids,
+        "parameters": {"positions": positions},
+    })
+    instances = [
+        {
+            "id": part_id,
+            "definitionId": part_id,
+            "name": f"Unique plate {i + 1}",
+            "frame": frame(position if i == 0 else [position[0] + 1, position[1] + 2, 3]),
+        }
+        for i, (part_id, position) in enumerate(zip(part_ids, positions))
+    ]
+    references = [{"id": "part_origin_0", "componentId": "part_0", "kind": "datum", "frame": frame([0, 0, 0])}]
+    references += [
+        {"id": f"grid_{i}", "componentId": "part_0", "kind": "placement_datum", "frame": frame(position)}
+        for i, position in enumerate(positions) if i
+    ]
+    references += [
+        {"id": f"part_origin_{i}", "componentId": part_ids[i], "kind": "datum", "frame": frame([0, 0, 0])}
+        for i in range(1, 60)
+    ]
+    files = {
+        "parts/shared.py": (
+            "import cadquery as cq\n"
+            "def build_plate(parameters):\n"
+            "    return cq.Workplane('XY').box(parameters['width'], 8, parameters['thickness']).faces('>Z').workplane().hole(2)\n"
+        ),
+        "assemblies/grid.py": (
+            "import cadquery as cq\n"
+            "def build(parameters, dependencies):\n"
+            "    result = cq.Assembly(name='assembly')\n"
+            "    for i, position in enumerate(parameters['positions']):\n"
+            "        result.add(dependencies[f'part_{i}'], name=f'part_{i}', loc=cq.Location(cq.Vector(*position)))\n"
+            "    return result\n"
+        ),
+    }
+    files.update({
+        f"parts/{part_id}.py": (
+            "from parts.shared import build_plate\n"
+            "def build(parameters, dependencies):\n"
+            "    return build_plate(parameters)\n"
+        )
+        for part_id in part_ids
+    })
+    return {
+        "manifest": {
+            "rootComponentId": "assembly",
+            "components": components,
+            "instances": instances,
+            "references": references,
+            "joints": [
+                {
+                    "id": f"mate_{i}",
+                    "kind": "fixed",
+                    "referenceA": f"grid_{i}",
+                    "referenceB": f"part_origin_{i}",
+                    "occurrenceA": "part_0",
+                    "occurrenceB": part_ids[i],
+                }
+                for i in range(1, 60)
+            ],
+            "nativeAssembly": {"groundedInstances": ["part_0"], "allowedDof": 0},
+        },
+        "files": files,
+    }
+
+
 async def main(args):
     runtime = json.loads(args.runtime.read_text())
     token = json.loads(args.cli_auth_file.read_text())["token"]
@@ -50,11 +144,13 @@ async def main(args):
     folder.mkdir(parents=True, exist_ok=True)
     record_path = folder / "acceptance-state.json"
     record = json.loads(record_path.read_text()) if record_path.exists() else {"runtimeVersion": runtime["runtimeVersion"], "cases": {}}
-    if record["runtimeVersion"] != runtime["runtimeVersion"]: raise ValueError("Use a new evidence directory for a different runtime")
+    if record["runtimeVersion"] != runtime["runtimeVersion"]:
+        raise ValueError("Use a new evidence directory for a different runtime")
     def save(): record_path.write_text(json.dumps(record, indent=2) + "\n")
     for key, thickness, negative in [("sixty-parts-2mm", 2, False), ("sixty-parts-4mm", 4, False),
                                       ("contradictory-grounded", 2, True)]:
-        if record["cases"].get(key, {}).get("status") == "passed": continue
+        if record["cases"].get(key, {}).get("status") == "passed":
+            continue
         if key in record["cases"]:
             prior = record["cases"][key]
             if not args.retry_preparation or prior.get("buildReceipt"):
@@ -69,11 +165,13 @@ async def main(args):
             del record["cases"][key]
             save()
         source = fixture(thickness)
-        if negative: source["manifest"]["nativeAssembly"]["groundedInstances"].append("plate_1")
+        if negative:
+            source["manifest"]["nativeAssembly"]["groundedInstances"].append("plate_1")
         snapshot = Snapshot.model_validate(source).model_dump()
         requirements = [{"id": "inventory", "description": "60 physical parts", "kind": "solid_count", "count": 60}]
         expected = identity(snapshot, requirements)
-        encode = lambda value: json.dumps(value).encode()
+        def encode(value):
+            return json.dumps(value).encode()
         metadata = {"manifest.json": encode(snapshot["manifest"]), "requirements.json": encode(requirements), "identity.json": encode(expected)}
         names = [f"forma-release-{key}-build", f"forma-release-{key}-validate"]
         case = record["cases"][key] = {"status": "running", "workers": names, "identity": expected}
@@ -134,15 +232,18 @@ async def main(args):
             raise
         finally:
             for name in names:
-                try: await executor.destroy(name)
-                except Exception: pass
+                try:
+                    await executor.destroy(name)
+                except Exception:
+                    pass
 
 
 def verify_local(folder):
     import cadquery as cq
     record = json.loads((folder / "acceptance-state.json").read_text())
     for key, case in record["cases"].items():
-        if case.get("status") != "passed" or case.get("expectedRejection"): continue
+        if case.get("status") != "passed" or case.get("expectedRejection"):
+            continue
         shape = cq.importers.importStep(str(folder / key / "assembly.step")).val()
         assert shape.isValid() and len(shape.Solids()) == 60
         error = abs(shape.Volume(tol=1e-9) - case["expectedVolumeMm3"])

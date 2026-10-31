@@ -520,6 +520,25 @@ the hosted qualification section above supersedes its deployment status.
   resume each saved v4 evaluation once, and inspect independently reopened
   pump STEP states, calculation/tolerance reports and component inventory
   before any default rollout or production runtime switch.
+- A separate deterministic fixture now exercises **60 distinct component
+  definitions and source files**, each with a distinct width and part number,
+  using one imported workspace-local Python helper. Its isolated application
+  build passed native placement and fresh STEP validation, uploaded and
+  authenticated the download of 127 artifacts, and published one draft revision
+  `aa66e84a-4b77-510f-878c-f72ff8f8308a`. The 60 part STEP files have 60
+  distinct SHA-256 hashes; BOM has 60 distinct part numbers at quantity one;
+  assembly STEP is 1,311,573 bytes. Evidence is in
+  `D:\v1\test-results\harness-v4-unique-app-smoke-20261031`. The first
+  verification attempt completed the build but could not publish after its
+  legacy six-minute worker lease expired; it stopped at 6 minutes 7 seconds
+  with no revision. The verifier now reclaims only the same worker's lease
+  after a long build and refuses to publish if another worker owns it. The
+  saved paused run was resumed once after checking its prior workers were gone
+  and its project base was unchanged; stable artifact paths and upsert made
+  repeated uploads idempotent. This verifies geometry scalability and the
+  application adapters, **not** agentic generation of 60 unique parts or the
+  pump task. V4's production operation wrapper has its own fenced lease
+  heartbeat; the expired lease here was in the deterministic legacy verifier.
 - The committed project acceptance plan persists across runs. Sourced amendments and
   a matching base version are required to change or retire requirements/deliverables.
   Focused delegation cannot replace the full inventory. V4 bypasses legacy keyword
@@ -584,10 +603,12 @@ the hosted qualification section above supersedes its deployment status.
   Context, structured correction, engineering sessions, durable jobs and recovery now
   have separate modules; the central graph still contains substantial implementation.
 - Qualify report exports, coverage review, UI, and engineering acceptance end to end.
-- Establish an isolated local application database/provider setup. This worktree has
-  no loaded Forma credentials or running local Supabase/PostgREST service, so the
-  actual UI-to-provider-to-CAD run has not yet been performed here. Do not silently
-  point local qualification at the production database.
+- Establish an isolated local application database/provider setup. Private
+  credentials for the hosted isolated evaluation database are available outside
+  this worktree, and the hosted application build adapters have now been
+  exercised. A local Supabase/PostgREST service and a completed local
+  UI-to-provider-to-CAD run remain absent. Do not silently point local
+  qualification at the production database.
 - Run fresh agentic pump tasks, a 60-unique-part assembly, and the 120-run evaluation
   against a frozen legacy harness; report cost, time, interventions and false success.
 - Guarded production and isolated-preview deployments are live, as recorded above.
