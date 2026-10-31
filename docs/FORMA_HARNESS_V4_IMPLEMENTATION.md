@@ -742,7 +742,9 @@ the hosted qualification section above supersedes its deployment status.
   Production REST again returned zero queued or running runs. Its native engine
   and packages match the prior runtime, its 80 native tests passed, and its
   isolated hosted 60-distinct build and independently reopened artifacts passed
-  as recorded above. The new runtime is now live behind the v4 guard; it has
+  as recorded above. The production project settings for both runtime identifiers
+  were updated so later deployments do not silently revert to the old snapshot.
+  The new runtime is now live behind the v4 guard; it has
   **not** passed the agentic pump, agentic 60-part or acceptance corpus gates.
 
 ### Remaining before any default rollout
