@@ -27,6 +27,12 @@ class ProviderDeferred(Pause):
         super().__init__(f"Provider requested a cooldown of {self.seconds} seconds; saved work will resume automatically.")
 
 
+class OperationPending(Pause):
+    def __init__(self, seconds=10):
+        self.seconds = max(1, int(seconds))
+        super().__init__("The CAD command is still running; saved work will resume automatically.")
+
+
 async def bounded_operations(items, limit, action):
     """Keep independent transfers bounded and wait for every sibling on failure."""
     if limit == 1:
@@ -44,7 +50,8 @@ async def bounded_operations(items, limit, action):
     return results
 
 
-async def operation(run, key, kind, callback, *, idempotent=False, input_identity=None):
+async def operation(run, key, kind, callback, *, idempotent=False,
+                    input_identity=None, reconcile=None):
     from .services.research_execution import fenced_operation
     from .services.runs import lease_context
     lease = lease_context.get()
@@ -69,6 +76,16 @@ async def operation(run, key, kind, callback, *, idempotent=False, input_identit
         raise Pause("Operation identity belongs to different inputs; reconcile the saved job before executing.")
     if old and old["status"] == "complete":
         return old["result"]
+    if old and old["status"] in {"started", "ambiguous"} and reconcile is not None:
+        # A remote command may have started before the node checkpoint was
+        # committed. Reattach to its exact identity; never submit it again.
+        async with fenced_operation():
+            recovered = await reconcile()
+        if recovered is None:
+            await record("ambiguous", old.get("result"))
+            raise Pause("The external operation may have started. Its outcome must be inspected before replay.")
+        await record("complete", recovered)
+        return recovered
     not_before = (old or {}).get('result') or {}
     if run.get('research_mode') and not_before.get('retryNotBefore'):
         remaining = (datetime.fromisoformat(not_before['retryNotBefore'])-datetime.now(timezone.utc)).total_seconds()
@@ -363,8 +380,38 @@ async def build_candidate(run, cp, limits, key):
                                           step_files=step_files)
 
 
+async def stage_build_candidate(run, cp, limits):
+    """Stage immutable candidate inputs before a detached CAD process starts."""
+    snapshot = Snapshot.model_validate(cp["snapshot"]).model_dump()
+    expected = identity(snapshot, cp["requirements"])
+    validated = cp.get("validated") or {}
+    if validated.get("identity") == expected:
+        return {"reused": validated["report"]}
+    if cp.get("lastFailedCandidate") == expected:
+        raise Pause("The candidate has not changed since its failed build. Edit the source before continuing.")
+    files = {
+        "manifest.json": json.dumps(snapshot["manifest"]).encode(),
+        "requirements.json": json.dumps(cp["requirements"]).encode(),
+        "identity.json": json.dumps(expected).encode(),
+        **{path: content.encode() for path, content in snapshot["files"].items()
+           if not path.startswith("calculations/")},
+    }
+    for recovery in range(2):
+        try:
+            await ensure_sandbox(run, cp, limits)
+            await executor().stage(cp["sandbox"], files)
+            cp["attempts"] += 1
+            await repo.event(run["id"], f"Staged candidate · attempt {cp['attempts']}.",
+                             stage="execution", attempt=cp["attempts"])
+            return {"identity": expected}
+        except SandboxExpired:
+            await replace_expired_sandbox(run, cp)
+            if recovery:
+                raise Pause("The CAD environment expired during staging. The candidate is saved.") from None
+
+
 async def validate_built_candidate(run, cp, limits, key, *, snapshot=None,
-                                   metadata=None, step_files=None):
+                                   metadata=None, step_files=None, defer_upload=False):
     """Validate a completed builder from another durable graph transition.
 
     STEP bytes stay in the builder sandbox until this transition and never
@@ -388,10 +435,58 @@ async def validate_built_candidate(run, cp, limits, key, *, snapshot=None,
             raise Pause("The generated STEP files exceed the transfer limit.")
         step_files = dict(zip(names, contents))
     return await validate_step_candidate(run, cp, snapshot, metadata,
-                                         step_files, limits, key)
+                                         step_files, limits, key,
+                                         defer_upload=defer_upload)
 
 
-async def validate_step_candidate(run, cp, snapshot, metadata, step_files, limits, key):
+async def transfer_validated_artifacts(run, cp, report, limits, artifacts=None):
+    """Transfer a bounded slice using immutable content-addressed paths."""
+    expected = identity(cp["snapshot"], cp["requirements"])
+    validator = cp["validator"]
+
+    async def transfer_artifact(artifact):
+        content = await executor().read(validator, artifact["name"])
+        if len(content) != artifact["bytes"] or len(content) > limits.maxArtifactBytes:
+            raise ExecutionFailure("Artifact size validation failed")
+        from hashlib import sha256
+        content_hash = sha256(content).hexdigest()
+        suffix = f"{digest(expected)}/{content_hash}/" if run.get("harness_version", 3) >= 4 else ""
+        storage_path = f"{run['owner_id']}/{run['project_id']}/{run['id']}/{expected['candidate']}/{suffix}{artifact['name']}"
+        from .services.receipts import fence
+        owner = fence(run)
+        if owner:
+            await db.rpc('stage_research_artifact', {**owner,
+                'p_project': run['project_id'], 'p_path': storage_path,
+                'p_bytes': len(content)})
+        else:
+            await db.insert("artifact_staging", {"storage_path": storage_path, "run_id": run["id"],
+                "project_id": run["project_id"], "bytes": len(content)}, conflict="storage_path")
+        await db.storage(f"object/cad-private/{db.object_path(storage_path)}", "POST", content=content,
+            content_type={"glb": "model/gltf-binary", "step": "application/step",
+                          "json": "application/json", "csv": "text/csv", "svg": "image/svg+xml",
+                          "pdf": "application/pdf", "dxf": "image/vnd.dxf"}.get(
+                artifact["name"].rsplit(".", 1)[-1], "application/octet-stream"))
+        return {**artifact, "storagePath": storage_path, "contentHash": content_hash}
+
+    return await bounded_operations(
+        report["artifacts"] if artifacts is None else artifacts,
+        4 if run.get("harness_version", 3) >= 4 else 1,
+        transfer_artifact,
+    )
+
+
+async def record_validated_candidate(run, cp, report, artifacts, *, elapsed_ms=None):
+    expected = identity(cp["snapshot"], cp["requirements"])
+    cp["validated"] = {"identity": expected, "report": report, "artifacts": artifacts}
+    cp.pop("lastFailedCandidate", None)
+    readiness = ("Draft ready for human review" if cp.get("buildFinal", True)
+                 else "Intermediate assembly milestone built; continue adding requested parts")
+    await repo.event(run["id"], f"Attempt {cp['attempts']} passed CAD integrity checks. {readiness}; {sum(r['status']=='passed' for r in report.get('requirements', []))} automated requirement checks passed.",
+        kind="validation", stage="validation", attempt=cp["attempts"], elapsed_ms=elapsed_ms)
+
+
+async def validate_step_candidate(run, cp, snapshot, metadata, step_files, limits, key,
+                                  *, defer_upload=False):
     """Shared fresh STEP gate for CAD builds and source-free drawing generation."""
     expected = identity(snapshot, cp["requirements"])
     # One fresh validator for this candidate; no Python source or builder memory crosses over.
@@ -403,7 +498,10 @@ async def validate_step_candidate(run, cp, snapshot, metadata, step_files, limit
             limits.monthlySandboxSeconds)
         if not reserved:
             raise Pause("The monthly validation budget is exhausted. The candidate was not published.")
-    await executor().create(validator, lifetime=limits.commandTimeoutSeconds + 60)
+    await executor().create(validator, lifetime=(1800 if defer_upload
+                            else limits.commandTimeoutSeconds + 60))
+    release_on_exit = True
+    report = None
     try:
         await executor().stage(validator, {**metadata, **step_files})
         receipt = await executor().execute(validator, "validate", limits.commandTimeoutSeconds)
@@ -426,47 +524,21 @@ async def validate_step_candidate(run, cp, snapshot, metadata, step_files, limit
         # Requirement measurements are advisory evidence for the human reviewer.
         # The build and artifact identity/format checks above remain mandatory,
         # but an unsupported or failed measurement must not hide a usable draft.
-        async def transfer_artifact(artifact):
-            content = await executor().read(validator, artifact["name"])
-            if len(content) != artifact["bytes"] or len(content) > limits.maxArtifactBytes:
-                raise ExecutionFailure("Artifact size validation failed")
-            from hashlib import sha256
-            content_hash = sha256(content).hexdigest()
-            suffix = f"{digest(expected)}/{content_hash}/" if run.get("harness_version",3)>=4 else ""
-            storage_path = f"{run['owner_id']}/{run['project_id']}/{run['id']}/{expected['candidate']}/{suffix}{artifact['name']}"
-            from .services.receipts import fence
-            owner = fence(run)
-            if owner:
-                await db.rpc('stage_research_artifact', {**owner,
-                    'p_project': run['project_id'], 'p_path': storage_path,
-                    'p_bytes': len(content)})
-            else:
-                await db.insert("artifact_staging", {"storage_path": storage_path, "run_id": run["id"],
-                    "project_id": run["project_id"], "bytes": len(content)}, conflict="storage_path")
-            await db.storage(f"object/cad-private/{db.object_path(storage_path)}", "POST", content=content,
-                content_type={"glb": "model/gltf-binary", "step": "application/step",
-                              "json": "application/json", "csv": "text/csv", "svg": "image/svg+xml",
-                              "pdf": "application/pdf", "dxf": "image/vnd.dxf"}.get(
-                    artifact["name"].rsplit(".", 1)[-1], "application/octet-stream"))
-            return {**artifact, "storagePath": storage_path, "contentHash": content_hash}
-
-        artifacts = await bounded_operations(
-            report["artifacts"], 4 if run.get("harness_version", 3) >= 4 else 1,
-            transfer_artifact,
-        )
-        cp["validated"] = {"identity": expected, "report": report, "artifacts": artifacts}
-        cp.pop("lastFailedCandidate", None)
-        readiness = ("Draft ready for human review" if cp.get("buildFinal", True)
-                     else "Intermediate assembly milestone built; continue adding requested parts")
-        await repo.event(run["id"], f"Attempt {cp['attempts']} passed CAD integrity checks. {readiness}; {sum(r['status']=='passed' for r in report.get('requirements', []))} automated requirement checks passed.",
-            kind="validation", stage="validation", attempt=cp["attempts"], elapsed_ms=(time.time_ns()-started)/1e6)
+        if defer_upload:
+            release_on_exit = False
+            return report
+        artifacts = await transfer_validated_artifacts(run, cp, report, limits)
+        await record_validated_candidate(run, cp, report, artifacts,
+                                         elapsed_ms=(time.time_ns()-started)/1e6)
         return report
     finally:
         from .maintenance import release_sandbox
-        await release_sandbox(validator)
-        cp.pop("validator", None)
+        if release_on_exit:
+            await release_sandbox(validator)
+            cp.pop("validator", None)
         await tracing.record(run, f"{key}:validation", "Independent STEP validation", started,
-            outputs=cp.get("validated", {}).get("report", {"passed": False}), attributes={"attempt": cp["attempts"], "candidate.hash": expected["candidate"]})
+            outputs=cp.get("validated", {}).get("report", report or {"passed": False}),
+            attributes={"attempt": cp["attempts"], "candidate.hash": expected["candidate"]})
 
 
 async def reject_candidate(run, cp, expected, error, limits):

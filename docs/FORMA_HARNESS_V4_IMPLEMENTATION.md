@@ -606,6 +606,22 @@ the hosted qualification section above supersedes its deployment status.
   the graph still calls the combined path, so the 300-second hosted risk and
   agentic acceptance remain open. Next wire keyed start/poll, completed-build
   validation, and batched artifact publication into distinct durable nodes.
+- The guarded v4 graph now has separate durable transitions for candidate
+  staging, keyed CAD process start, receipt polling, independent STEP
+  validation, groups of at most 16 artifact transfers, and final evidence
+  recording. A running CAD process schedules another workflow turn instead of
+  occupying the hosted function. An interrupted start first reconciles the
+  exact process key and never blindly submits another command. Artifact paths
+  remain content addressed and completed transfer receipts replay by candidate
+  and batch identity. The v3 graph still uses its prior path. Local API tests
+  passed 477/477, including a 17-artifact two-batch transition and ambiguous
+  start recovery; touched Python files passed Ruff and whitespace checks.
+  This implementation is **not yet hosted qualified**: the new runtime snapshot
+  is not selected by the isolated preview, and the 60-distinct hosted graph
+  build has not run. Next deploy the guarded preview with the new runtime,
+  exercise the transitions across real workflow invocations, inspect the
+  independently reopened STEP and artifact receipts, then assess whether the
+  validator phase stays under the 300-second function limit.
 - The committed project acceptance plan persists across runs. Sourced amendments and
   a matching base version are required to change or retire requirements/deliverables.
   Focused delegation cannot replace the full inventory. V4 bypasses legacy keyword

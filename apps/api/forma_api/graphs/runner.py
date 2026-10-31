@@ -9,7 +9,7 @@ from vercel import workflow
 from .. import db, repository as repo
 from ..config import settings
 from ..contracts import TERMINAL
-from ..engine import Pause, ProviderDeferred
+from ..engine import OperationPending, Pause, ProviderDeferred
 from ..providers.openrouter import ModelFailure
 from ..services.checkpoints import checkpoint_saver
 from ..services import runs as run_service
@@ -104,8 +104,9 @@ async def advance_graph(run_id: str, worker: str, resume: dict | None = None) ->
                 graph_input = None
             try:
                 result = await graph.ainvoke(graph_input, config)
-            except ProviderDeferred as exc:
-                await repo.event(run_id,str(exc),stage="provider")
+            except (ProviderDeferred, OperationPending) as exc:
+                await repo.event(run_id, str(exc),
+                                 stage="provider" if isinstance(exc, ProviderDeferred) else "execution")
                 return f"wait:{exc.seconds}:{claimed}" if research else f"wait:{exc.seconds}"
             except (Pause, ModelFailure) as exc:
                 # Expected bounded stops are part of the product state, not

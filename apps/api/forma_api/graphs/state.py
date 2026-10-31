@@ -46,6 +46,11 @@ class AgentState(TypedDict, total=False):
     candidate_hash: str
     candidate_summary: str
     build_result: dict[str, Any]
+    build_request_key: str
+    build_process_id: str
+    validation_report: dict[str, Any]
+    artifact_cursor: int
+    artifact_receipts: list[dict[str, Any]]
     cad_last_build_failure: dict[str, Any]
     cad_component_probe_failures: list[str]
     build_final: bool

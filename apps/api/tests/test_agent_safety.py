@@ -5,8 +5,8 @@ import pytest
 
 from forma_api import engine
 from forma_api.contracts import AppSettings, Snapshot
-from forma_api.execution import build_error, identity
-from forma_api.models import completion_settings, select_config, free_tool_model, failure
+from forma_api.execution import ExecutionFailure, SandboxExpired, build_error, identity
+from forma_api.models import completion_settings, select_config, free_tool_model
 from forma_api.requirements import design_work_requested, explicit_requirements
 
 
@@ -161,6 +161,52 @@ async def test_completed_operation_replays_result_without_reexecution(monkeypatc
     monkeypatch.setattr(engine.db, "one", one)
     async def unexpected(): raise AssertionError("must not execute")
     assert await engine.operation({"id": "run"}, "model:1", "model", unexpected) == {"ok": True}
+
+
+@pytest.mark.asyncio
+async def test_started_external_operation_recovers_exact_receipt_without_replay(monkeypatch):
+    async def one(*_args, **_kwargs):
+        return {"status": "started", "result": None}
+
+    updates = []
+
+    async def update(*args, **kwargs):
+        updates.append((args, kwargs))
+        return []
+
+    async def unexpected():
+        raise AssertionError("remote command must not start twice")
+
+    async def reconcile():
+        return {"processId": "existing-command"}
+
+    monkeypatch.setattr(engine.db, "one", one)
+    monkeypatch.setattr(engine.db, "update", update)
+    result = await engine.operation({"id": "run"}, "cad:start", "cad_start",
+        unexpected, input_identity={"candidate": "A"}, reconcile=reconcile)
+    assert result == {"processId": "existing-command"}
+    assert updates[-1][0][1]["status"] == "complete"
+
+
+@pytest.mark.asyncio
+async def test_unresolved_external_operation_cannot_restart(monkeypatch):
+    async def one(*_args, **_kwargs):
+        return {"status": "ambiguous", "result": None}
+
+    async def update(*_args, **_kwargs):
+        return []
+
+    async def unexpected():
+        raise AssertionError("remote command must not restart")
+
+    async def reconcile():
+        return None
+
+    monkeypatch.setattr(engine.db, "one", one)
+    monkeypatch.setattr(engine.db, "update", update)
+    with pytest.raises(engine.Pause, match="must be inspected"):
+        await engine.operation({"id": "run"}, "cad:start", "cad_start",
+            unexpected, input_identity={"candidate": "A"}, reconcile=reconcile)
 
 
 def test_specialists_inherit_only_a_tested_active_default():
@@ -510,7 +556,6 @@ def test_assembly_requirements_bind_unscoped_part_dimensions_by_name():
     bound = bind_requirements_to_manifest(requirements, manifest)
     assert [item["componentId"] for item in bound] == ["base_shell", "pcb"]
 
-from forma_api.execution import ExecutionFailure, SandboxExpired, build_error, identity
 
 
 @pytest.mark.asyncio

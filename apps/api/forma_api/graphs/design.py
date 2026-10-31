@@ -15,8 +15,12 @@ from pydantic import Field, ValidationError, field_validator
 
 from .. import db, models, repository as repo
 from ..contracts import AppSettings, Contract, Manifest, Requirement, SafeId, Snapshot, SourcePath, Vector, safe_path
-from ..engine import Pause, build_candidate, destroy_sandboxes, execute_tool, operation
-from ..execution import digest, identity, normalize_python_source
+from ..engine import (Pause, OperationPending, build_candidate, build_error,
+                      destroy_sandboxes, execute_tool, operation, reject_candidate,
+                      record_validated_candidate, replace_expired_sandbox,
+                      stage_build_candidate, transfer_validated_artifacts,
+                      validate_built_candidate)
+from ..execution import SandboxExpired, digest, executor, identity, normalize_python_source
 from ..prompts import VERSION as PROMPT_VERSION, system_prompt
 from ..providers.openrouter import ModelFailure
 from ..requirements import design_work_requested, merge_requirements
@@ -2276,6 +2280,22 @@ async def build(state: AgentState) -> dict:
     limits = (await app_settings()).limits
     snapshot = await run_service.load_candidate(state["run_id"])
     cp = checkpoint_view(state, snapshot)
+    if state.get("harness_version", 3) >= 4:
+        expected = identity(snapshot, cp["requirements"])
+        suffix = digest(expected)[:8]
+        cp["sandbox"] = cp.get("sandbox") or f"forma-{UUID(run['id']).hex}-cad-{suffix}"
+        cp["validator"] = f"forma-{UUID(run['id']).hex}-validator-{suffix}"
+        cp["buildFinal"] = state.get("build_final", True)
+        staged = await stage_build_candidate(run, cp, limits)
+        if "reused" in staged:
+            return {**sync_checkpoint(cp), "phase": "validate", "build_result": staged["reused"]}
+        if staged.get("identity") != expected:
+            raise Pause("The staged CAD inputs do not match the saved candidate.")
+        request_key = digest({"run": run["id"], "attempt": cp["attempts"],
+                              "candidate": expected, "operation": "build"})
+        return {**sync_checkpoint(cp), "phase": "build_start",
+                "build_request_key": request_key, "artifact_cursor": 0,
+                "artifact_receipts": [], "validation_report": {}}
     cp["sandbox"] = cp.get("sandbox") or sandbox_name(run["id"], "cad")
     cp["validator"] = sandbox_name(run["id"], "validator")
     cp["buildFinal"] = state.get("build_final", True)
@@ -2315,6 +2335,142 @@ async def build(state: AgentState) -> dict:
         "build_final": state.get("build_final", True),
         "requested_part_types": state.get("requested_part_types", 0),
         "built_part_types": state.get("built_part_types", 0)}
+
+
+async def build_start(state: AgentState) -> dict:
+    run = await run_row(state)
+    limits = (await app_settings()).limits
+    request_key = state["build_request_key"]
+    name = state["sandbox"]
+    snapshot = await run_service.load_candidate(state["run_id"])
+    expected = identity(snapshot, state["requirements"])
+    if request_key != digest({"run": run["id"], "attempt": state["attempts"],
+                              "candidate": expected, "operation": "build"}):
+        raise Pause("The staged CAD command belongs to a different candidate.")
+
+    async def start():
+        return await executor().start_execution(name, "build", limits.commandTimeoutSeconds,
+                                                 request_key=request_key)
+
+    async def reconcile():
+        process_id = await executor().find_execution(name, request_key)
+        return {"sandbox": name, "processId": process_id, "status": "recovered"}
+
+    result = await operation(run, f"cad:start:{request_key}", "cad_start", start,
+                             input_identity=expected, reconcile=reconcile)
+    return {"phase": "build_poll", "build_process_id": result["processId"]}
+
+
+async def build_poll(state: AgentState) -> dict:
+    run = await run_row(state)
+    limits = (await app_settings()).limits
+    snapshot = await run_service.load_candidate(state["run_id"])
+    cp = checkpoint_view(state, snapshot)
+    cp["buildFinal"] = state.get("build_final", True)
+    expected = identity(snapshot, cp["requirements"])
+    request_key = state["build_request_key"]
+    if request_key != digest({"run": run["id"], "attempt": cp["attempts"],
+                              "candidate": expected, "operation": "build"}):
+        raise Pause("The CAD result belongs to a different candidate.")
+    try:
+        status = await executor().inspect_execution(cp["sandbox"], state["build_process_id"],
+                                                     request_key=request_key)
+    except SandboxExpired:
+        await replace_expired_sandbox(run, cp)
+        return {**sync_checkpoint(cp), "phase": "build"}
+    if status["status"] == "running":
+        raise OperationPending()
+    if status["status"] != "complete":
+        raise Pause("The CAD process exited without a verified supervisor receipt. Inspect the saved command.")
+    receipt = status["receipt"]
+    if receipt.get("identity") != expected:
+        raise Pause("The CAD receipt identity does not match the staged candidate.")
+    if receipt["exitCode"] or not receipt["clean"] or receipt["timedOut"]:
+        if not receipt["clean"] or receipt["timedOut"]:
+            await destroy_sandboxes(cp)
+        result = await reject_candidate(run, cp, expected, build_error(receipt, "build"), limits)
+        return {**sync_checkpoint(cp), "phase": "validate", "build_result": result}
+    return {"phase": "build_validation"}
+
+
+async def build_validation(state: AgentState) -> dict:
+    run = await run_row(state)
+    limits = (await app_settings()).limits
+    snapshot = await run_service.load_candidate(state["run_id"])
+    cp = checkpoint_view(state, snapshot)
+    cp["buildFinal"] = state.get("build_final", True)
+    expected = identity(snapshot, cp["requirements"])
+    key = f"graph:build-validation:{state['build_request_key']}"
+
+    async def validate_completed():
+        result = await validate_built_candidate(run, cp, limits, key, defer_upload=True)
+        return {"result": result, "checkpoint": cp}
+
+    try:
+        output = await operation(run, key, "build_validation", validate_completed,
+                                 idempotent=True, input_identity=expected)
+    except SandboxExpired:
+        await replace_expired_sandbox(run, cp)
+        return {**sync_checkpoint(cp), "phase": "build"}
+    result = output["result"]
+    if result.get("ok") is False:
+        return {**sync_checkpoint(output["checkpoint"]), "phase": "validate",
+                "build_result": result, "cad_recovery_build_required": False}
+    return {**sync_checkpoint(output["checkpoint"]), "phase": "build_artifacts",
+            "validation_report": result, "artifact_cursor": 0, "artifact_receipts": []}
+
+
+async def build_artifacts(state: AgentState) -> dict:
+    run = await run_row(state)
+    limits = (await app_settings()).limits
+    snapshot = await run_service.load_candidate(state["run_id"])
+    cp = checkpoint_view(state, snapshot)
+    report = state["validation_report"]
+    expected = identity(snapshot, cp["requirements"])
+    if report.get("identity") != expected:
+        raise Pause("The artifact report belongs to another candidate or runtime.")
+    cursor = state.get("artifact_cursor", 0)
+    all_artifacts = report["artifacts"]
+    if not isinstance(cursor, int) or cursor < 0 or cursor > len(all_artifacts):
+        raise Pause("The saved artifact cursor is invalid.")
+    batch = all_artifacts[cursor:cursor + 16]
+    key = f"graph:artifact-transfer:{state['build_request_key']}:{cursor}"
+
+    async def transfer():
+        return await transfer_validated_artifacts(run, cp, report, limits, batch)
+
+    try:
+        receipts = await operation(run, key, "artifact_transfer", transfer,
+            idempotent=True, input_identity={"candidate": expected, "artifacts": batch})
+    except SandboxExpired:
+        await destroy_sandboxes(cp)
+        return {**sync_checkpoint(cp), "phase": "build", "artifact_cursor": 0,
+                "artifact_receipts": [], "validation_report": {}}
+    if len(receipts) != len(batch):
+        raise Pause("The artifact transfer receipt is incomplete.")
+    next_cursor = cursor + len(receipts)
+    return {"phase": "build_finalize" if next_cursor == len(all_artifacts) else "build_artifacts",
+            "artifact_cursor": next_cursor,
+            "artifact_receipts": [*(state.get("artifact_receipts") or []), *receipts]}
+
+
+async def build_finalize(state: AgentState) -> dict:
+    run = await run_row(state)
+    snapshot = await run_service.load_candidate(state["run_id"])
+    cp = checkpoint_view(state, snapshot)
+    cp["buildFinal"] = state.get("build_final", True)
+    report = state["validation_report"]
+    artifacts = state["artifact_receipts"]
+    if (report.get("identity") != identity(snapshot, cp["requirements"])
+            or len(artifacts) != len(report["artifacts"])
+            or [a["name"] for a in artifacts] != [a["name"] for a in report["artifacts"]]):
+        raise Pause("The completed artifact set does not match the validated candidate.")
+    await record_validated_candidate(run, cp, report, artifacts)
+    from ..maintenance import release_sandbox
+    await release_sandbox(cp["validator"])
+    cp.pop("validator", None)
+    return {**sync_checkpoint(cp), "phase": "validate", "build_result": report,
+            "cad_recovery_build_required": False}
 
 
 async def probe_component(state: AgentState, snapshot: dict, call: dict, history: list, component_id: str) -> dict:
@@ -2996,7 +3152,10 @@ def build_graph(checkpointer):
         ("coordinator_question", coordinator_question), ("engineering_triage", engineering_triage),
         ("clarification", clarification), ("cad_session", cad_session),
         ("cad_question", cad_question), ("engineering_analysis", engineering_analysis),
-        ("approval", approval), ("build", build), ("validate", validate), ("cad_recovery", cad_recovery), ("cad_replan", cad_replan),
+        ("approval", approval), ("build", build), ("build_start", build_start),
+        ("build_poll", build_poll), ("build_validation", build_validation),
+        ("build_artifacts", build_artifacts), ("build_finalize", build_finalize),
+        ("validate", validate), ("cad_recovery", cad_recovery), ("cad_replan", cad_replan),
         ("review_session", review_session), ("publish", publish), ("final", final),
         ("drawing_prepare",drawing_prepare),("drawing_build",drawing_build)):
         # Interrupt nodes have no external effects before receiving the human
@@ -3032,7 +3191,17 @@ def build_graph(checkpointer):
          "approval": "approval", "final": "final"})
     graph.add_conditional_edges("approval", phase_route,
         {"cad_session": "cad_session", "coordinator_session": "coordinator_session", "final": "final"})
-    graph.add_edge("build", "validate")
+    graph.add_conditional_edges("build", phase_route,
+        {"build_start": "build_start", "validate": "validate"})
+    graph.add_edge("build_start", "build_poll")
+    graph.add_conditional_edges("build_poll", phase_route,
+        {"build": "build", "build_validation": "build_validation", "validate": "validate"})
+    graph.add_conditional_edges("build_validation", phase_route,
+        {"build": "build", "build_artifacts": "build_artifacts", "validate": "validate"})
+    graph.add_conditional_edges("build_artifacts", phase_route,
+        {"build": "build", "build_artifacts": "build_artifacts",
+         "build_finalize": "build_finalize"})
+    graph.add_edge("build_finalize", "validate")
     graph.add_edge("cad_recovery", "cad_session")
     graph.add_conditional_edges("cad_replan", phase_route,
         {"cad_session": "cad_session", "cad_replan": "cad_replan", "cad_recovery": "cad_recovery",

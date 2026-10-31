@@ -55,7 +55,9 @@ async def test_validation_reopens_step_from_builder_without_checkpointing_bytes(
             assert (sandbox, filename) == ("builder", "block.step")
             return b"independent STEP bytes"
 
-    async def validate(_run, _checkpoint, _snapshot, metadata, step_files, _limits, _key):
+    async def validate(_run, _checkpoint, _snapshot, metadata, step_files, _limits, _key,
+                       *, defer_upload):
+        assert defer_upload is False
         captured.update(metadata=metadata, step_files=step_files)
         return {"ok": True}
 
