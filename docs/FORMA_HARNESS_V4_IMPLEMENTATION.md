@@ -732,17 +732,26 @@ the hosted qualification section above supersedes its deployment status.
   `dpl_5piNrMCGqEhCau6vexCGzBsKiduq` reached Ready and received the public
   Forma alias; public `/api/health` and `/` returned HTTP 200. A read-only
   production REST check returned zero queued or running runs before and after
-  deployment. The production CAD runtime remains the previous version and v4
-  remains off as the public default. This does not qualify an engineering result.
+  deployment. V4 remains off as the public default. This does not qualify an
+  engineering result.
+- With zero queued or running production runs, the separately qualified CAD
+  runtime snapshot `snap_ToWrByRI8FTr6ByIzZXoRGzUfdM6` /
+  `forma-3d2cd65f6221f144` was selected for production deployment
+  `dpl_EfDkzotn7FtWZyohPg6mgWx46QWW`. That deployment reached Ready and
+  received the public Forma alias; `/api/health` and `/` returned HTTP 200.
+  Production REST again returned zero queued or running runs. Its native engine
+  and packages match the prior runtime, its 80 native tests passed, and its
+  isolated hosted 60-distinct build and independently reopened artifacts passed
+  as recorded above. The new runtime is now live behind the v4 guard; it has
+  **not** passed the agentic pump, agentic 60-part or acceptance corpus gates.
 
 ### Remaining before any default rollout
 
-- Before promoting the new CAD runtime in production, recheck active legacy
-  workflows and leases. The direct production database connection timed out on
-  2026-11-01, but the authenticated production REST read succeeded and found
-  zero queued or running runs before and after the source-only guarded deployment.
-  No CAD runtime promotion was made; paused legacy successors still require a
-  verified safe boundary.
+- Recheck active legacy workflows and leases before any further runtime change
+  or paused-run successor import. The direct production database connection
+  timed out on 2026-11-01, but authenticated production REST reads succeeded
+  and found zero queued or running runs before and after both guarded deployments.
+  Paused legacy successors still require a verified safe boundary.
 - Qualify provider-switch/resume using real OpenRouter and Nebius connections, including
   model identity, data handling and difficult-task competence. Local mocked transport
   checks do not establish model competence.
