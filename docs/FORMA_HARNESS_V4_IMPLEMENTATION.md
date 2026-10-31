@@ -727,15 +727,22 @@ the hosted qualification section above supersedes its deployment status.
   delegation and sandbox paths, plus the v4 publication history, were made
   null-safe. A draft or fresh checkpoint can store `validated: null`; treating
   it as a mapping could crash the next action. The targeted recovery and graph
-  suite passed 97/97, and `git diff --check` passed. This change is source-only
-  pending a guarded deployment; it does not qualify an engineering result.
+  suite passed 97/97, Ruff and `git diff --check` passed. Source commit
+  `b691f1c` was pushed. Production deployment
+  `dpl_5piNrMCGqEhCau6vexCGzBsKiduq` reached Ready and received the public
+  Forma alias; public `/api/health` and `/` returned HTTP 200. A read-only
+  production REST check returned zero queued or running runs before and after
+  deployment. The production CAD runtime remains the previous version and v4
+  remains off as the public default. This does not qualify an engineering result.
 
 ### Remaining before any default rollout
 
 - Before promoting the new CAD runtime in production, recheck active legacy
-  workflows and leases against the production database; the read-only check on
-  2026-11-01 could not establish a database connection and no promotion was made.
-  Deploy the nullable-checkpoint fix under the guard and verify production health.
+  workflows and leases. The direct production database connection timed out on
+  2026-11-01, but the authenticated production REST read succeeded and found
+  zero queued or running runs before and after the source-only guarded deployment.
+  No CAD runtime promotion was made; paused legacy successors still require a
+  verified safe boundary.
 - Qualify provider-switch/resume using real OpenRouter and Nebius connections, including
   model identity, data handling and difficult-task competence. Local mocked transport
   checks do not establish model competence.
