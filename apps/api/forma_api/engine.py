@@ -537,7 +537,7 @@ async def validate_step_candidate(run, cp, snapshot, metadata, step_files, limit
             await release_sandbox(validator)
             cp.pop("validator", None)
         await tracing.record(run, f"{key}:validation", "Independent STEP validation", started,
-            outputs=cp.get("validated", {}).get("report", report or {"passed": False}),
+            outputs=(cp.get("validated") or {}).get("report", report or {"passed": False}),
             attributes={"attempt": cp["attempts"], "candidate.hash": expected["candidate"]})
 
 

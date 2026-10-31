@@ -132,7 +132,7 @@ async def test_deferred_validation_retains_validator_until_artifact_phase(monkey
     expected = identity(snapshot, [])
     report = {"identity": expected, "artifacts": []}
     checkpoint = {"snapshot": snapshot, "requirements": [], "validator": "validator",
-                  "attempts": 1}
+                  "validated": None, "attempts": 1}
     calls = []
 
     class Validator:

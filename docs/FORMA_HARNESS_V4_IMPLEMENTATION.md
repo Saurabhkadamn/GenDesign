@@ -636,6 +636,23 @@ the hosted qualification section above supersedes its deployment status.
   it is excluded from all evaluation evidence. Neither saved run was resumed.
   The hosted 60-distinct graph build and independent artifact inspection are
   still required before production runtime promotion or default-v4 release.
+- A fresh 60-distinct deterministic fixture was staged in the isolated
+  evaluation database as run `4bbab69e-30e4-59a6-a41b-7615f5c6049e` with
+  61 component definitions and 60 instances. The first hosted dispatch
+  reached no CAD work because a synthetic initial checkpoint plus an explicit
+  Continue triggered a LangGraph ambiguous-update error; it paused safely.
+  The same run was resumed through the durable dispatch outbox without that
+  unnecessary resume update. Hosted staging, keyed process start and receipt
+  polling then completed, with zero model calls. Independent validation exposed
+  a null-handling defect in the validation trace cleanup: its optional
+  `validated` checkpoint field was `None`, and the trace path called `.get`
+  on it. The run paused without accepting or publishing the fixture; its
+  completed build receipts and process identity remain saved. A focused
+  regression now supplies `validated=None`, and the trace path handles it.
+  Next deploy this small fix to the isolated preview, continue the same paused
+  fixture at its safe boundary, and verify the validator and batched artifact
+  phases plus reopened STEP files. This is still deterministic fixture
+  qualification, not the agentic 60-part evaluation.
 - The committed project acceptance plan persists across runs. Sourced amendments and
   a matching base version are required to change or retire requirements/deliverables.
   Focused delegation cannot replace the full inventory. V4 bypasses legacy keyword
