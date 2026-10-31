@@ -539,6 +539,23 @@ the hosted qualification section above supersedes its deployment status.
   application adapters, **not** agentic generation of 60 unique parts or the
   pump task. V4's production operation wrapper has its own fenced lease
   heartbeat; the expired lease here was in the deterministic legacy verifier.
+- The 60-unique-part fixture exposed a **hosted execution boundary** still
+  missing from v4. Its saved event timestamps show the second attempt entered
+  `build_candidate` at 10:14:19 UTC and reached validated draft evidence at
+  10:19:49 UTC, about 329.5 seconds later, before publication or artifact
+  downloads. `vercel.json` configures the Python API function for 300 seconds;
+  [Vercel's function duration documentation](https://vercel.com/docs/functions/configuring-functions/duration)
+  says Hobby functions terminate at that limit. The isolated verification
+  script ran locally, so its success does **not** establish that the hosted v4
+  graph can complete the same workload. V4's fenced lease heartbeat protects
+  database ownership but cannot extend a function invocation. The next R8
+  implementation must split staging, Sandbox execution, fresh STEP validation,
+  and artifact transfer into separately receipted workflow operations below
+  the function limit. A process started in Sandbox must be identified and
+  reattached after a scheduling boundary; ambiguous outcomes must be inspected
+  before replay. Each artifact transfer needs a stable identity and receipt.
+  Keep the existing valid draft and paused agentic runs intact while this is
+  implemented and qualified on the isolated preview.
 - The committed project acceptance plan persists across runs. Sourced amendments and
   a matching base version are required to change or retire requirements/deliverables.
   Focused delegation cannot replace the full inventory. V4 bypasses legacy keyword
@@ -595,7 +612,9 @@ the hosted qualification section above supersedes its deployment status.
 - Finish expired/ambiguous scheduler reconciliation and safe successor import of paused
   legacy work. Do not
   change active legacy checkpoints or runtimes. Verify that human amendments after
-  checkpoint loss cannot duplicate already committed effects.
+  checkpoint loss cannot duplicate already committed effects. Split long CAD
+  builds and multi-artifact transfers at the hosted 300-second function boundary
+  as described above before claiming large assemblies work agentically.
 - Add selective dependency-based evidence invalidation, versioned documentation and
   standard-part provenance, and immutable component caching. Do not reuse geometry
   merely because only calculation files changed: CAD may dynamically depend on them.
