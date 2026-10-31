@@ -572,6 +572,14 @@ the hosted qualification section above supersedes its deployment status.
   stage/execute/validate/upload as separate durable graph operations, confirm
   process/receipt identity and cancellation across a function boundary, and
   then rerun the unique-part hosted acceptance.
+- For v4 candidates, independent STEP reads and validator-artifact transfers
+  now use bounded concurrency of four; result order and the 120 MB transfer
+  guard remain intact. Sibling transfers settle before a failure releases the
+  validator, and the legacy v3 path retains sequential fail-fast behavior.
+  Targeted transfer, assembly and sandbox-recovery tests passed 19/19 with
+  Ruff and whitespace checks clean. This reduces time spent moving many
+  immutable files but has not yet been measured in a hosted v4 build. It does
+  not replace the required durable phase split or remove the 300-second risk.
 - The committed project acceptance plan persists across runs. Sourced amendments and
   a matching base version are required to change or retire requirements/deliverables.
   Focused delegation cannot replace the full inventory. V4 bypasses legacy keyword

@@ -27,6 +27,23 @@ class ProviderDeferred(Pause):
         super().__init__(f"Provider requested a cooldown of {self.seconds} seconds; saved work will resume automatically.")
 
 
+async def bounded_operations(items, limit, action):
+    """Keep independent transfers bounded and wait for every sibling on failure."""
+    if limit == 1:
+        return [await action(item) for item in items]
+    semaphore = asyncio.Semaphore(limit)
+
+    async def run(item):
+        async with semaphore:
+            return await action(item)
+
+    results = await asyncio.gather(*(run(item) for item in items), return_exceptions=True)
+    for result in results:
+        if isinstance(result, BaseException):
+            raise result
+    return results
+
+
 async def operation(run, key, kind, callback, *, idempotent=False, input_identity=None):
     from .services.research_execution import fenced_operation
     from .services.runs import lease_context
@@ -310,14 +327,15 @@ async def build_candidate(run, cp, limits, key):
                 raise ExecutionFailure("Build identity mismatch; stale output rejected")
             if receipt["exitCode"] or not receipt["clean"] or receipt["timedOut"]:
                 break
-            step_files, total = {}, 0
-            for component in snapshot["manifest"]["components"]:
-                name = component["id"] + ".step"
-                content = await executor().read(cp["sandbox"], name)
-                total += len(content)
-                if total > 120 * 1024 * 1024:
-                    raise Pause("The generated STEP files exceed the transfer limit.")
-                step_files[name] = content
+            names = [component["id"] + ".step" for component in snapshot["manifest"]["components"]]
+
+            async def read_step(name):
+                return await executor().read(cp["sandbox"], name)
+
+            contents = await bounded_operations(names, 4 if run.get("harness_version", 3) >= 4 else 1, read_step)
+            if sum(map(len, contents)) > 120 * 1024 * 1024:
+                raise Pause("The generated STEP files exceed the transfer limit.")
+            step_files = dict(zip(names, contents))
             break
         except SandboxExpired:
             await replace_expired_sandbox(run, cp)
@@ -378,8 +396,7 @@ async def validate_step_candidate(run, cp, snapshot, metadata, step_files, limit
         # Requirement measurements are advisory evidence for the human reviewer.
         # The build and artifact identity/format checks above remain mandatory,
         # but an unsupported or failed measurement must not hide a usable draft.
-        artifacts = []
-        for artifact in report["artifacts"]:
+        async def transfer_artifact(artifact):
             content = await executor().read(validator, artifact["name"])
             if len(content) != artifact["bytes"] or len(content) > limits.maxArtifactBytes:
                 raise ExecutionFailure("Artifact size validation failed")
@@ -401,7 +418,12 @@ async def validate_step_candidate(run, cp, snapshot, metadata, step_files, limit
                               "json": "application/json", "csv": "text/csv", "svg": "image/svg+xml",
                               "pdf": "application/pdf", "dxf": "image/vnd.dxf"}.get(
                     artifact["name"].rsplit(".", 1)[-1], "application/octet-stream"))
-            artifacts.append({**artifact, "storagePath": storage_path, "contentHash":content_hash})
+            return {**artifact, "storagePath": storage_path, "contentHash": content_hash}
+
+        artifacts = await bounded_operations(
+            report["artifacts"], 4 if run.get("harness_version", 3) >= 4 else 1,
+            transfer_artifact,
+        )
         cp["validated"] = {"identity": expected, "report": report, "artifacts": artifacts}
         cp.pop("lastFailedCandidate", None)
         readiness = ("Draft ready for human review" if cp.get("buildFinal", True)
