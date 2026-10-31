@@ -2,7 +2,7 @@ import pytest
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
-from forma_api.execution import VercelExecutor
+from forma_api.execution import ExecutionFailure, VercelExecutor
 
 
 @pytest.mark.asyncio
@@ -90,6 +90,7 @@ async def test_detached_cad_command_reconnects_using_receipt_when_sdk_status_is_
     from vercel import sandbox
 
     executor = VercelExecutor()
+    request_key = "a" * 64
     process = SimpleNamespace(id="process-1", status=sandbox.ProcessStatus.RUNNING,
                               returncode=None, args=["execute"])
 
@@ -127,21 +128,42 @@ async def test_detached_cad_command_reconnects_using_receipt_when_sdk_status_is_
         return Box()
 
     async def command(_box, args):
-        assert args == ["inspect"]
-        return {"exitCode": 0, "clean": True}
+        assert args == ["inspect", "--request-key", request_key]
+        return {"exitCode": 0, "clean": True, "requestKey": request_key}
 
     monkeypatch.setattr(executor, "sdk_session", session)
     monkeypatch.setattr(executor, "box", box)
     monkeypatch.setattr(executor, "command", command)
 
-    started = await executor.start_execution("cad-run", "build", 120)
+    started = await executor.start_execution("cad-run", "build", 120,
+                                             request_key=request_key)
     assert started["processId"] == "process-1"
     assert launched["kwargs"]["kill_after"] == 135
-    assert await executor.inspect_execution("cad-run", "process-1") == {
+    assert launched["args"][-2:] == ["--request-key", request_key]
+    assert await executor.inspect_execution("cad-run", "process-1", request_key) == {
         "status": "running", "processId": "process-1",
     }
     receipt_exists = True
-    assert await executor.inspect_execution("cad-run", "process-1") == {
+    assert await executor.inspect_execution("cad-run", "process-1", request_key) == {
         "status": "complete", "processId": "process-1",
-        "receipt": {"exitCode": 0, "clean": True},
+        "receipt": {"exitCode": 0, "clean": True, "requestKey": request_key},
     }
+
+
+@pytest.mark.asyncio
+async def test_uncertain_start_requires_one_process_with_matching_request_key(monkeypatch):
+    executor = VercelExecutor()
+    key = "b" * 64
+    processes = [{"processId": "old", "status": "exited",
+                  "args": ["/opt/forma/control.py", "execute", "--request-key", "a" * 64]},
+                 {"processId": "current", "status": "running",
+                  "args": ["/opt/forma/control.py", "execute", "--request-key", key]}]
+
+    async def list_processes(_name):
+        return processes
+
+    monkeypatch.setattr(executor, "list_execution_processes", list_processes)
+    assert await executor.find_execution("cad-run", key) == "current"
+    processes.append({**processes[-1], "processId": "duplicate"})
+    with pytest.raises(ExecutionFailure, match="ambiguous"):
+        await executor.find_execution("cad-run", key)

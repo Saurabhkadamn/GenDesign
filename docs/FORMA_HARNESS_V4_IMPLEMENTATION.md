@@ -580,6 +580,22 @@ the hosted qualification section above supersedes its deployment status.
   Ruff and whitespace checks clean. This reduces time spent moving many
   immutable files but has not yet been measured in a hosted v4 build. It does
   not replace the required durable phase split or remove the 300-second risk.
+- Detached CAD commands now accept a 64-character operation identity. The
+  sandbox supervisor writes it into an atomically replaced receipt, and the
+  host can recover exactly one matching process after an uncertain start.
+  Receipt inspection rejects a mismatched identity. A new runtime-only
+  snapshot `snap_ToWrByRI8FTr6ByIzZXoRGzUfdM6` /
+  `forma-3d2cd65f6221f144` preserved the qualified native engine/package
+  identity and passed all 80 native tests. Its initial build observer lost a
+  filesystem read after completed stages; the same named build was resumed
+  without replaying those stages. A separate host process then recovered a
+  real key-bound CAD command and independently read its 15,500-byte STEP;
+  evidence is in `D:\v1\test-results\harness-v4-detached-identity-20261031`
+  and `D:\v1\test-results\harness-v4-detached-key-probe-20261031`.
+  Four targeted adapter tests, Ruff, syntax and whitespace checks passed.
+  This snapshot is not selected by production or the isolated evaluation
+  preview yet. Next, connect these identities to separately checkpointed
+  build/validate/upload graph phases before switching the isolated preview.
 - The committed project acceptance plan persists across runs. Sourced amendments and
   a matching base version are required to change or retire requirements/deliverables.
   Focused delegation cannot replace the full inventory. V4 bypasses legacy keyword

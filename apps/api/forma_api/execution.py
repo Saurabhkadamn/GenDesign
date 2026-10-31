@@ -168,7 +168,7 @@ class VercelExecutor:
         async with self.sdk_session(read_timeout=read_timeout):
             return await self.command(await self.box(name), ["execute", "--operation", operation, "--timeout", str(timeout), "--path", path], timeout + 15)
 
-    async def start_execution(self, name, operation, timeout, path=""):
+    async def start_execution(self, name, operation, timeout, path="", request_key=""):
         """Start one CAD command without holding the caller until it finishes.
 
         The caller must persist the returned process ID before moving to another
@@ -179,6 +179,8 @@ class VercelExecutor:
             raise ExecutionFailure("Unsupported CAD operation")
         if not isinstance(timeout, int) or not 1 <= timeout <= 300:
             raise ExecutionFailure("CAD operation timeout is outside its isolated boundary")
+        if request_key and not re.fullmatch(r"[a-f0-9]{64}", request_key):
+            raise ExecutionFailure("Invalid CAD operation request key")
         from vercel import sandbox
 
         async with self.sdk_session(read_timeout=120):
@@ -202,15 +204,19 @@ class VercelExecutor:
             process = await box.create_process(
                 "/opt/forma/.venv/bin/python",
                 ["-I", "/opt/forma/control.py", "execute", "--operation", operation,
-                 "--timeout", str(timeout), "--path", path],
+                 "--timeout", str(timeout), "--path", path,
+                 *(["--request-key", request_key] if request_key else [])],
                 cwd="/", sudo=True, kill_after=timeout + 15,
             )
             return {"sandbox": name, "processId": process.id,
                     "status": "running" if process.status == sandbox.ProcessStatus.RUNNING else "exited"}
 
-    async def inspect_execution(self, name, process_id):
+    async def inspect_execution(self, name, process_id, request_key=""):
         """Reconnect to an identified command and read its immutable receipt."""
         from vercel import sandbox
+
+        if request_key and not re.fullmatch(r"[a-f0-9]{64}", request_key):
+            raise ExecutionFailure("Invalid CAD operation request key")
 
         async with self.sdk_session(read_timeout=120):
             box = await self.box(name)
@@ -226,7 +232,10 @@ class VercelExecutor:
             if receipt_file.returncode not in {0, 1}:
                 raise ExecutionFailure("Could not inspect the CAD receipt")
             if receipt_file.returncode == 0:
-                receipt = await self.command(box, ["inspect"])
+                receipt = await self.command(box,
+                    ["inspect", *(["--request-key", request_key] if request_key else [])])
+                if request_key and receipt.get("requestKey") != request_key:
+                    raise ExecutionFailure("CAD receipt belongs to another operation")
                 return {"status": "complete", "processId": process_id, "receipt": receipt}
             if process.status == sandbox.ProcessStatus.RUNNING:
                 return {"status": "running", "processId": process_id}
@@ -240,6 +249,19 @@ class VercelExecutor:
             processes = await box.query_processes()
             return [{"processId": process.id, "status": str(process.status.value),
                      "args": list(process.args)} for process in processes]
+
+    async def find_execution(self, name, request_key):
+        """Recover only one process carrying the exact durable request key."""
+        if not re.fullmatch(r"[a-f0-9]{64}", request_key):
+            raise ExecutionFailure("Invalid CAD operation request key")
+        processes = await self.list_execution_processes(name)
+        matches = [process for process in processes if
+                   "/opt/forma/control.py" in process["args"]
+                   and "execute" in process["args"]
+                   and process["args"][-2:] == ["--request-key", request_key]]
+        if len(matches) != 1:
+            raise ExecutionFailure("CAD start outcome is ambiguous; inspect the sandbox before replay")
+        return matches[0]["processId"]
 
     async def inspect(self, name):
         async with self.sdk_session(read_timeout=120):

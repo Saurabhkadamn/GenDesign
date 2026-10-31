@@ -75,7 +75,7 @@ def prepare():
             shutil.rmtree(path)
         path.mkdir(mode=0o755)
     os.chown(JOB / "output", CAD.pw_uid, CAD.pw_gid)
-    for name in ("receipt.json", "diagnostic.log"):
+    for name in ("receipt.json", "receipt.json.tmp", "diagnostic.log"):
         (JOB / name).unlink(missing_ok=True)
 
 
@@ -92,7 +92,7 @@ def demote():
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 
 
-def execute(operation, timeout, calculation_path):
+def execute(operation, timeout, calculation_path, request_key=""):
     identity = json.loads((JOB / "workspace/identity.json").read_text())
     actual_runtime = installed_version()
     if identity.get("runtime") != actual_runtime:
@@ -131,8 +131,10 @@ def execute(operation, timeout, calculation_path):
         diagnostic = reason + "\n" + (diagnostic or "No traceback was emitted by the worker.")
     receipt = {"identity": identity, "exitCode": code, "timedOut": timed_out,
                "clean": clean, "elapsedMs": (time.monotonic() - started) * 1000,
-               "diagnostic": diagnostic if code else ""}
-    (JOB / "receipt.json").write_text(json.dumps(receipt))
+               "diagnostic": diagnostic if code else "", "requestKey": request_key}
+    temporary = JOB / "receipt.json.tmp"
+    temporary.write_text(json.dumps(receipt))
+    os.replace(temporary, JOB / "receipt.json")
     return receipt
 
 
@@ -142,7 +144,10 @@ def main():
     parser.add_argument("--operation", choices=["build", "validate", "calculate", "measure"], default="build")
     parser.add_argument("--timeout", type=int, default=180)
     parser.add_argument("--path", default="")
+    parser.add_argument("--request-key", default="")
     args = parser.parse_args()
+    if args.request_key and not re.fullmatch(r"[a-f0-9]{64}", args.request_key):
+        raise ValueError("Invalid operation request key")
     if args.action == "read":
         if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*\.(step|glb|json|csv|svg|pdf|dxf)", args.path):
             raise ValueError("Invalid output filename")
@@ -160,8 +165,11 @@ def main():
         result = {"clean": cleanup()}
     elif args.action == "inspect":
         result = json.loads((JOB / "receipt.json").read_text())
+        if args.request_key and result.get("requestKey") != args.request_key:
+            raise ValueError("CAD receipt belongs to another operation")
     else:
-        result = execute(args.operation, min(300, max(1, args.timeout)), args.path)
+        result = execute(args.operation, min(300, max(1, args.timeout)), args.path,
+                         args.request_key)
     print(json.dumps(result))
 
 
