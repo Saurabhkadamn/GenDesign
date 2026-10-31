@@ -723,9 +723,19 @@ the hosted qualification section above supersedes its deployment status.
   the architecture probe script and review evidence remain part of the baseline.
 - Browser contracts were regenerated and the frontend type check passed. V4 remains
   disabled by default; worker concurrency defaults to one until qualification.
+- On 2026-11-01, nullable validation checkpoint reads in the legacy model,
+  delegation and sandbox paths, plus the v4 publication history, were made
+  null-safe. A draft or fresh checkpoint can store `validated: null`; treating
+  it as a mapping could crash the next action. The targeted recovery and graph
+  suite passed 97/97, and `git diff --check` passed. This change is source-only
+  pending a guarded deployment; it does not qualify an engineering result.
 
 ### Remaining before any default rollout
 
+- Before promoting the new CAD runtime in production, recheck active legacy
+  workflows and leases against the production database; the read-only check on
+  2026-11-01 could not establish a database connection and no promotion was made.
+  Deploy the nullable-checkpoint fix under the guard and verify production health.
 - Qualify provider-switch/resume using real OpenRouter and Nebius connections, including
   model identity, data handling and difficult-task competence. Local mocked transport
   checks do not establish model competence.

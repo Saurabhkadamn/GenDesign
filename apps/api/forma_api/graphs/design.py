@@ -3070,7 +3070,7 @@ async def publish(state: AgentState) -> dict:
     call = state.get("coordinator_pending_call") or {"id": "cad-result"}
     history = bounded_history([*state.get("coordinator_history", []), tool_message(call, {
         "ok": True, "revisionId": result["revisionId"],
-        "validation": cp.get("validated", {}).get("report"),
+        "validation": (cp.get("validated") or {}).get("report"),
         "message": "The CAD draft was built and published for review.",
     })])
     return {**sync_checkpoint(cp), "phase": "final",

@@ -269,7 +269,7 @@ async def model_turn(run, cp, limits):
     history = cp["history"][cp["role"]]
     context = {"manifest": cp["snapshot"]["manifest"], "files": list(cp["snapshot"]["files"]),
                "requirements": cp["requirements"], "selectedIds": run["selected_ids"],
-               "verified": cp.get("validated", {}).get("report"), "remainingRepairs": limits.maxRepairs-cp["repairs"]}
+               "verified": (cp.get("validated") or {}).get("report"), "remainingRepairs": limits.maxRepairs-cp["repairs"]}
     messages = [{"role": "system", "content": system_prompt(cp["role"])},
                 {"role": "system", "content": "Current private workspace context: " + json.dumps(context)}, *history]
     sequence = cp["sequence"]
@@ -683,7 +683,7 @@ async def execute_tool(run, cp, call, app_settings, worker):
             await destroy_sandboxes(cp)
             delegation = cp.pop("delegation")
             cp["role"], cp["pending"] = "coordinator", delegation["remaining"]
-            tool_result(cp, delegation["call"], {"message": value["message"], "verified": cp.get("validated", {}).get("report")})
+            tool_result(cp, delegation["call"], {"message": value["message"], "verified": (cp.get("validated") or {}).get("report")})
             return None
         if cp.get("changed") and not cp.get("published"):
             raise ValueError("Publish the validated changed geometry before finishing.")
@@ -721,7 +721,7 @@ async def tick(run_id, worker):
         if not cp["pending"]:
             if cp["modelCalls"] >= app_settings.limits.maxModelCalls:
                 raise Pause("The model-call limit was reached. Continue to grant another bounded cycle.")
-            if cp["role"] == "cad" and not cp.get("sandboxReady") and cp.get("validated", {}).get("identity") != identity(cp["snapshot"], cp["requirements"]):
+            if cp["role"] == "cad" and not cp.get("sandboxReady") and (cp.get("validated") or {}).get("identity") != identity(cp["snapshot"], cp["requirements"]):
                 cp["sandbox"] = cp.get("sandbox") or f"forma-{UUID(run_id).hex}-{uuid4().hex[:12]}"
                 version = await persist(run, cp, worker, version)
                 results = await asyncio.gather(ensure_sandbox(run, cp, app_settings.limits), model_turn(run, cp, app_settings.limits), return_exceptions=True)
