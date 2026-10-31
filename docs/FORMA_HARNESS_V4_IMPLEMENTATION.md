@@ -653,6 +653,29 @@ the hosted qualification section above supersedes its deployment status.
   fixture at its safe boundary, and verify the validator and batched artifact
   phases plus reopened STEP files. This is still deterministic fixture
   qualification, not the agentic 60-part evaluation.
+- The null-handling fix `f0ae475` was deployed as guarded isolated preview
+  `dpl_EEf7mQvSMJSykLcw2xzsT1YQnmiQ` at
+  `https://forma-i9bks13zw-negens-projects.vercel.app`. Protected health,
+  administrator login and the paused fixture read passed. The same saved
+  60-distinct run continued at its pending validation node; no duplicate
+  build or model call occurred. Independent validation, eight groups of at
+  most 16 artifact transfers, final evidence recording and the graph's
+  validation node all completed in hosted Workflow transitions. The longest
+  completed node was 26.3 seconds, below the 300-second function limit.
+  Its draft has 127 private artifacts: 61 STEP, 62 GLB, one assembly record
+  and three BOM exports. All 127 objects were downloaded from private storage
+  and matched their saved byte counts and SHA-256 receipts. The 60 part STEP
+  files have distinct hashes; the assembly STEP is 1,311,573 bytes, and the
+  flat and structured BOMs each have 60 rows. A fresh isolated validator
+  reopened the **downloaded** STEP files without source code and reproduced
+  the saved component, assembly placement, BOM and inspection reports.
+  Evidence and the read-only verifier are in
+  `D:\v1\test-results\harness-v4-hosted-phase-20261101`. The workflow then
+  reached model-based review and paused on the provider's HTTP 402 payment
+  limit, with zero completed model calls. This is a successful hosted CAD
+  phase and artifact qualification, **not** an accepted design, pump result
+  or agentic 60-part evaluation. Keep v4 off the public default until those
+  remaining engineering gates pass.
 - The committed project acceptance plan persists across runs. Sourced amendments and
   a matching base version are required to change or retire requirements/deliverables.
   Focused delegation cannot replace the full inventory. V4 bypasses legacy keyword
