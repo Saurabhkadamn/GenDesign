@@ -602,10 +602,9 @@ the hosted qualification section above supersedes its deployment status.
   evidence without storing STEP bytes in the LangGraph checkpoint. The existing
   combined path passes its already-read bytes to the same seam, preserving its
   behavior. The focused test verifies independent reads and validator inputs
-  (2/2 transfer tests passed, Ruff and whitespace clean). This is branch-only;
-  the graph still calls the combined path, so the 300-second hosted risk and
-  agentic acceptance remain open. Next wire keyed start/poll, completed-build
-  validation, and batched artifact publication into distinct durable nodes.
+  (2/2 transfer tests passed, Ruff and whitespace clean). This first seam did
+  not yet change the graph route; the subsequent guarded phase split below
+  connects it. Hosted duration and agentic acceptance remain separate gates.
 - The guarded v4 graph now has separate durable transitions for candidate
   staging, keyed CAD process start, receipt polling, independent STEP
   validation, groups of at most 16 artifact transfers, and final evidence
@@ -615,13 +614,28 @@ the hosted qualification section above supersedes its deployment status.
   remain content addressed and completed transfer receipts replay by candidate
   and batch identity. The v3 graph still uses its prior path. Local API tests
   passed 477/477, including a 17-artifact two-batch transition and ambiguous
-  start recovery; touched Python files passed Ruff and whitespace checks.
+  start recovery; a subsequent focused check confirmed that the validator
+  remains alive across the validation-to-transfer boundary. Touched Python
+  files passed Ruff and whitespace checks.
   This implementation is **not yet hosted qualified**: the new runtime snapshot
   is not selected by the isolated preview, and the 60-distinct hosted graph
   build has not run. Next deploy the guarded preview with the new runtime,
   exercise the transitions across real workflow invocations, inspect the
   independently reopened STEP and artifact receipts, then assess whether the
   validator phase stays under the 300-second function limit.
+- The guarded phase-split code was pushed as `5880191` and deployed to the
+  isolated evaluation preview with runtime snapshot
+  `snap_ToWrByRI8FTr6ByIzZXoRGzUfdM6`. Deployment
+  `dpl_25HU2vakWzqMdonB14ikdAaK1RZ4` at
+  `https://forma-4kqf7okfn-negens-projects.vercel.app` reached Ready;
+  protected health returned HTTP 200, administrator login returned HTTP 200,
+  and authenticated reads of both saved evaluations returned HTTP 200 with
+  `preview-eval` identity and unchanged paused states/model-call counts. An
+  earlier preview submitted during this rollout, `dpl_7TgxxgbKE9hNVBm1BKVt5n8bNnvW`,
+  used a different private database configuration; its login returned 401 and
+  it is excluded from all evaluation evidence. Neither saved run was resumed.
+  The hosted 60-distinct graph build and independent artifact inspection are
+  still required before production runtime promotion or default-v4 release.
 - The committed project acceptance plan persists across runs. Sourced amendments and
   a matching base version are required to change or retire requirements/deliverables.
   Focused delegation cannot replace the full inventory. V4 bypasses legacy keyword

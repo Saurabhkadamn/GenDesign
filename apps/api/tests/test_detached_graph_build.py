@@ -1,7 +1,9 @@
 """Guarded v4 CAD transitions preserve one candidate and one process identity."""
 
+import json
 import pytest
 
+from forma_api import engine, maintenance
 from forma_api.contracts import AppSettings, Snapshot
 from forma_api.execution import identity
 from forma_api.graphs import design
@@ -116,3 +118,53 @@ async def test_detached_build_waits_then_validates_same_candidate(monkeypatch):
     assert len(finished["validation"]["artifacts"]) == 17
     assert calls == ["stage", "start", "validate", "transfer:16", "transfer:1",
                      "record", "release"]
+
+
+@pytest.mark.asyncio
+async def test_deferred_validation_retains_validator_until_artifact_phase(monkeypatch):
+    snapshot = Snapshot.model_validate({
+        "manifest": {"rootComponentId": "block", "components": [{
+            "id": "block", "name": "Block", "kind": "solid",
+            "source": "parts/block.py", "parameters": {},
+        }]},
+        "files": {"parts/block.py": "def build(parameters, dependencies):\n    return None\n"},
+    }).model_dump()
+    expected = identity(snapshot, [])
+    report = {"identity": expected, "artifacts": []}
+    checkpoint = {"snapshot": snapshot, "requirements": [], "validator": "validator",
+                  "attempts": 1}
+    calls = []
+
+    class Validator:
+        async def create(self, name, *, lifetime):
+            calls.append(("create", name, lifetime))
+
+        async def stage(self, name, _files):
+            calls.append(("stage", name))
+
+        async def execute(self, name, operation, _timeout):
+            calls.append(("execute", name, operation))
+            return {"identity": expected, "clean": True, "exitCode": 0,
+                    "timedOut": False}
+
+        async def read(self, name, filename):
+            assert (name, filename) == ("validator", "report.json")
+            return json.dumps(report).encode()
+
+    async def release(name):
+        calls.append(("release", name))
+
+    async def trace(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(engine, "executor", lambda: Validator())
+    monkeypatch.setattr(maintenance, "release_sandbox", release)
+    monkeypatch.setattr(engine.tracing, "record", trace)
+    result = await engine.validate_step_candidate(
+        {"harness_version": 4, "research_mode": True}, checkpoint, snapshot,
+        {}, {"block.step": b"STEP"}, AppSettings().limits, "validator-test",
+        defer_upload=True)
+    assert result == report
+    assert checkpoint["validator"] == "validator"
+    assert calls == [("create", "validator", 1800), ("stage", "validator"),
+                     ("execute", "validator", "validate")]
