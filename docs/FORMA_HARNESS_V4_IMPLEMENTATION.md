@@ -728,9 +728,14 @@ the hosted qualification section above supersedes its deployment status.
   This catches a same-size file change between validation and upload; older
   saved reports without a digest retain their existing transfer behavior.
   The focused detached-build tests passed 3/3, including a same-size mutation
-  rejection, and touched files passed Ruff and whitespace checks. The native
-  runtime snapshot, hosted transfer and production guard still need qualification
-  before this change is considered live.
+  rejection, and touched files passed Ruff, syntax and whitespace checks.
+  Source commit `445880c` contains the change. A new runtime-only snapshot
+  attempt on 2026-11-04 failed at Sandbox creation with HTTP 403 `forbidden`,
+  before any build stage or live job began. The native runtime suite and hosted
+  transfer are therefore unverified for this change. Recheck Sandbox access,
+  then create and qualify a new runtime snapshot, run the isolated hosted
+  artifact transfer with independent downloads, and only then deploy the
+  guarded runtime and API source. Existing saved runs remain untouched.
 - On 2026-11-01, nullable validation checkpoint reads in the legacy model,
   delegation and sandbox paths, plus the v4 publication history, were made
   null-safe. A draft or fresh checkpoint can store `validated: null`; treating
