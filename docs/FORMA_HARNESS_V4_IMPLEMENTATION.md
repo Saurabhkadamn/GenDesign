@@ -729,13 +729,29 @@ the hosted qualification section above supersedes its deployment status.
   saved reports without a digest retain their existing transfer behavior.
   The focused detached-build tests passed 3/3, including a same-size mutation
   rejection, and touched files passed Ruff, syntax and whitespace checks.
-  Source commit `445880c` contains the change. A new runtime-only snapshot
-  attempt on 2026-11-04 failed at Sandbox creation with HTTP 403 `forbidden`,
-  before any build stage or live job began. The native runtime suite and hosted
-  transfer are therefore unverified for this change. Recheck Sandbox access,
-  then create and qualify a new runtime snapshot, run the isolated hosted
-  artifact transfer with independent downloads, and only then deploy the
-  guarded runtime and API source. Existing saved runs remain untouched.
+  Source commit `445880c` contains the change. The first snapshot attempt
+  received HTTP 403 because the CLI access token had expired. Refreshing it
+  through the installed Vercel CLI restored user and snapshot reads; no Sandbox
+  was created by the failed attempt. Runtime-only snapshot
+  `snap_wD5oBfegamy0pDQ0ivaD79hLx99A` /
+  `forma-52c56f21f61a5229` then passed all 80 native tests, and its native
+  engine/package identity matches the prior qualified snapshot. Evidence is
+  in `D:\v1\test-results\harness-v4-artifact-hash-20261104`.
+  Isolated preview `dpl_6FgWdTDvsA9uTTPkYggiVjf5148o` at
+  `https://forma-9iz380iy6-negens-projects.vercel.app` reached Ready; protected
+  health, administrator login and authenticated reads of both saved paused
+  evaluations passed with `preview-eval` identity. A deterministic 60-repeated
+  part application build passed native validation, publication and nine
+  authenticated downloads. All nine downloaded files match the validator's
+  SHA-256 and byte counts; evidence is in
+  `D:\v1\test-results\harness-v4-artifact-hash-repeated-20261104`.
+  A separate 60-distinct **legacy combined-path** application build reached
+  artifact transfer but failed when its validator Sandbox expired. The prior
+  v4 phase split addresses this duration boundary; that failed legacy fixture
+  remains interrupted and was not replayed. Next run the 60-distinct fixture
+  through hosted v4 phase receipts on this preview, verify all 127 downloaded
+  hashes and independently reopen STEP, then promote the guarded source/runtime.
+  Existing saved agentic evaluations remain untouched.
 - On 2026-11-01, nullable validation checkpoint reads in the legacy model,
   delegation and sandbox paths, plus the v4 publication history, were made
   null-safe. A draft or fresh checkpoint can store `validated: null`; treating
