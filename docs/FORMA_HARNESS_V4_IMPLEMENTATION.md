@@ -723,6 +723,14 @@ the hosted qualification section above supersedes its deployment status.
   the architecture probe script and review evidence remain part of the baseline.
 - Browser contracts were regenerated and the frontend type check passed. V4 remains
   disabled by default; worker concurrency defaults to one until qualification.
+- The next R6 artifact integrity change records a SHA-256 digest for every
+  independently validated output and checks the digest again before transfer.
+  This catches a same-size file change between validation and upload; older
+  saved reports without a digest retain their existing transfer behavior.
+  The focused detached-build tests passed 3/3, including a same-size mutation
+  rejection, and touched files passed Ruff and whitespace checks. The native
+  runtime snapshot, hosted transfer and production guard still need qualification
+  before this change is considered live.
 - On 2026-11-01, nullable validation checkpoint reads in the legacy model,
   delegation and sandbox paths, plus the v4 publication history, were made
   null-safe. A draft or fresh checkpoint can store `validated: null`; treating

@@ -361,6 +361,12 @@ def validate(root: Path, output: Path) -> None:
                                     "bytes": (output / "drawings.json").stat().st_size})
     if any(a["bytes"] > MAX_BYTES for a in report["artifacts"]):
         raise ValueError("Artifact exceeds 40 MB limit")
+    # Bind each validated file to the exact bytes that the host will upload.
+    from hashlib import file_digest
+
+    for artifact in report["artifacts"]:
+        with (output / artifact["name"]).open("rb") as content:
+            artifact["sha256"] = file_digest(content, "sha256").hexdigest()
     write_json(output / "report.json", report)
 
 

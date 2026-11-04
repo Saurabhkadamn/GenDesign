@@ -1,12 +1,42 @@
 """Guarded v4 CAD transitions preserve one candidate and one process identity."""
 
 import json
+from hashlib import sha256
 import pytest
 
 from forma_api import engine, maintenance
 from forma_api.contracts import AppSettings, Snapshot
 from forma_api.execution import identity
 from forma_api.graphs import design
+
+
+@pytest.mark.asyncio
+async def test_artifact_transfer_rejects_same_size_change_after_validation(monkeypatch):
+    snapshot = Snapshot.model_validate({
+        "manifest": {"rootComponentId": "block", "components": [{
+            "id": "block", "name": "Block", "kind": "solid",
+            "source": "parts/block.py", "parameters": {},
+        }]},
+        "files": {"parts/block.py": "def build(parameters, dependencies):\n    return None\n"},
+    }).model_dump()
+
+    class Validator:
+        async def read(self, _name, _artifact):
+            return b"STEP-two"
+
+    async def no_upload(*_args, **_kwargs):
+        pytest.fail("An artifact that changed after validation was uploaded")
+
+    monkeypatch.setattr(engine, "executor", lambda: Validator())
+    monkeypatch.setattr(engine.db, "storage", no_upload)
+    artifact = {"name": "block.step", "bytes": 8,
+                "sha256": sha256(b"STEP-one").hexdigest()}
+    with pytest.raises(engine.ExecutionFailure, match="changed after independent validation"):
+        await engine.transfer_validated_artifacts(
+            {"harness_version": 4},
+            {"snapshot": snapshot, "requirements": [], "validator": "validator"},
+            {"artifacts": [artifact]}, AppSettings().limits,
+        )
 
 
 @pytest.mark.asyncio

@@ -450,6 +450,9 @@ async def transfer_validated_artifacts(run, cp, report, limits, artifacts=None):
             raise ExecutionFailure("Artifact size validation failed")
         from hashlib import sha256
         content_hash = sha256(content).hexdigest()
+        expected_hash = artifact.get("sha256")
+        if expected_hash is not None and content_hash != expected_hash:
+            raise ExecutionFailure("Artifact content changed after independent validation")
         suffix = f"{digest(expected)}/{content_hash}/" if run.get("harness_version", 3) >= 4 else ""
         storage_path = f"{run['owner_id']}/{run['project_id']}/{run['id']}/{expected['candidate']}/{suffix}{artifact['name']}"
         from .services.receipts import fence

@@ -1,3 +1,4 @@
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -51,6 +52,10 @@ def test_step_roundtrip_and_real_glb(tmp_path):
     assert report["components"]["plate"]["dimensions"] == pytest.approx([40, 20, 5])
     assert report["components"]["plate"]["volumeMm3"] == pytest.approx(4000)
     assert (verified / "preview.glb").read_bytes()[:4] == b"glTF"
+    for artifact in report["artifacts"]:
+        content = (verified / artifact["name"]).read_bytes()
+        assert artifact["bytes"] == len(content)
+        assert artifact["sha256"] == hashlib.sha256(content).hexdigest()
     manifest["components"][0]["parameters"]["width"] = 60
     (workspace / "manifest.json").write_text(json.dumps(manifest))
     build(workspace, output)
