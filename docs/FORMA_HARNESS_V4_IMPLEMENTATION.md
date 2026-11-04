@@ -748,10 +748,39 @@ the hosted qualification section above supersedes its deployment status.
   A separate 60-distinct **legacy combined-path** application build reached
   artifact transfer but failed when its validator Sandbox expired. The prior
   v4 phase split addresses this duration boundary; that failed legacy fixture
-  remains interrupted and was not replayed. Next run the 60-distinct fixture
-  through hosted v4 phase receipts on this preview, verify all 127 downloaded
-  hashes and independently reopen STEP, then promote the guarded source/runtime.
-  Existing saved agentic evaluations remain untouched.
+  remains interrupted and was not replayed.
+- On 2026-11-04, a new isolated deterministic 60-distinct v4 run
+  `01b6d4a2-15d1-42c8-ba2d-ed51e05ca3bc` exercised the new hash-bound
+  runtime on preview `dpl_6FgWdTDvsA9uTTPkYggiVjf5148o`. The first scheduler
+  creation returned an ambiguous result with no workflow identity. A complete
+  project-scoped Vercel Workflow listing found zero runs for that deployment,
+  and the queued run had no workflow or lease. The same outbox was reconciled
+  from ambiguous to pending; one subsequent dispatch created workflow
+  `wrun_01M6KEC5NJYRS49EQ3Q76EE5T6`. No duplicate fixture run was created.
+  Durable stage, start, poll, independent validation, eight artifact batches,
+  finalization and graph validation completed. All 127 private artifacts were
+  downloaded and checked against both transfer and validator SHA-256/byte
+  receipts. The 61 downloaded STEP files include 60 distinct part hashes;
+  the assembly STEP is 1,311,573 bytes. A fresh source-free validator reopened
+  the STEP and reproduced component, placement, BOM and inspection reports.
+  Evidence: `D:\v1\test-results\harness-v4-artifact-hash-hosted-20261104`.
+  The fixture was cancelled after this CAD qualification because its review
+  session was consuming model calls; its revision remains a draft, and it is
+  not agentic engineering acceptance.
+- With zero queued/running runs or active leases in the production REST check,
+  the new runtime settings were updated for future production deployments.
+  Source/runtime deployment `dpl_7RQSAvLwWevDmZ6vj6QSj29AwqNs` reached
+  Ready and received the public Forma alias; `/` and `/api/health` returned
+  HTTP 200. V4 remains guarded and off as the public default.
+- The deterministic fixture's reviewer successfully used the pinned MiniMax
+  Gateway model after the earlier payment outage. Both saved agentic evaluations
+  were therefore resumed exactly once on the isolated preview with new workflow
+  identities. Pump run `7e1bbd22-ec9f-4dbc-a57d-6c09b63b2158` is running;
+  60-distinct agentic run `bca774c9-f7b3-4862-9b3b-0fa026fec658` is queued
+  behind the worker admission limit. The pump's initial resumed coordinator
+  responses still exhausted 8,192 reasoning tokens without a tool action, so
+  model availability has not resolved its agent-loop defect. Preserve both
+  runs and their existing candidates; inspect fresh state before intervening.
 - On 2026-11-01, nullable validation checkpoint reads in the legacy model,
   delegation and sandbox paths, plus the v4 publication history, were made
   null-safe. A draft or fresh checkpoint can store `validated: null`; treating
@@ -786,12 +815,12 @@ the hosted qualification section above supersedes its deployment status.
 - Qualify provider-switch/resume using real OpenRouter and Nebius connections, including
   model identity, data handling and difficult-task competence. Local mocked transport
   checks do not establish model competence.
-- Finish expired/ambiguous scheduler reconciliation and safe successor import of paused
-  legacy work. Do not
-  change active legacy checkpoints or runtimes. Verify that human amendments after
-  checkpoint loss cannot duplicate already committed effects. Split long CAD
-  builds and multi-artifact transfers at the hosted 300-second function boundary
-  as described above before claiming large assemblies work agentically.
+- Finish general expired/ambiguous scheduler reconciliation and safe successor
+  import of paused legacy work. Do not change active legacy checkpoints or
+  runtimes. Verify that human amendments after checkpoint loss cannot duplicate
+  committed effects. The 60-distinct hosted CAD phases and transfers now fit
+  below the 300-second function limit, but agentic large-assembly completion
+  remains unproven.
 - Add selective dependency-based evidence invalidation, versioned documentation and
   standard-part provenance, and immutable component caching. Do not reuse geometry
   merely because only calculation files changed: CAD may dynamically depend on them.
