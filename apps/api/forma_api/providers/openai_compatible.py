@@ -260,6 +260,12 @@ def _extra_body(config: dict, output_tokens: int, tools: list[dict]) -> dict:
             pass
     host = urlsplit(base_url(config)).hostname
     model_id = str(config.get("model_id", ""))
+    if host == VERCEL_GATEWAY_HOST and model_id == VERCEL_MINIMAX_FLASH_MODEL:
+        effort = config.get("recovery_reasoning_effort")
+        if effort in {"minimal", "low", "medium", "high"}:
+            # Chat Completions uses reasoning.effort on AI Gateway. Keep this
+            # limited to the pinned model whose adjustable effort is documented.
+            value.setdefault("reasoning", {"effort": effort})
     if host == NVIDIA_BASE_HOST and model_id.startswith("deepseek-ai/deepseek-v4"):
         value.setdefault("chat_template_kwargs", {}).setdefault("thinking", False)
     if host == NVIDIA_BASE_HOST and model_id.startswith(NVIDIA_NEMOTRON_PREFIX):
@@ -548,7 +554,11 @@ async def _turn_once(config: dict, messages: list[dict], tools: list[dict], *, m
                               "input": recovered["input"]})
         usage = body.get("usage") or {}
         from .provenance import response_provenance
-        return {"provenance": response_provenance(config, body, output_tokens), "message": safe_message, "calls": calls,
+        provenance = response_provenance(config, body, output_tokens)
+        if config.get("recovery_reasoning_effort"):
+            reasoning = extra_body.get("reasoning")
+            provenance["recoveryReasoningEffort"] = reasoning.get("effort") if isinstance(reasoning, dict) else None
+        return {"provenance": provenance, "message": safe_message, "calls": calls,
                 "inputTokens": usage.get("prompt_tokens", 0), "outputTokens": usage.get("completion_tokens", 0),
                 "cost": usage.get("cost"), "webSearchRequests": 0}
     except ModelFailure:

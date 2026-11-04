@@ -440,6 +440,23 @@ def test_gateway_minimax_flash_requires_a_tool_action():
     }, tools) == "auto"
 
 
+@pytest.mark.asyncio
+async def test_gateway_action_recovery_lowers_reasoning_for_one_tool_turn(monkeypatch):
+    client = FakeClient()
+    monkeypatch.setattr(openai_compatible.db, "client", lambda: client)
+    result = await openai_compatible.turn({
+        "provider": "openai_compatible", "base_url": "https://ai-gateway.vercel.sh/v1",
+        "model_id": "minimax/minimax-m3.1-flash", "api_key": "secret", "stream": False,
+        "recovery_reasoning_effort": "low",
+    }, [{"role": "user", "content": "Choose one action."}], [{"type": "function", "function": {
+        "name": "connection_check", "parameters": {"type": "object"}}}], max_tokens=2048)
+
+    assert client.payload["tool_choice"] == "required"
+    assert client.payload["reasoning"] == {"effort": "low"}
+    assert result["provenance"]["recoveryReasoningEffort"] == "low"
+    assert result["calls"][0]["name"] == "connection_check"
+
+
 def test_provider_failures_keep_http_status_for_retry_routing():
     rate_limited = openai_compatible._failure(429, '{"error":"RESOURCE_EXHAUSTED"}')
     overloaded = openai_compatible._failure(503, '{"error":"UNAVAILABLE"}')

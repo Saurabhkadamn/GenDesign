@@ -150,6 +150,7 @@ async def test_repeated_actionless_turns_keep_one_reminder_and_signed_tool_pair(
 
     async def turn(_config, messages, _tools, **_kwargs):
         seen["messages"] = messages
+        seen["recovery_effort"] = _config.get("recovery_reasoning_effort")
         return {"message": {"role": "assistant", "content": "", "reasoning_details": []},
                 "calls": [], "inputTokens": 10, "outputTokens": 40, "webSearchRequests": 0}
 
@@ -164,6 +165,7 @@ async def test_repeated_actionless_turns_keep_one_reminder_and_signed_tool_pair(
         context={}, history=history, tools=[])
 
     dialogue = seen["messages"][2:]
+    assert seen["recovery_effort"] == "low"
     assert [m.get("content") for m in dialogue if m["role"] == "user"].count(reminders) == 1
     assert not any(m.get("content") == design.ACTIONLESS_NOTICE for m in dialogue)
     assert any(m.get("tool_call_id") == "read-1" for m in dialogue)

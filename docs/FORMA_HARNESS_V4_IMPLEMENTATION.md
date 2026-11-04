@@ -781,6 +781,23 @@ the hosted qualification section above supersedes its deployment status.
   responses still exhausted 8,192 reasoning tokens without a tool action, so
   model availability has not resolved its agent-loop defect. Preserve both
   runs and their existing candidates; inspect fresh state before intervening.
+- At the 2026-11-04 20:59 UTC follow-up, both saved evaluations had reached
+  safe pauses without leases. Pump model calls rose to 1,156 with candidate v8
+  unchanged; its latest coordinator responses contained 8,192 completion
+  tokens, almost entirely reasoning, and no tool calls despite required tool
+  selection. The 60-distinct candidate remained at v6 and 30 model calls.
+  Their latest failed operation receipts each report Vercel AI Gateway HTTP
+  402: a positive credit balance is required. Do not replay those operations
+  while the balance is unavailable. The correct engineering outcome remains
+  blocked with no pump STEP or agentic 60-part proof.
+- A guarded recovery experiment now sends AI Gateway's documented
+  `reasoning.effort: low` to the pinned MiniMax model after repeated actionless
+  turns, while retaining full requirements and immutable history. It does not
+  force a CAD decision or create a pump recipe. Three targeted provider/graph
+  tests and Ruff passed. This is source-only until a separately qualified
+  preview can test the actual provider behavior; the production default stays
+  off. Model reference:
+  https://vercel.com/ai-gateway/models/minimax-m3.1-flash
 - On 2026-11-01, nullable validation checkpoint reads in the legacy model,
   delegation and sandbox paths, plus the v4 publication history, were made
   null-safe. A draft or fresh checkpoint can store `validated: null`; treating

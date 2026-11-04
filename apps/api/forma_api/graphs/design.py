@@ -541,6 +541,11 @@ async def agent_tool_turn(state: AgentState, *, model_role: str, prompt_role: st
             history = protocol_safe_history([*history[:1], *history[-12:]])
     run = await run_row(state)
     config = await models.configuration(model_role)
+    if research and state.get("no_action_streak", 0) >= 2:
+        # A task that repeatedly spends its full output budget without an
+        # action needs a short decision turn. Providers that support adjustable
+        # reasoning can honor this hint; others keep their qualified settings.
+        config = {**config, "recovery_reasoning_effort": "low"}
     tools = provider_tools(config, tools)
     ordinal = state.get("model_calls", 0)
     cycle_calls = state.get("model_calls_this_cycle", ordinal)
