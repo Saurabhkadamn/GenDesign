@@ -798,6 +798,14 @@ the hosted qualification section above supersedes its deployment status.
   preview can test the actual provider behavior; the production default stays
   off. Model reference:
   https://vercel.com/ai-gateway/models/minimax-m3.1-flash
+  Preview deployment `dpl_4w1EPjGY5nDfcTYt8SZaTQHU3pdn` reached Ready
+  with this source, but its administrator login returned 401 while the older
+  isolated evaluation preview returned 200 with the same private credentials.
+  The new preview failed the isolated evaluation identity check and is
+  excluded from qualification; no saved evaluation was dispatched to it.
+  Restore the isolated preview environment safely, verify authenticated reads
+  of both saved runs, and test the low-reasoning recovery only after Gateway
+  credit is available. Do not promote this experiment to the public default.
 - On 2026-11-01, nullable validation checkpoint reads in the legacy model,
   delegation and sandbox paths, plus the v4 publication history, were made
   null-safe. A draft or fresh checkpoint can store `validated: null`; treating
