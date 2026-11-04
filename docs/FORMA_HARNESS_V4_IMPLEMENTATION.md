@@ -814,6 +814,16 @@ the hosted qualification section above supersedes its deployment status.
   or saved-run resume was issued while Gateway still reported HTTP 402. The
   low-reasoning change is deployed only to this guarded evaluation preview and
   still needs a real model/action qualification after credits become available.
+- On 2026-11-05, read-only evaluation database inspection confirmed both saved
+  runs remain paused/blocked without a lease. Their latest assistant messages
+  explicitly explain the Gateway HTTP 402 payment requirement, so the blocked
+  reason is available in project history even though `runs.error` is null.
+  Dispatch creation now serializes the Workflow event before classifying the
+  scheduler request as possibly accepted. A definite local serialization
+  failure remains retryable; a lost reply after request submission remains
+  ambiguous and requires reconciliation. All seven focused dispatch tests and
+  Ruff passed. This improves restart handling but does not qualify either
+  agentic run or change the public v4 default.
 - On 2026-11-01, nullable validation checkpoint reads in the legacy model,
   delegation and sandbox paths, plus the v4 publication history, were made
   null-safe. A draft or fresh checkpoint can store `validated: null`; treating

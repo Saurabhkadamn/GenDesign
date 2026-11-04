@@ -83,6 +83,43 @@ async def test_lost_scheduler_creation_reply_is_not_replayed(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_scheduler_event_serialization_failure_remains_retryable(monkeypatch):
+    item = {"id": "receipt", "status": "pending", "payload": {}}
+    failures = []
+
+    async def rpc(name, value):
+        if name == "reserve_research_dispatch":
+            item.update(status="creating", worker_id=value["p_worker"])
+            return deepcopy(item)
+        assert name == "fail_research_dispatch"
+        failures.append(value)
+
+    async def deployment():
+        return "deployment"
+
+    async def create(*args):
+        pytest.fail("Scheduler must not be called after event serialization fails")
+
+    class InvalidEvent:
+        def __init__(self, **kwargs):
+            pass
+
+        def into_event(self):
+            raise ValueError("Invalid workflow event")
+
+    monkeypatch.setattr(db, "rpc", rpc)
+    monkeypatch.setattr(world, "RunCreatedEventData", InvalidEvent)
+    monkeypatch.setattr(
+        world,
+        "get_world",
+        lambda: SimpleNamespace(get_deployment_id=deployment, events_create=create),
+    )
+    assert await dispatch.dispatch_research({"id": "run"}) == "pending"
+    assert len(failures) == 1
+    assert failures[0]["p_uncertain"] is False
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("stop", ["cancelled", "emergency"])
 async def test_no_queue_after_cancellation_or_emergency_stop(monkeypatch, stop):
     async def rpc(*args):

@@ -45,8 +45,9 @@ async def dispatch_research(run, resume=None):
                 input=ser.dehydrate(ser.argument_array(args, kwargs)),
                 executionContext={"queueNamespace": namespace} if namespace is not None else None,
             )
+            create_event = event.into_event()
             requested = True
-            created = await world.events_create(None, event.into_event())
+            created = await world.events_create(None, create_event)
             if not created.run:
                 raise ValueError("Workflow creation returned no scheduler identity")
             metadata = {
