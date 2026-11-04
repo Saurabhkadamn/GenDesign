@@ -803,9 +803,17 @@ the hosted qualification section above supersedes its deployment status.
   isolated evaluation preview returned 200 with the same private credentials.
   The new preview failed the isolated evaluation identity check and is
   excluded from qualification; no saved evaluation was dispatched to it.
-  Restore the isolated preview environment safely, verify authenticated reads
-  of both saved runs, and test the low-reasoning recovery only after Gateway
-  credit is available. Do not promote this experiment to the public default.
+  It was left unused. Do not promote this experiment to the public default.
+  The isolated preview environment was restored through deployment-only
+  overrides read from the private evaluation settings; no credential was
+  written to source or the evidence report. Replacement preview
+  `dpl_4HWvwRiP5fbapB5FXmA1w1FvapAP` reached Ready. Protected health,
+  administrator login and authenticated GETs for both saved evaluation runs
+  returned HTTP 200, establishing its evaluation database identity. Evidence:
+  `D:\v1\test-results\harness-v4-reasoning-preview-20261104`. No provider call
+  or saved-run resume was issued while Gateway still reported HTTP 402. The
+  low-reasoning change is deployed only to this guarded evaluation preview and
+  still needs a real model/action qualification after credits become available.
 - On 2026-11-01, nullable validation checkpoint reads in the legacy model,
   delegation and sandbox paths, plus the v4 publication history, were made
   null-safe. A draft or fresh checkpoint can store `validated: null`; treating
