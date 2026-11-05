@@ -822,14 +822,21 @@ the hosted qualification section above supersedes its deployment status.
   scheduler request as possibly accepted. A definite local serialization
   failure remains retryable; a lost reply after request submission remains
   ambiguous and requires reconciliation. All seven focused dispatch tests and
-  Ruff passed. This improves restart handling but does not qualify either
-  agentic run or change the public v4 default.
+  Ruff passed. Source commit `e8c55ec` was pushed and included in guarded
+  production deployment `dpl_FZNTHifTLABTAmRgmT9DBqXzFAx9`. This improves
+  restart handling but does not qualify either agentic run or change the
+  public v4 default.
 - The workspace status banner used the active-run variable, which excludes
   paused runs, so a blocked run did not show its waiting reason beside the
   Continue control. It now reads the latest paused run and displays its saved
   provider message when `runs.error` is empty. Frontend typecheck and targeted
-  ESLint passed. This source change still needs guarded deployment and a UI
-  check; the two evaluation projects were not resumed.
+  ESLint passed. Source commit `a4a2093` was pushed. Guarded production
+  deployment `dpl_FZNTHifTLABTAmRgmT9DBqXzFAx9` reached Ready on
+  2026-11-05; both production aliases were assigned, and the public Forma
+  alias returned HTTP 200 for `/api/health` and `/`. The current CAD runtime
+  settings and public v4 guard were not changed. The blocked banner still
+  needs an authenticated UI check; the two evaluation projects were not
+  resumed.
 - On 2026-11-01, nullable validation checkpoint reads in the legacy model,
   delegation and sandbox paths, plus the v4 publication history, were made
   null-safe. A draft or fresh checkpoint can store `validated: null`; treating
@@ -856,6 +863,10 @@ the hosted qualification section above supersedes its deployment status.
 
 ### Remaining before any default rollout
 
+- Confirm the new blocked-run banner in an authenticated production project
+  without changing a saved evaluation run. Continue the preserved agentic
+  evaluations only after the Gateway credit condition changes or another
+  model/provider passes the staged protocol and competence checks.
 - Recheck active legacy workflows and leases before any further runtime change
   or paused-run successor import. The direct production database connection
   timed out on 2026-11-01, but authenticated production REST reads succeeded
