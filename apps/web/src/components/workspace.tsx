@@ -1245,7 +1245,11 @@ export function Workspace({
             {!!state?.messages.length && <ConversationScrollButton />}
           </Conversation>
           <div className="composer-area">
-            {run?.task_outcome === 'blocked' && run.error && <p role="status">Work is waiting: {run.error}</p>}
+            {paused?.task_outcome === 'blocked' && (
+              <p role="status">
+                Work is waiting: {paused.error || pausedMessage || 'Review the saved work before continuing.'}
+              </p>
+            )}
             {!profile?.is_public_demo && <BriefUpload projectId={project?.id} disabled={Boolean(run) || submitting}
               onStored={(title, id) => setDraft((current) => `${current}${current ? '\n' : ''}Use the stored brief "${title}" (source ${id}).`)} />}
             {!configured && (

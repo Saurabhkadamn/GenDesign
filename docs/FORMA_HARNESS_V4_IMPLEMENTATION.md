@@ -824,6 +824,12 @@ the hosted qualification section above supersedes its deployment status.
   ambiguous and requires reconciliation. All seven focused dispatch tests and
   Ruff passed. This improves restart handling but does not qualify either
   agentic run or change the public v4 default.
+- The workspace status banner used the active-run variable, which excludes
+  paused runs, so a blocked run did not show its waiting reason beside the
+  Continue control. It now reads the latest paused run and displays its saved
+  provider message when `runs.error` is empty. Frontend typecheck and targeted
+  ESLint passed. This source change still needs guarded deployment and a UI
+  check; the two evaluation projects were not resumed.
 - On 2026-11-01, nullable validation checkpoint reads in the legacy model,
   delegation and sandbox paths, plus the v4 publication history, were made
   null-safe. A draft or fresh checkpoint can store `validated: null`; treating
