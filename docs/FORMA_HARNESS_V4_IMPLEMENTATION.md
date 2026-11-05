@@ -852,6 +852,14 @@ the hosted qualification section above supersedes its deployment status.
   leases before applying it. A second production dry run reported up to date.
   Existing paused messages remain in project history; the new `error` value
   is set when a v4 run next pauses and cleared on authorized resume.
+- At the 2026-11-05 18:32 UTC follow-up, the private local Forma credential
+  directory was empty and Vercel CLI reported logged out. The worktree,
+  pushed evidence, guarded production code, and prior hosted artifacts remain
+  intact. Direct isolated-run reads and a new authenticated evaluation preview
+  could not be performed in this session; no saved run was retried or
+  duplicated. Restore the private evaluation environment and Vercel login
+  before hosted qualification. Do not copy credentials into the repository or
+  reports. Production and provider acceptance claims remain unchanged.
 - On 2026-11-01, nullable validation checkpoint reads in the legacy model,
   delegation and sandbox paths, plus the v4 publication history, were made
   null-safe. A draft or fresh checkpoint can store `validated: null`; treating
@@ -878,6 +886,10 @@ the hosted qualification section above supersedes its deployment status.
 
 ### Remaining before any default rollout
 
+- Restore private evaluation credentials and Vercel CLI authentication, then
+  verify the isolated preview's database identity and both saved runs before
+  any new dispatch. The local private credential directory was empty and CLI
+  logged out at the 2026-11-05 18:32 UTC check.
 - Confirm the new blocked-run banner in an authenticated production project
   without changing a saved evaluation run. Continue the preserved agentic
   evaluations only after the Gateway credit condition changes or another
