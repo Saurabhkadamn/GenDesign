@@ -844,8 +844,14 @@ the hosted qualification section above supersedes its deployment status.
   sanitized waiting message, matching the message history and blocked outcome.
   An authorized resume still clears the field. The v3 finish function is
   unchanged. The PGlite v4 database suite passed 14/14, including the pause
-  and resume assertions. Apply this migration to isolated evaluation and
-  production databases before relying on the API field in hosted runs.
+  and resume assertions. Source commit `ce0a57d` was pushed. Supabase CLI
+  dry runs selected only migration `20261105113000`; it was applied to both
+  isolated evaluation and linked production databases on 2026-11-05. The
+  linked project ref matched the production Supabase host, and a fresh
+  production REST check found zero queued/running runs and zero unexpired
+  leases before applying it. A second production dry run reported up to date.
+  Existing paused messages remain in project history; the new `error` value
+  is set when a v4 run next pauses and cleared on authorized resume.
 - On 2026-11-01, nullable validation checkpoint reads in the legacy model,
   delegation and sandbox paths, plus the v4 publication history, were made
   null-safe. A draft or fresh checkpoint can store `validated: null`; treating
