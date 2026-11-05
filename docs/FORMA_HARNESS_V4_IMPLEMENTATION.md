@@ -840,6 +840,12 @@ the hosted qualification section above supersedes its deployment status.
   running runs and zero unexpired `run_private` leases. Direct production
   PostgreSQL access timed out, so this check used the existing Supabase REST
   service with private credentials outside the repository.
+- A new additive v4 migration makes the paused run's `error` field retain its
+  sanitized waiting message, matching the message history and blocked outcome.
+  An authorized resume still clears the field. The v3 finish function is
+  unchanged. The PGlite v4 database suite passed 14/14, including the pause
+  and resume assertions. Apply this migration to isolated evaluation and
+  production databases before relying on the API field in hosted runs.
 - On 2026-11-01, nullable validation checkpoint reads in the legacy model,
   delegation and sandbox paths, plus the v4 publication history, were made
   null-safe. A draft or fresh checkpoint can store `validated: null`; treating

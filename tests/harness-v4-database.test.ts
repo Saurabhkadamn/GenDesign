@@ -112,6 +112,9 @@ describe.sequential('v4 ownership and truthful state', () => {
       [id,token]
     );
     await db.query("select public.finish_research_run($1,'worker',$2,'paused','Waiting')",[id,token]);
+    expect((await db.query<{task_outcome:string;error:string}>(
+      'select task_outcome,error from public.runs where id=$1',[id]
+    )).rows[0]).toMatchObject({task_outcome:'blocked',error:'Waiting'});
     const reply = JSON.stringify({kind:'continue',message:'Keep the original tolerance'});
     await expect(db.query(
       "select public.resume_research_run($1,$2,'test',$3)",[id,randomUUID(),reply]
@@ -121,6 +124,9 @@ describe.sequential('v4 ownership and truthful state', () => {
     )).rows[0].status).toBe('started');
 
     await db.query("select public.resume_research_run($1,$2,'test',$3)",[id,owner,reply]);
+    expect((await db.query<{status:string;error:string|null}>(
+      'select status,error from public.runs where id=$1',[id]
+    )).rows[0]).toMatchObject({status:'queued',error:null});
     const operation = (await db.query<{status:string,result:{category:string}}>(
       "select status,result from public.run_operations where run_id=$1 and operation_key='model-step'",[id]
     )).rows[0];
