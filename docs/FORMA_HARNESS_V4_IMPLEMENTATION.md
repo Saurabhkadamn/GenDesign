@@ -836,7 +836,10 @@ the hosted qualification section above supersedes its deployment status.
   alias returned HTTP 200 for `/api/health` and `/`. The current CAD runtime
   settings and public v4 guard were not changed. The blocked banner still
   needs an authenticated UI check; the two evaluation projects were not
-  resumed.
+  resumed. A 2026-11-05 read-only production REST check found zero queued or
+  running runs and zero unexpired `run_private` leases. Direct production
+  PostgreSQL access timed out, so this check used the existing Supabase REST
+  service with private credentials outside the repository.
 - On 2026-11-01, nullable validation checkpoint reads in the legacy model,
   delegation and sandbox paths, plus the v4 publication history, were made
   null-safe. A draft or fresh checkpoint can store `validated: null`; treating
@@ -867,11 +870,11 @@ the hosted qualification section above supersedes its deployment status.
   without changing a saved evaluation run. Continue the preserved agentic
   evaluations only after the Gateway credit condition changes or another
   model/provider passes the staged protocol and competence checks.
-- Recheck active legacy workflows and leases before any further runtime change
-  or paused-run successor import. The direct production database connection
-  timed out on 2026-11-01, but authenticated production REST reads succeeded
-  and found zero queued or running runs before and after both guarded deployments.
-  Paused legacy successors still require a verified safe boundary.
+- Recheck active legacy workflows and leases immediately before any further
+  runtime change or paused-run successor import. Production REST found zero
+  queued/running runs and zero unexpired leases on 2026-11-05; direct database
+  access timed out. Paused legacy successors still require a verified safe
+  boundary.
 - Qualify provider-switch/resume using real OpenRouter and Nebius connections, including
   model identity, data handling and difficult-task competence. Local mocked transport
   checks do not establish model competence.
